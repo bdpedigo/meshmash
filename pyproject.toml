@@ -4,14 +4,14 @@ dependencies = [
     "pandas>=2.2.3",
     "pymeshfix>=0.17.0",
     "pyvista>=0.44.1",
-    "robust-laplacian>=0.2.7",
+    "robust-laplacian>=1.0.0",
     "scipy<=1.14.0,>=1.13.0",
     "tqdm-joblib>=0.0.4",
 ]
 description = "Random mesh utilities."
 name = "meshmash"
 readme = "README.md"
-requires-python = ">=3.11,<3.12"
+requires-python = ">=3.12"
 version = "0.1.0"
 
 

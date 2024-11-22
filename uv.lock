@@ -1,5 +1,5 @@
 version = 1
-requires-python = "==3.11.*"
+requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version < '3.12'",
     "python_full_version >= '3.12'",
@@ -293,7 +293,7 @@ requires-dist = [
     { name = "pandas", specifier = ">=2.2.3" },
     { name = "pymeshfix", specifier = ">=0.17.0" },
     { name = "pyvista", specifier = ">=0.44.1" },
-    { name = "robust-laplacian", specifier = ">=0.2.7" },
+    { name = "robust-laplacian", specifier = ">=1.0.0" },
     { name = "scipy", specifier = ">=1.13.0,<=1.14.0" },
     { name = "tqdm-joblib", specifier = ">=0.0.4" },
 ]
@@ -529,21 +529,37 @@ wheels = [
 
 [[package]]
 name = "robust-laplacian"
-version = "0.2.7"
+version = "1.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
-    { name = "scipy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0f/90/c8f8339246493f5f995059a6539c1a41662b8ee8c628d61e74304be49300/robust_laplacian-0.2.7.tar.gz", hash = "sha256:752c4c7ed3e359fdeece2ebb768b8799fe1d7817b03d96e0e3e786efd8193d06", size = 1336550 }
+sdist = { url = "https://files.pythonhosted.org/packages/16/fb/3d8be3fd72d1183b55bd79603d9bb6c15093f803cbe0c760c38ac4742e3b/robust_laplacian-1.0.0.tar.gz", hash = "sha256:a00d7c225e40b6f9a1b9c8de0c5cb51dadd35367e3fe61b265a4643165b4e08d", size = 29411838 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f3/d4/02fda3818a403d810d12a598a309a8804323955aee8ee938312c99a62592/robust_laplacian-0.2.7-cp311-cp311-macosx_10_9_universal2.whl", hash = "sha256:00362dfcec95884a86d4e56364b8790f8c914166ee4090d606df30d36325f41c", size = 686068 },
-    { url = "https://files.pythonhosted.org/packages/8e/c5/0b269351d2a348fd4704008b1d9794c90bedae0c08eae9c16014cea4b707/robust_laplacian-0.2.7-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:c6ff494a99f5b95ff7fdc5ba461e8fec57f8720917e8b953d4f2b2cde5232625", size = 375678 },
-    { url = "https://files.pythonhosted.org/packages/bb/a8/22202f53a5239597339d2172ea40f81480309fa6ada462bcc60002b5030d/robust_laplacian-0.2.7-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:e4612aa68095907cd479cbf73e3a9b3fda577c973c4ad97a254aa8aad597de8a", size = 315961 },
-    { url = "https://files.pythonhosted.org/packages/a9/2f/2a317420c61f7d37e2bddf03cc63fc723f85b754544d6604c2f7daf4e78f/robust_laplacian-0.2.7-cp311-cp311-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:f8c1159610a95204f9db1742405b5178d08420c7e25d321416ac59a3988b4e3a", size = 420888 },
-    { url = "https://files.pythonhosted.org/packages/53/d3/bd011bd7e0eafe16b36a67311da31de1b05348d89cdab95c54ee584ef8b6/robust_laplacian-0.2.7-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:e6e06537d7fa7585a6e8de5116a66b6b99c4a7973f8712e17daa2dd29765043b", size = 391416 },
-    { url = "https://files.pythonhosted.org/packages/e9/a0/ff1d78e0f54c7b96bf2241d126dd758ef5b38522fd65cd418c86eae2c0d8/robust_laplacian-0.2.7-cp311-cp311-win32.whl", hash = "sha256:69414f9f60b0244b9cceaea3c3d85c6c00a52e7419bc5bbb40902ab0d74b9749", size = 186985 },
-    { url = "https://files.pythonhosted.org/packages/89/dc/d7058bbc2882f4c88d5756e7b8ab438ff47b6b81e46dbdc76b58a4e637d9/robust_laplacian-0.2.7-cp311-cp311-win_amd64.whl", hash = "sha256:112a810411e74d9f22282093936eb454dd087fe51d1215445b5caee52ab66640", size = 206380 },
+    { url = "https://files.pythonhosted.org/packages/e8/75/da7fb31bff3ed20f55e20f6a5a01b64d27d6cd26b2f2a0cf3729ac3929f4/robust_laplacian-1.0.0-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:50f3121fcb89a2f4e0611c7e4efba65fb2c411e8d93b7dbb25c4c9e7e5ef54c8", size = 2782488 },
+    { url = "https://files.pythonhosted.org/packages/f9/c2/7934f4b8e6c5a659a2f815056c473154fa2d77b3ee1958c8e7b562c46aaa/robust_laplacian-1.0.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:c71a51e5ff80742e1c98694d087e89e87d9ea294a3509b7a411fa81b50250206", size = 2486056 },
+    { url = "https://files.pythonhosted.org/packages/ef/ad/9ce6001349c9bcf439355b9e6ba87307010886689e7877a2fb0efe7b8da4/robust_laplacian-1.0.0-cp311-cp311-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:7fc3b0860ef119a99e50fc639aa1175b18ec2db6aaf8a472351238339156134a", size = 2719024 },
+    { url = "https://files.pythonhosted.org/packages/31/10/76e5d5c5f18728621135503bf5cf2ef5f6f8d9f6a323ceca7fee08233d31/robust_laplacian-1.0.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:c6d96639f91b346d959286cb0c277d6322f07b8470948a1aea5b2828a5c23452", size = 2576151 },
+    { url = "https://files.pythonhosted.org/packages/54/54/fd8fabd8125ac2d1d80ca21423def588d239b07473888b1a659d2d0bf13e/robust_laplacian-1.0.0-cp311-cp311-musllinux_1_2_i686.whl", hash = "sha256:03f7748ddff7522bcb405ec5c1776b69f5de2e5be0f239e376ca19d1a7cf3233", size = 3875622 },
+    { url = "https://files.pythonhosted.org/packages/ce/13/0a6e67f6e5d399c32d1f4f980b54150909d98d19c0f71d91501650f19686/robust_laplacian-1.0.0-cp311-cp311-musllinux_1_2_x86_64.whl", hash = "sha256:fc08800b87d2916fd0209b40820066fac0933f6079183438ff503e923977ba29", size = 3674802 },
+    { url = "https://files.pythonhosted.org/packages/ad/ff/80ec32cbf3aab5f1f8fca02d4d0099edf0e64e2d2365b03b6d1b0ae68595/robust_laplacian-1.0.0-cp311-cp311-win32.whl", hash = "sha256:ccf009449d1179263f59f2069efe3dbdb35572e8cf2e1f292309386c1378f575", size = 3730909 },
+    { url = "https://files.pythonhosted.org/packages/fe/43/68dfc391e9d3d329483a22f38f17734789cdf29ec2493735d59af3efd80b/robust_laplacian-1.0.0-cp311-cp311-win_amd64.whl", hash = "sha256:478cf2ca7abc094fe9a26d21d589eede8b3f442848444d35aae08882df1899b9", size = 5236543 },
+    { url = "https://files.pythonhosted.org/packages/6f/61/be7469f480c2f55d75d7c767a65f31d307ea9c3990f4c327b05930ef7988/robust_laplacian-1.0.0-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:f4f868968615fb28ba647844f9ab73666aa5a401265f5facac86669a25b4eff5", size = 2787252 },
+    { url = "https://files.pythonhosted.org/packages/c5/72/796e9e807f654df8ab73b1ca3c27058d946c45dff0a168ef29bb2c07409a/robust_laplacian-1.0.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:d6d272307b4fd7a7ba32e7c09ca3355bdcb5cd78ac56e7da88204fce98deee8b", size = 2485424 },
+    { url = "https://files.pythonhosted.org/packages/43/37/450122e8e67452db294c98a9e29da60f9826f3aa9b718a3106e7e93e80de/robust_laplacian-1.0.0-cp312-cp312-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:8ce1bb11e33a823bf66a2ec8d868510d497e72074511b9b1d67936d77de50a09", size = 2717375 },
+    { url = "https://files.pythonhosted.org/packages/bc/98/da4669ee43d49d27d695b52d4d54f9cafa328e450cc99d90da787a24b410/robust_laplacian-1.0.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d68af953f77e0430c182067e8de6695ebe104b337d2c4486731e4a471eae5082", size = 2574482 },
+    { url = "https://files.pythonhosted.org/packages/9d/3f/47ea261192cd14a73eb0176134298fc31cd2879e05ccf166875e2379327b/robust_laplacian-1.0.0-cp312-cp312-musllinux_1_2_i686.whl", hash = "sha256:e64180893ce84ba2a1cd2f8acd418f3d1ed9e36fdddaa4138739261b6d8d02c5", size = 3874877 },
+    { url = "https://files.pythonhosted.org/packages/ef/c0/c2767e36b5414aa2b1f296d44aa3b2c5e1aaeb22ffca1125c35ded327f17/robust_laplacian-1.0.0-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:8d46a25dc26117d6fe9e6634acdc0ffdce6e2e14b24ab7589a688c923c42c66e", size = 3673749 },
+    { url = "https://files.pythonhosted.org/packages/7c/ef/7b60577f0848659c7f2cbc1172f238835adebffdd383a73df5d3a70131c4/robust_laplacian-1.0.0-cp312-cp312-win32.whl", hash = "sha256:a2bf9823e7aadf4ed56bca1507931b64d526f28ac06e180e87c45ece92cf0a36", size = 3731037 },
+    { url = "https://files.pythonhosted.org/packages/2d/cb/b9f5c60377759181a70140ef387634ec99984d27d2a7753ebbb7367cbc09/robust_laplacian-1.0.0-cp312-cp312-win_amd64.whl", hash = "sha256:bf8ca367814e85a4ae915338e5d092c7ffd6c6a4f2450dd56bc904aebee5618f", size = 5236638 },
+    { url = "https://files.pythonhosted.org/packages/aa/53/ade99e2be294d984294490736bba66daeab3ba7a902e4217f67d2eaac356/robust_laplacian-1.0.0-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:18cd9c178a3b8e35a3b80e67c090bc50169ccd7add3fe8569d5d08e13e63cb08", size = 2787392 },
+    { url = "https://files.pythonhosted.org/packages/bd/0f/2af2f08b68ff4ae1cf1195e23a642d08002ad63ce27849597610a3048dbb/robust_laplacian-1.0.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:643613bcf035bfecbdc8de253e6788206a433495f70b1c23ebbf717331aca585", size = 2485552 },
+    { url = "https://files.pythonhosted.org/packages/76/76/dfeecb12afb11799737e61c751c3705e01d023a0c7d2bcc66749b8cfd5fc/robust_laplacian-1.0.0-cp313-cp313-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:2900051d8e70e389c5b04dd2ca361608eb116de3989334b0e89a9fab1cccfc2a", size = 2717239 },
+    { url = "https://files.pythonhosted.org/packages/9c/2e/6f6ee63e9477794e22be513c1494996023a5f344d8a3944a2cacd0c008b0/robust_laplacian-1.0.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:660f16dbdd4ca51797b583af51eeb4a6d673a8c8f3613b4cb049bcc5aa3b8ec2", size = 2574545 },
+    { url = "https://files.pythonhosted.org/packages/7c/01/86412aef2ceff37bab95d5358fe1465b8c7f3db7f88f2aaa5bb05fb18a16/robust_laplacian-1.0.0-cp313-cp313-musllinux_1_2_i686.whl", hash = "sha256:0fb53757d128b8786cea9a6dce908583220fc6186f14623d08c2049925b3bcb0", size = 3874714 },
+    { url = "https://files.pythonhosted.org/packages/f8/b7/f8777bed41afea527e24d28e92afdc528b5c630243613e2178198569be63/robust_laplacian-1.0.0-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:26bac12eb42693368e2ff25a7d36cf9c71ff7f7afdba15a54bb17dd092a12b20", size = 3674743 },
+    { url = "https://files.pythonhosted.org/packages/22/e5/25274943c6473b4aad73b2cdfa94c2b5938dca143b4926d9ee8ef5ae0c06/robust_laplacian-1.0.0-cp313-cp313-win32.whl", hash = "sha256:7033f1779971bbaf5fd713e790ec72278b587a341a7d91ca1591a1a64170cb3d", size = 3731116 },
+    { url = "https://files.pythonhosted.org/packages/c1/d2/a674eb08c56bfb94c4aac27856d33effa365936acbb9ac372add0e8e18b3/robust_laplacian-1.0.0-cp313-cp313-win_amd64.whl", hash = "sha256:1720bab4b83943956f8bd6cc7722a699529d3c498e8ae3d820b0f0592c445812", size = 5236703 },
 ]
 
 [[package]]

@@ -50,8 +50,6 @@ def poly_to_mesh(poly: pv.PolyData) -> Mesh:
 def fix_mesh(mesh, **kwargs):
     from pymeshfix import MeshFix
 
-    from meshspice import mesh_to_poly, poly_to_mesh
-
     poly = mesh_to_poly(mesh)
     mesh_fix = MeshFix(poly)
     mesh_fix.repair(**kwargs)

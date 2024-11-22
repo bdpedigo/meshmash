@@ -1,4 +1,4 @@
-# Contents of this file adapted from:
+# Some contents of this file adapted from:
 # https://github.com/RobinMagnet/pyFM/blob/master/pyFM/mesh/laplacian.py
 # (MIT License)
 import numpy as np
@@ -44,22 +44,6 @@ def area_matrix(mesh: Mesh) -> sparse.dia_matrix:
 
     A = sparse.dia_matrix((vertex_areas, 0), shape=(N, N))
     return A
-
-
-def cotangent_laplacian(
-    mesh: Mesh, robust=False, mollify_factor=1e-5
-) -> tuple[sparse.csc_array, sparse.dia_array]:
-    if robust:
-        from robust_laplacian import mesh_laplacian
-
-        L, M = mesh_laplacian(*mesh, mollify_factor=mollify_factor)
-        L = sparse.csc_array(L)
-        M = sparse.dia_array(M)
-
-    else:
-        L = _cotangent_laplacian(mesh)
-        M = area_matrix(mesh)
-        return L, M
 
 
 def _cotangent_laplacian(mesh: Mesh) -> sparse.csc_matrix:
@@ -111,6 +95,28 @@ def _cotangent_laplacian(mesh: Mesh) -> sparse.csc_matrix:
     Jn = np.concatenate([J, I, I, J])
     Sn = np.concatenate([-S, -S, S, S])
 
-    # TODO I changed this to CSC here, seemed to help just a bit, but should verify
     L = sparse.csc_matrix((Sn, (In, Jn)), shape=(N, N))
     return L
+
+
+def cotangent_laplacian(
+    mesh: Mesh, robust=False, mollify_factor=1e-5
+) -> tuple[sparse.csc_array, sparse.dia_array]:
+    if robust:
+        try:
+            from robust_laplacian import mesh_laplacian
+        except (ImportError, ModuleNotFoundError) as e:
+            msg = (
+                "To use the robust laplacian features, please install the "
+                "'robust-laplacian' package."
+            )
+            raise e.__class__(msg) from e
+
+        L, M = mesh_laplacian(*mesh, mollify_factor=mollify_factor)
+        L = sparse.csc_array(L)
+        M = sparse.dia_array(M)
+
+    else:
+        L = _cotangent_laplacian(mesh)
+        M = area_matrix(mesh)
+        return L, M
