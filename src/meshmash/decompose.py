@@ -1,3 +1,4 @@
+import time
 from typing import Optional
 
 import numpy as np
@@ -15,6 +16,7 @@ def decompose_laplacian(
     op_inv=None,
     sigma=-1e-10,
     tol=1e-10,
+    ncv=None,
     prefactor=None,
 ):
     """
@@ -49,8 +51,12 @@ def decompose_laplacian(
         # to change things much in terms of timing
     else:
         op_inv = None
+    k = n_components
+    n = L.shape[0]
+    ncv_factor = 1.5
+    ncv = min(n, max(ncv_factor * k + 1, 20))
     eigenvalues, eigenvectors = sparse.linalg.eigsh(
-        L, k=n_components, M=M, sigma=sigma, OPinv=op_inv, tol=tol
+        L, k=n_components, M=M, sigma=sigma, OPinv=op_inv, tol=tol, ncv=ncv
     )
     return eigenvalues, eigenvectors
 
@@ -169,18 +175,8 @@ def compute_hks(
     mollify_factor=1e-5,
     verbose=False,
 ):
-    # if fix:
-    #     if verbose:
-    #         print("Fixing mesh")
-    #     fixed_mesh = fix_mesh(mesh, remove_smallest_components=False, joincomp=True)
-    #     vertex_indices = pd.MultiIndex.from_arrays(mesh[0].T)
-    #     fixed_vertex_indices = pd.MultiIndex.from_arrays(fixed_mesh[0].T)
-    #     fixed_to_original_indices = fixed_vertex_indices.get_indexer_for(vertex_indices)
-    #     mesh = fixed_mesh
-
     # TODO unify this with the code above, mostly redundant!
-    # L = cotangent_laplacian(mesh, robust_eps=robust_eps)
-    # M = area_matrix(mesh)
+
     L, M = cotangent_laplacian(mesh, robust=robust, mollify_factor=mollify_factor)
 
     eigenvalues = []
@@ -193,14 +189,20 @@ def compute_hks(
     if t_max is not None and t_min is not None:
         scales = np.geomspace(t_min, t_max, n_scales)
     hks = np.zeros((L.shape[0], n_scales))
+    timing = {}
+    timing["decompose"] = 0
+    timing["band_hks"] = 0
+    timing["sum"] = 0
     pbar = tqdm(total=max_eigenvalue, disable=not verbose)
     while band_max_eigenvalue < max_eigenvalue:
         if verbose >= 2:
             print(f"Computing band with sigma={sigma:.3g}")
 
+        currtime = time.time()
         band_eigenvalues, band_eigenvectors = decompose_laplacian(
             L, M, n_components=band_size, sigma=sigma
         )
+        timing["decompose"] += time.time() - currtime
 
         if band_max_eigenvalue == 0 and scales is None:
             min_eigenvalue = band_eigenvalues[1]  # skip the first eigenvalue, is 0
@@ -241,11 +243,16 @@ def compute_hks(
             band_eigenvalues = band_eigenvalues[: truncation_idx + 1]
             band_eigenvectors = band_eigenvectors[:, : truncation_idx + 1]
 
+        currtime = time.time()
         # compute HKS
         band_coefs = np.exp(-np.outer(scales, band_eigenvalues))
 
         band_hks = np.einsum("tk,nk->nt", band_coefs, np.square(band_eigenvectors))
+        timing["band_hks"] += time.time() - currtime
+
+        currtime = time.time()
         hks += band_hks
+        timing["sum"] += time.time() - currtime
 
         # update values for next iteration
         eigenvalues.extend(band_eigenvalues)
@@ -263,5 +270,11 @@ def compute_hks(
     # if fix:
     #     hks = hks[fixed_to_original_indices]
     #     hks[fixed_to_original_indices == -1] = np.nan
+
+    if verbose >= 2:
+        print("Timing:")
+        total_time = sum(timing.values())
+        for key, value in timing.items():
+            print(f"{key}: {value:.3f} ({value / total_time:.2%})")
 
     return hks

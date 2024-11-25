@@ -112,10 +112,14 @@ def cotangent_laplacian(
             )
             raise e.__class__(msg) from e
 
-        L, M = mesh_laplacian(*mesh, mollify_factor=mollify_factor)
+        vertices = mesh[0]
+        faces = mesh[1]
+        vertices = np.asarray(vertices)
+        faces = np.asarray(faces)
+        L, M = mesh_laplacian(vertices, faces, mollify_factor=mollify_factor)
         L = sparse.csc_array(L)
         M = sparse.dia_array(M)
-
+        return L, M
     else:
         L = _cotangent_laplacian(mesh)
         M = area_matrix(mesh)

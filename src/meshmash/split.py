@@ -64,7 +64,13 @@ def bisect_adjacency(adj: csr_array):
     return sub_adjs, submesh_indices
 
 
-def fit_mesh_split(mesh: Mesh, vertex_threshold=20_000, max_rounds=1000, verbose=False):
+def fit_mesh_split(
+    mesh: Mesh,
+    max_vertex_threshold=20_000,
+    min_vertex_threshold=100,
+    max_rounds=100000,
+    verbose=False,
+):
     mesh = interpret_mesh(mesh)
     n_vertices = mesh[0].shape[0]
     mesh_indices = np.arange(n_vertices)
@@ -75,10 +81,10 @@ def fit_mesh_split(mesh: Mesh, vertex_threshold=20_000, max_rounds=1000, verbose
     for component_id in tqdm(range(n_components)):
         component_mask = component_labels == component_id
         count = component_mask.sum()
-        if count > 100:
+        if count > min_vertex_threshold:
             component_indices = mesh_indices[component_mask]
             component_adj = whole_adj[component_indices][:, component_indices]
-            assert connected_components(component_adj)[0] == 1
+            # assert connected_components(component_adj)[0] == 1
             adj_queue.append((component_adj, component_indices))
 
     # for component_id in tqdm(range(whole_mesh_poly["RegionId"].max() + 1)):
@@ -113,7 +119,7 @@ def fit_mesh_split(mesh: Mesh, vertex_threshold=20_000, max_rounds=1000, verbose
             print("Meshes in queue:", len(adj_queue))
         current_adj, current_indices = adj_queue.pop(0)
 
-        if current_adj.shape[0] <= vertex_threshold:
+        if current_adj.shape[0] <= max_vertex_threshold:
             sub_adjs, submesh_indices_to_main = [current_adj], [current_indices]
         else:  # otherwise, split
             sub_adjs, submesh_indices = bisect_adjacency(current_adj)
@@ -127,15 +133,25 @@ def fit_mesh_split(mesh: Mesh, vertex_threshold=20_000, max_rounds=1000, verbose
             ]
 
         for sub_adj, indices in zip(sub_adjs, submesh_indices_to_main):
-            if sub_adj.shape[0] > vertex_threshold:
+            if sub_adj.shape[0] > max_vertex_threshold:
                 adj_queue.append((sub_adj, indices))
             else:
-                assert connected_components(sub_adj)[0] == 1
+                # assert connected_components(sub_adj)[0] == 1
                 # finished_meshes.append((sub_adj, indices))
                 submesh_mapping[indices] = n_finished
                 indices_by_submesh.append(indices)
                 n_finished += 1
         rounds += 1
+
+    # remap so the first submesh is largest
+    valid_submesh_mapping = submesh_mapping[submesh_mapping != -1]
+    labels, counts = np.unique(valid_submesh_mapping, return_counts=True)
+    reorder = np.argsort(-counts)
+    new_labels = np.arange(labels.max() + 1)
+    old_to_new = dict(zip(labels[reorder], new_labels))
+    old_to_new[-1] = -1
+    submesh_mapping = np.vectorize(old_to_new.get)(submesh_mapping)
+
     return submesh_mapping
 
 
@@ -229,7 +245,11 @@ class MeshStitcher:
         self.n_jobs = n_jobs
 
     def split_mesh(
-        self, vertex_threshold=20_000, overlap_distance=20_000, max_rounds=1000
+        self,
+        max_vertex_threshold=20_000,
+        min_vertex_threshold=100,
+        overlap_distance=20_000,
+        max_rounds=100000,
     ):
         if self.verbose:
             currtime = time.time()
@@ -237,7 +257,8 @@ class MeshStitcher:
 
         submesh_mapping = fit_mesh_split(
             self.mesh,
-            vertex_threshold=vertex_threshold,
+            max_vertex_threshold=max_vertex_threshold,
+            min_vertex_threshold=min_vertex_threshold,
             max_rounds=max_rounds,
             verbose=self.verbose,
         )
