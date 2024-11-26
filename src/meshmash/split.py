@@ -78,7 +78,7 @@ def fit_mesh_split(
     n_components, component_labels = connected_components(whole_adj)
 
     adj_queue = []
-    for component_id in tqdm(range(n_components)):
+    for component_id in range(n_components):
         component_mask = component_labels == component_id
         count = component_mask.sum()
         if count > min_vertex_threshold:
@@ -333,17 +333,19 @@ class MeshStitcher:
         features_by_submesh: list[np.ndarray],
         fill_value=np.nan,
     ) -> np.ndarray:
+        first_feature = [feat for feat in features_by_submesh if feat is not None][0]
         all_clean_features = np.full(
-            (len(self.mesh[0]), features_by_submesh[0].shape[1]),
+            (len(self.mesh[0]), first_feature.shape[1]),
             fill_value,
             dtype=float,
         )
         for i, features in enumerate(features_by_submesh):
-            indices_in_original = self.submesh_overlap_indices[i]
-            keep_mask = self.submesh_mapping[indices_in_original] == i
-            keep_features = features[keep_mask]
-            index = np.where(self.submesh_mapping == i)
-            all_clean_features[index] = keep_features
+            if features is not None:
+                indices_in_original = self.submesh_overlap_indices[i]
+                keep_mask = self.submesh_mapping[indices_in_original] == i
+                keep_features = features[keep_mask]
+                index = np.where(self.submesh_mapping == i)
+                all_clean_features[index] = keep_features
         return all_clean_features
 
     def apply(
@@ -373,3 +375,52 @@ class MeshStitcher:
                 )
 
         return self.stitch_features(results_by_submesh, fill_value=fill_value)
+
+    def subset_apply(
+        self,
+        func,
+        indices,
+        *args,
+        fill_value=np.nan,
+        **kwargs,
+    ):
+        index_submesh_mappings = self.submesh_mapping[indices]
+        relevant_submesh_indices = np.unique(index_submesh_mappings)
+        relevant_submesh_indices = relevant_submesh_indices[
+            relevant_submesh_indices != -1
+        ]
+        submeshes = self.submeshes
+        relevant_submeshes = [submeshes[i] for i in relevant_submesh_indices]
+        if self.n_jobs == 1:
+            results_by_relevant_submesh = []
+            for submesh in tqdm(
+                relevant_submeshes,
+                desc="Applying function over submeshes",
+                disable=self.verbose < 1,
+            ):
+                results_by_relevant_submesh.append(func(submesh, *args, **kwargs))
+        else:
+            with tqdm_joblib(
+                desc="Applying function over submeshes",
+                total=len(relevant_submeshes),
+                disable=self.verbose < 1,
+            ):
+                results_by_relevant_submesh = Parallel(n_jobs=self.n_jobs)(
+                    delayed(func)(submesh, *args, **kwargs)
+                    for submesh in relevant_submeshes
+                )
+
+        results_by_submesh = []
+        counter = 0
+        for index in range(len(submeshes)):
+            if index in relevant_submesh_indices:
+                results_by_submesh.append(results_by_relevant_submesh[counter])
+                counter += 1
+            else:
+                results_by_submesh.append(None)
+
+        # TODO this is lazy bc I didn't want to rewrite the stitch_features function
+        stitched_features = self.stitch_features(
+            results_by_submesh, fill_value=fill_value
+        )
+        return stitched_features[indices]

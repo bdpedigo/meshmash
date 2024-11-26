@@ -51,10 +51,10 @@ def decompose_laplacian(
         # to change things much in terms of timing
     else:
         op_inv = None
-    k = n_components
-    n = L.shape[0]
-    ncv_factor = 1.5
-    ncv = min(n, max(ncv_factor * k + 1, 20))
+    # k = n_components
+    # n = L.shape[0]
+    # ncv_factor = 1.5
+    # ncv = min(n, max(ncv_factor * k + 1, 20))
     eigenvalues, eigenvectors = sparse.linalg.eigsh(
         L, k=n_components, M=M, sigma=sigma, OPinv=op_inv, tol=tol, ncv=ncv
     )
