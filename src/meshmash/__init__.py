@@ -5,15 +5,22 @@ from .decompose import (
     decompose_mesh,
 )
 from .laplacian import area_matrix, cotangent_laplacian
+from .pipeline import chunked_hks_pipeline
 from .split import (
+    MeshStitcher,
     apply_mesh_split,
     fit_mesh_split,
     fit_overlapping_mesh_split,
     get_submesh_borders,
-    MeshStitcher,
 )
 from .types import interpret_mesh
-from .utils import mesh_to_adjacency, mesh_to_poly, poly_to_mesh, fix_mesh
+from .utils import (
+    fix_mesh,
+    mesh_to_adjacency,
+    mesh_to_poly,
+    poly_to_mesh,
+    project_points_to_mesh,
+)
 
 __all__ = [
     "compute_hks",
@@ -32,4 +39,6 @@ __all__ = [
     "poly_to_mesh",
     "MeshStitcher",
     "fix_mesh",
+    "project_points_to_mesh",
+    "chunked_hks_pipeline",
 ]
