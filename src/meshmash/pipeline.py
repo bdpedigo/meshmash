@@ -1,7 +1,5 @@
 import time
 
-from fast_simplification import simplify
-
 from .decompose import compute_hks
 from .split import MeshStitcher
 from .types import interpret_mesh
@@ -10,8 +8,6 @@ from .types import interpret_mesh
 def chunked_hks_pipeline(
     mesh,
     mesh_indices=None,
-    target_reduction=0.7,
-    agg=7,
     n_scales=64,
     t_min=5e4,
     t_max=2e7,
@@ -35,12 +31,6 @@ def chunked_hks_pipeline(
         The input mesh.
     mesh_indices :
         The indices of the mesh to compute the HKS on.
-    target_reduction :
-        The target reduction for the mesh simplification. See
-        `fast_simplification.simplify`.
-    agg :
-        The aggregation factor for the mesh simplification. See
-        `fast_simplification.simplify`.
     n_scales :
         The number of scales for the HKS computation.
     t_min :
@@ -79,9 +69,6 @@ def chunked_hks_pipeline(
     """
     mesh = interpret_mesh(mesh)
     currtime = time.time()
-    mesh = simplify(mesh[0], mesh[1], target_reduction=target_reduction, agg=agg)
-    simplify_time = time.time() - currtime
-    currtime = time.time()
     stitcher = MeshStitcher(mesh, n_jobs=n_jobs, verbose=verbose)
     stitcher.split_mesh(
         overlap_distance=overlap_distance,
@@ -100,7 +87,6 @@ def chunked_hks_pipeline(
             robust=robust,
             mollify_factor=mollify_factor,
             truncate_extra=truncate_extra,
-            verbose=verbose,
         )
     else:
         X = stitcher.subset_apply(
@@ -113,16 +99,15 @@ def chunked_hks_pipeline(
             robust=robust,
             mollify_factor=mollify_factor,
             truncate_extra=truncate_extra,
-            verbose=verbose,
         )
     hks_time = time.time() - currtime
 
+    timing_info = {
+        "split_time": split_time,
+        "hks_time": hks_time,
+    }
+
     if return_timing:
-        timing_info = {
-            "simplify_time": simplify_time,
-            "split_time": split_time,
-            "hks_time": hks_time,
-        }
         return X, timing_info
     else:
         return X
