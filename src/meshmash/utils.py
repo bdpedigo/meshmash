@@ -1,9 +1,11 @@
 import numpy as np
+import pandas as pd
 import pyvista as pv
 from scipy.sparse import csr_array
+from scipy.sparse.csgraph import connected_components
 from sklearn.neighbors import NearestNeighbors
 
-from .types import Mesh
+from .types import Mesh, interpret_mesh
 
 
 def mesh_to_poly(mesh: Mesh) -> pv.PolyData:
@@ -17,6 +19,14 @@ def mesh_to_poly(mesh: Mesh) -> pv.PolyData:
         return pv.make_tri_mesh(mesh.vertices, mesh.faces)
     else:
         raise ValueError("Invalid mesh input.")
+
+
+def mesh_to_edges(mesh: Mesh) -> np.ndarray:
+    poly = mesh_to_poly(mesh)
+    edge_data = poly.extract_all_edges(use_all_points=True, clear_data=True)
+    lines = edge_data.lines
+    edges = lines.reshape(-1, 3)[:, 1:]
+    return edges
 
 
 def mesh_to_adjacency(mesh: Mesh) -> csr_array:
@@ -77,3 +87,25 @@ def project_points_to_mesh(
         return indices, distances
     else:
         return indices
+
+
+def get_label_components(mesh, labels):
+    """Returns the connected components of a mesh which share the same label."""
+    if isinstance(labels, pd.Series):
+        labels = labels.values
+
+    mesh = interpret_mesh(mesh)
+    edges = mesh_to_edges(mesh)
+    source_labels = labels[edges[:, 0]]
+    target_labels = labels[edges[:, 1]]
+
+    edges = edges[source_labels == target_labels]
+
+    clipped_graph = csr_array(
+        (np.ones(len(edges)), (edges[:, 0], edges[:, 1])),
+        shape=(mesh[0].shape[0], mesh[0].shape[0]),
+    )
+
+    _, component_labels = connected_components(clipped_graph, directed=False)
+
+    return component_labels

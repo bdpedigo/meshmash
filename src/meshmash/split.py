@@ -1,4 +1,5 @@
 import time
+from typing import Union
 
 import numpy as np
 import pandas as pd
@@ -65,47 +66,32 @@ def bisect_adjacency(adj: csr_array):
 
 
 def fit_mesh_split(
-    mesh: Mesh,
+    mesh: Union[Mesh, np.ndarray, csr_array],
     max_vertex_threshold=20_000,
     min_vertex_threshold=100,
     max_rounds=100000,
     verbose=False,
 ):
-    mesh = interpret_mesh(mesh)
-    n_vertices = mesh[0].shape[0]
+    if isinstance(mesh, (csr_array, np.ndarray)):
+        whole_adj = mesh
+    else:
+        mesh = interpret_mesh(mesh)
+        whole_adj = mesh_to_adjacency(mesh)
+
+    n_vertices = whole_adj.shape[0]
     mesh_indices = np.arange(n_vertices)
-    whole_adj = mesh_to_adjacency(mesh)
+
+    # first, append all the connected components that are large enough to the queue
     n_components, component_labels = connected_components(whole_adj)
 
     adj_queue = []
     for component_id in range(n_components):
         component_mask = component_labels == component_id
         count = component_mask.sum()
-        if count > min_vertex_threshold:
+        if count >= min_vertex_threshold:
             component_indices = mesh_indices[component_mask]
             component_adj = whole_adj[component_indices][:, component_indices]
-            # assert connected_components(component_adj)[0] == 1
             adj_queue.append((component_adj, component_indices))
-
-    # for component_id in tqdm(range(whole_mesh_poly["RegionId"].max() + 1)):
-    #     currtime = time.time()
-    #     component_mask = whole_mesh_poly.point_data["RegionId"] == component_id
-    #     count = component_mask.sum()
-    #     if count > 50:
-    #         component_indices = mesh_indices[component_mask]
-    #         # TODO this operation seems much slower than it needs to be
-    #         # component_mesh = whole_mesh_poly.extract_points(
-    #         #     component_indices, adjacent_cells=False
-    #         # ).extract_surface().triangulate()
-    #         # extract_time += time.time() - currtime
-    #         # # print(type(component_poly))
-    #         # # component_mesh = subset_mesh_by_indices(mesh, component_indices)
-    #         # currtime = time.time()
-    #         # component_adj = mesh_to_adjacency(component_mesh)
-    #         component_adj = whole_adj[component_indices][:, component_indices]
-    #         assert connected_components(component_adj)[0] == 1
-    #         adj_time += time.time() - currtime
-    #         adj_queue.append((component_adj, component_indices))
 
     submesh_mapping = np.full(n_vertices, -1, dtype=int)
     indices_by_submesh = []
@@ -114,11 +100,12 @@ def fit_mesh_split(
     rounds = 0
 
     while len(adj_queue) > 0 and rounds < max_rounds:
-        if verbose:
-            # print("Meshes in queue:", [m[0].shape[0] for m in adj_queue])
+        if verbose and rounds % 50 == 0:
             print("Meshes in queue:", len(adj_queue))
         current_adj, current_indices = adj_queue.pop(0)
 
+        # if this submesh is small enough, add it to the finished list
+        # this can happen if ccs are already small
         if current_adj.shape[0] <= max_vertex_threshold:
             sub_adjs, submesh_indices_to_main = [current_adj], [current_indices]
         else:  # otherwise, split
@@ -136,6 +123,7 @@ def fit_mesh_split(
             if sub_adj.shape[0] > max_vertex_threshold:
                 adj_queue.append((sub_adj, indices))
             else:
+                # TODO maybe add ensure_connected as a flag?
                 # assert connected_components(sub_adj)[0] == 1
                 # finished_meshes.append((sub_adj, indices))
                 submesh_mapping[indices] = n_finished

@@ -16,7 +16,9 @@ from .split import (
 from .types import interpret_mesh
 from .utils import (
     fix_mesh,
+    get_label_components,
     mesh_to_adjacency,
+    mesh_to_edges,
     mesh_to_poly,
     poly_to_mesh,
     project_points_to_mesh,
@@ -41,4 +43,6 @@ __all__ = [
     "fix_mesh",
     "project_points_to_mesh",
     "chunked_hks_pipeline",
+    "get_label_components",
+    "mesh_to_edges",
 ]
