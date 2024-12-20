@@ -18,7 +18,8 @@ def chunked_hks_pipeline(
     robust=True,
     mollify_factor=1e-5,
     truncate_extra=True,
-    n_jobs=None,
+    reindex=True,
+    n_jobs=-1,
     verbose=False,
     return_timing=False,
 ):
@@ -77,6 +78,8 @@ def chunked_hks_pipeline(
     )
     split_time = time.time() - currtime
     currtime = time.time()
+    if verbose:
+        print("Computing HKS across submeshes...")
     if mesh_indices is None:
         X = stitcher.apply(
             compute_hks,
@@ -92,6 +95,7 @@ def chunked_hks_pipeline(
         X = stitcher.subset_apply(
             compute_hks,
             mesh_indices,
+            reindex=reindex,
             n_scales=n_scales,
             t_min=t_min,
             t_max=t_max,

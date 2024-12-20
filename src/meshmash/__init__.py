@@ -15,6 +15,7 @@ from .split import (
 )
 from .types import interpret_mesh
 from .utils import (
+    component_size_transform,
     fix_mesh,
     get_label_components,
     mesh_to_adjacency,
@@ -45,4 +46,5 @@ __all__ = [
     "chunked_hks_pipeline",
     "get_label_components",
     "mesh_to_edges",
+    "component_size_transform",
 ]

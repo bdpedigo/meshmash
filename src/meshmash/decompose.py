@@ -3,6 +3,7 @@ from typing import Optional
 
 import numpy as np
 import scipy.sparse as sparse
+from scipy.linalg import eigh
 from tqdm.auto import tqdm
 
 from .laplacian import area_matrix, cotangent_laplacian
@@ -55,9 +56,12 @@ def decompose_laplacian(
     # n = L.shape[0]
     # ncv_factor = 1.5
     # ncv = min(n, max(ncv_factor * k + 1, 20))
-    eigenvalues, eigenvectors = sparse.linalg.eigsh(
-        L, k=n_components, M=M, sigma=sigma, OPinv=op_inv, tol=tol, ncv=ncv
-    )
+    if n_components >= L.shape[0]:
+        eigenvalues, eigenvectors = eigh(L.toarray(), M.toarray())
+    else:
+        eigenvalues, eigenvectors = sparse.linalg.eigsh(
+            L, k=n_components, M=M, sigma=sigma, OPinv=op_inv, tol=tol, ncv=ncv
+        )
     return eigenvalues, eigenvectors
 
 

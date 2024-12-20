@@ -89,6 +89,23 @@ def project_points_to_mesh(
         return indices
 
 
+def component_size_transform(mesh, indices=None):
+    """Returns the size of each connected component in a mesh."""
+    mesh = interpret_mesh(mesh)
+    if indices is None:
+        indices = np.arange(len(mesh[0]))
+    adj = mesh_to_adjacency(mesh)
+    _, component_labels = connected_components(adj, directed=False)
+
+    unique_labels, counts = np.unique(component_labels[indices], return_counts=True)
+    size_map = dict(zip(unique_labels, counts))
+
+    index_components = component_labels[indices]
+    component_sizes = np.array([size_map[label] for label in index_components])
+
+    return component_sizes
+
+
 def get_label_components(mesh, labels):
     """Returns the connected components of a mesh which share the same label."""
     if isinstance(labels, pd.Series):

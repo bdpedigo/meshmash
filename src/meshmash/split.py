@@ -254,10 +254,10 @@ class MeshStitcher:
         self.submesh_mapping = submesh_mapping
         temp_submeshes = apply_mesh_split(self.mesh, submesh_mapping)
 
-        # check if all submeshes are one connected component
-        for submesh in temp_submeshes:
-            poly = mesh_to_poly(submesh)
-            assert poly.n_points == poly.extract_largest().n_points
+        # # check if all submeshes are one connected component
+        # for submesh in temp_submeshes:
+        #     poly = mesh_to_poly(submesh)
+        #     assert poly.n_points == poly.extract_largest().n_points
 
         if self.verbose >= 2:
             print(f"Subdivision took {time.time() - currtime:.3f} seconds.")
@@ -369,6 +369,7 @@ class MeshStitcher:
         func,
         indices,
         *args,
+        reindex=False,
         fill_value=np.nan,
         **kwargs,
     ):
@@ -411,4 +412,7 @@ class MeshStitcher:
         stitched_features = self.stitch_features(
             results_by_submesh, fill_value=fill_value
         )
-        return stitched_features[indices]
+        if reindex:
+            return stitched_features[indices]
+        else:
+            return stitched_features
