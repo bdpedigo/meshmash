@@ -97,7 +97,7 @@ def component_size_transform(mesh, indices=None):
     adj = mesh_to_adjacency(mesh)
     _, component_labels = connected_components(adj, directed=False)
 
-    unique_labels, counts = np.unique(component_labels[indices], return_counts=True)
+    unique_labels, counts = np.unique(component_labels, return_counts=True)
     size_map = dict(zip(unique_labels, counts))
 
     index_components = component_labels[indices]

@@ -1,5 +1,5 @@
 import time
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
 import scipy.sparse as sparse
@@ -282,3 +282,165 @@ def compute_hks(
             print(f"{key}: {value:.3f} ({value / total_time:.2%})")
 
     return hks
+
+
+def get_hks_filter(
+    t_max: Optional[float] = None,
+    t_min: Optional[float] = None,
+    n_scales: int = 32,
+) -> Callable:
+    scales = np.geomspace(t_min, t_max, n_scales)
+
+    def hks_filter(eigenvalues):
+        coefs = np.exp(-np.outer(scales, eigenvalues))
+        return coefs
+
+    return hks_filter
+
+
+def spectral_geometry_filter(
+    mesh: Mesh,
+    filter: Callable,
+    max_eigenvalue: float = 1e-8,
+    band_size=50,
+    truncate_extra=True,
+    robust=True,
+    mollify_factor=1e-5,
+    verbose=False,
+):
+    """Apply a spectral filter to the geometry of a mesh.
+
+    Parameters
+    ----------
+    mesh :
+        The input mesh. Must be a tuple of vertices and faces as arrays, or be an object
+        with a `vertices` and `faces` attribute.
+    filter :
+        A function that takes 1D array of eigenvalues, and returns a 2D array of filter
+        coefficients, where the first dimension is the number of filters, and the second
+        is the number of eigenvalues.
+    max_eigenvalue :
+        The maximum eigenvalue to compute the eigendecomposition up to.
+    band_size :
+        The number of eigenvalues to compute at a time using the band-by-band algorithm
+        from [1]. This number should not affect the results, but may affect the speed.
+    truncate_extra :
+        If True, truncate the filter to the max_eigenvalue exactly. Due the the
+        band-by-band algorithm, the filter may overshoot the max_eigenvalue by at most
+        one band.
+    robust :
+        If True, use the robust laplacian computation described in [2].
+    mollify_factor :
+        The factor to use for the mollification when computing the robust laplacian.
+        If robust is False, this parameter is ignored.
+    verbose :
+        If >0, print out additional information about the computation. Higher values
+        give more information.
+
+    Returns
+    -------
+    :
+        A 2D array of features, where the first dimension is the number of vertices, and
+        the second is the number of features.
+
+    Notes
+    -----
+    Numerical errors are often due to a malformed mesh and therefore a malformed
+    Laplacian. For this reason, it is recommended to use the robust Laplacian
+    computation is used. Alternatively, make sure you are inputting a manifold mesh.
+
+    References
+    ----------
+    [1] Spectral Geometry Processing with Manifold Harmonics, Vallet and Levy, 2008
+    [2] A Laplacian for Nonmanifold Triangle Meshes, Sharp and Crane, 2020
+
+    """
+
+    # TODO add something about whether to throw out the first eigenpair
+    # TODO look up whether the eigenvector should be x or M^{-1}x from the generalized
+    # eigenvalue problem. In other words, dividing by the area. I saw something about
+    # this in a paper and highlighted it and now I can't find
+
+    L, M = cotangent_laplacian(mesh, robust=robust, mollify_factor=mollify_factor)
+
+    eigenvalues = []
+    band_max_eigenvalue = 0
+    sigma = -0.000001
+    last_eigenvalue = 0
+    eigenvalue_bandwidth = 0
+
+    # HACK: get the number of features for the filter
+    n_features = filter([1, 2, 3]).shape[0]
+
+    features = np.zeros((L.shape[0], n_features))
+    timing = {}
+    timing["decompose"] = 0
+    timing["filter"] = 0
+    timing["sum"] = 0
+    pbar = tqdm(total=max_eigenvalue, disable=not verbose)
+    while band_max_eigenvalue < max_eigenvalue:
+        if verbose >= 2:
+            print(f"Computing band with sigma={sigma:.3g}")
+
+        currtime = time.time()
+        band_eigenvalues, band_eigenvectors = decompose_laplacian(
+            L, M, n_components=band_size, sigma=sigma
+        )
+        timing["decompose"] += time.time() - currtime
+
+        # find the index where the new eigenvalues are within the tolerance
+        # of the last eigenvalue
+        diffs = np.abs(band_eigenvalues - last_eigenvalue)
+        tol = 1e-16
+        if np.min(diffs) > tol:
+            # retry with a smaller sigma
+            sigma = sigma - 0.2 * eigenvalue_bandwidth
+            if verbose >= 2:
+                print(f"Will retry band with sigma={sigma:.3g}")
+            band_eigenvalues = None
+            band_eigenvectors = None
+            continue
+        else:
+            # get the non-overlapping part of this band
+            closest_idx = np.argmin(diffs)
+            band_eigenvalues = band_eigenvalues[closest_idx + 1 :]
+            band_eigenvectors = band_eigenvectors[:, closest_idx + 1 :]
+
+        if truncate_extra and (band_eigenvalues[-1] > max_eigenvalue):
+            # Truncate to the max_eigenvalue
+            truncation_idx = np.searchsorted(band_eigenvalues, max_eigenvalue)
+            band_eigenvalues = band_eigenvalues[: truncation_idx + 1]
+            band_eigenvectors = band_eigenvectors[:, : truncation_idx + 1]
+
+        currtime = time.time()
+
+        # compute filter based on eigenvalues
+        band_coefs = filter(band_eigenvalues)
+
+        band_features = np.einsum("tk,nk->nt", band_coefs, np.square(band_eigenvectors))
+        timing["filter"] += time.time() - currtime
+
+        currtime = time.time()
+        features += band_features
+        timing["sum"] += time.time() - currtime
+
+        # update values for next iteration
+        eigenvalues.extend(band_eigenvalues)
+        band_max_eigenvalue = np.max(band_eigenvalues)
+        band_min_eigenvalue = np.min(band_eigenvalues)
+        eigenvalue_bandwidth = band_max_eigenvalue - band_min_eigenvalue
+        sigma = band_max_eigenvalue + 0.4 * eigenvalue_bandwidth
+
+        # update by the amount the max eigenvalue increased
+        pbar.update(band_max_eigenvalue - last_eigenvalue)
+        last_eigenvalue = band_eigenvalues[-1]
+
+    pbar.close()
+
+    if verbose >= 2:
+        print("Timing:")
+        total_time = sum(timing.values())
+        for key, value in timing.items():
+            print(f"{key}: {value:.3f} ({value / total_time:.2%})")
+
+    return features
