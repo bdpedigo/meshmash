@@ -1,8 +1,10 @@
 from .decompose import (
     compute_hks,
+    compute_hks2,
     decompose_laplacian,
     decompose_laplacian_by_bands,
     decompose_mesh,
+    spectral_geometry_filter,
 )
 from .laplacian import area_matrix, cotangent_laplacian
 from .pipeline import chunked_hks_pipeline
@@ -47,4 +49,6 @@ __all__ = [
     "get_label_components",
     "mesh_to_edges",
     "component_size_transform",
+    "spectral_geometry_filter",
+    "compute_hks2",
 ]

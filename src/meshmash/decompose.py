@@ -302,11 +302,12 @@ def spectral_geometry_filter(
     mesh: Mesh,
     filter: Callable,
     max_eigenvalue: float = 1e-8,
-    band_size=50,
-    truncate_extra=True,
-    robust=True,
-    mollify_factor=1e-5,
-    verbose=False,
+    band_size: int = 50,
+    truncate_extra: bool = True,
+    drop_first: bool = True,
+    robust: bool = True,
+    mollify_factor: bool = 1e-5,
+    verbose: int = False,
 ):
     """Apply a spectral filter to the geometry of a mesh.
 
@@ -328,6 +329,9 @@ def spectral_geometry_filter(
         If True, truncate the filter to the max_eigenvalue exactly. Due the the
         band-by-band algorithm, the filter may overshoot the max_eigenvalue by at most
         one band.
+    drop_first :
+        If True, drop the first eigenvalue and eigenvector. This should be 0 and the
+        constant eigenvector scaled by vertex areas, so it is often not useful.
     robust :
         If True, use the robust laplacian computation described in [2].
     mollify_factor :
@@ -414,10 +418,15 @@ def spectral_geometry_filter(
 
         currtime = time.time()
 
-        # compute filter based on eigenvalues
-        band_coefs = filter(band_eigenvalues)
+        if drop_first and len(eigenvalues) == 0:
+            first_idx = 1
+        else: 
+            first_idx = 0
 
-        band_features = np.einsum("tk,nk->nt", band_coefs, np.square(band_eigenvectors))
+        # compute filter based on eigenvalues
+        band_coefs = filter(band_eigenvalues[first_idx:])
+
+        band_features = np.einsum("tk,nk->nt", band_coefs, np.square(band_eigenvectors[:, first_idx:]))
         timing["filter"] += time.time() - currtime
 
         currtime = time.time()
@@ -444,3 +453,31 @@ def spectral_geometry_filter(
             print(f"{key}: {value:.3f} ({value / total_time:.2%})")
 
     return features
+
+
+def compute_hks2(
+    mesh: Mesh,
+    max_eigenvalue: float = 1e-8,
+    t_max: Optional[float] = None,
+    t_min: Optional[float] = None,
+    n_scales: int = 32,
+    band_size: int = 50,
+    truncate_extra: bool = False,
+    drop_first: bool = True,
+    robust: bool = True,
+    mollify_factor: float = 1e-5,
+    verbose: int = False,
+):
+    filter_func = get_hks_filter(t_max, t_min, n_scales)
+    out = spectral_geometry_filter(
+        mesh,
+        filter_func,
+        max_eigenvalue=max_eigenvalue,
+        band_size=band_size,
+        truncate_extra=truncate_extra,
+        drop_first=drop_first,
+        robust=robust,
+        mollify_factor=mollify_factor,
+        verbose=verbose,
+    )
+    return out
