@@ -1,6 +1,6 @@
 from .decompose import (
     compute_hks,
-    compute_hks2,
+    compute_hks_old,
     decompose_laplacian,
     decompose_laplacian_by_bands,
     decompose_mesh,
@@ -50,5 +50,5 @@ __all__ = [
     "mesh_to_edges",
     "component_size_transform",
     "spectral_geometry_filter",
-    "compute_hks2",
+    "compute_hks_old",
 ]

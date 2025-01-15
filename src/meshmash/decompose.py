@@ -164,7 +164,7 @@ def decompose_laplacian_by_bands(
     return eigenvalues, eigenvectors
 
 
-def compute_hks(
+def compute_hks_old(
     mesh: Mesh,
     max_eigenvalue: float = 1e-8,
     t_max: Optional[float] = None,
@@ -420,13 +420,15 @@ def spectral_geometry_filter(
 
         if drop_first and len(eigenvalues) == 0:
             first_idx = 1
-        else: 
+        else:
             first_idx = 0
 
         # compute filter based on eigenvalues
         band_coefs = filter(band_eigenvalues[first_idx:])
 
-        band_features = np.einsum("tk,nk->nt", band_coefs, np.square(band_eigenvectors[:, first_idx:]))
+        band_features = np.einsum(
+            "tk,nk->nt", band_coefs, np.square(band_eigenvectors[:, first_idx:])
+        )
         timing["filter"] += time.time() - currtime
 
         currtime = time.time()
@@ -455,7 +457,7 @@ def spectral_geometry_filter(
     return features
 
 
-def compute_hks2(
+def compute_hks(
     mesh: Mesh,
     max_eigenvalue: float = 1e-8,
     t_max: Optional[float] = None,
@@ -463,7 +465,7 @@ def compute_hks2(
     n_scales: int = 32,
     band_size: int = 50,
     truncate_extra: bool = False,
-    drop_first: bool = True,
+    drop_first: bool = False,
     robust: bool = True,
     mollify_factor: float = 1e-5,
     verbose: int = False,
