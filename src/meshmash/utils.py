@@ -126,3 +126,21 @@ def get_label_components(mesh, labels):
     _, component_labels = connected_components(clipped_graph, directed=False)
 
     return component_labels
+
+
+def subset_mesh_by_indices(mesh: Mesh, indices: np.ndarray) -> Mesh:
+    vertices, faces = interpret_mesh(mesh)
+    new_vertices = vertices[indices]
+    index_mapping = dict(zip(indices, np.arange(len(indices))))
+    # use numpy to get faces for which all indices are in the subset
+    face_mask = np.all(np.isin(faces, indices), axis=1)
+    new_faces = np.vectorize(index_mapping.get)(faces[face_mask])
+    return new_vertices, new_faces
+
+
+def largest_mesh_component(mesh: Mesh) -> Mesh:
+    adj = mesh_to_adjacency(mesh)
+    _, component_labels = connected_components(adj, directed=False)
+    largest_component = np.argmax(np.bincount(component_labels))
+    indices = np.where(component_labels == largest_component)[0]
+    return subset_mesh_by_indices(mesh, indices)

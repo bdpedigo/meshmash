@@ -11,17 +11,7 @@ from tqdm.auto import tqdm
 from tqdm_joblib import tqdm_joblib
 
 from .types import Mesh, interpret_mesh
-from .utils import mesh_to_adjacency, mesh_to_poly
-
-
-def subset_mesh_by_indices(mesh: Mesh, indices: np.ndarray) -> Mesh:
-    vertices, faces = interpret_mesh(mesh)
-    new_vertices = vertices[indices]
-    index_mapping = dict(zip(indices, np.arange(len(indices))))
-    # use numpy to get faces for which all indices are in the subset
-    face_mask = np.all(np.isin(faces, indices), axis=1)
-    new_faces = np.vectorize(index_mapping.get)(faces[face_mask])
-    return new_vertices, new_faces
+from .utils import mesh_to_adjacency, mesh_to_poly, subset_mesh_by_indices
 
 
 def graph_laplacian_split(adj: csr_array):
@@ -320,6 +310,7 @@ class MeshStitcher:
         self,
         features_by_submesh: list[np.ndarray],
         fill_value=np.nan,
+        add_label_column=False,
     ) -> np.ndarray:
         first_feature = [feat for feat in features_by_submesh if feat is not None][0]
         all_clean_features = np.full(
@@ -334,6 +325,20 @@ class MeshStitcher:
                 keep_features = features[keep_mask]
                 index = np.where(self.submesh_mapping == i)
                 all_clean_features[index] = keep_features
+
+        if add_label_column:
+            submesh_labels, submesh_label_counts = np.unique(
+                self.submesh_mapping, return_counts=True
+            )
+            submesh_indicator = [
+                np.full(count, label)
+                for label, count in zip(submesh_labels, submesh_label_counts)
+            ]
+            submesh_indicator = np.concatenate(submesh_indicator, axis=0)
+            all_clean_features = np.concatenate(
+                [all_clean_features, submesh_indicator[:, None]], axis=1
+            )
+
         return all_clean_features
 
     def apply(
@@ -416,3 +421,39 @@ class MeshStitcher:
             return stitched_features[indices]
         else:
             return stitched_features
+
+    def apply_on_features(
+        self, func, X, *args, fill_value=np.nan, add_label_column=False, **kwargs
+    ):
+        submeshes = self.submeshes
+        if self.n_jobs == 1:
+            results_by_submesh = []
+            for i, submesh in enumerate(
+                tqdm(
+                    submeshes,
+                    desc="Applying function over submeshes",
+                    disable=self.verbose < 1,
+                )
+            ):
+                submesh_features = X[self.submesh_overlap_indices[i]]
+                results_by_submesh.append(
+                    func(submesh, submesh_features, *args, **kwargs)
+                )
+        else:
+            with tqdm_joblib(
+                desc="Applying function over submeshes",
+                total=len(submeshes),
+                disable=self.verbose < 1,
+            ):
+                results_by_submesh = Parallel(n_jobs=self.n_jobs)(
+                    delayed(func)(
+                        submesh, X[self.submesh_overlap_indices[i]], *args, **kwargs
+                    )
+                    for i, submesh in enumerate(submeshes)
+                )
+
+        out_features = self.stitch_features(
+            results_by_submesh, fill_value=fill_value, add_label_column=add_label_column
+        )
+
+        return out_features
