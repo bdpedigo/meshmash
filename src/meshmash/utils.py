@@ -144,3 +144,16 @@ def largest_mesh_component(mesh: Mesh) -> Mesh:
     largest_component = np.argmax(np.bincount(component_labels))
     indices = np.where(component_labels == largest_component)[0]
     return subset_mesh_by_indices(mesh, indices)
+
+
+def shuffle_label_mapping(x):
+    uni_labels = np.unique(x)
+    new_labels = np.random.permutation(uni_labels)
+    label_map = dict(zip(uni_labels, new_labels))
+    x = np.array([label_map[label] for label in x])
+    return x
+
+
+def compute_distances_to_point(points, center_point):
+    """Computes the distance of each point in a mesh to a particular point."""
+    return np.linalg.norm(points - center_point, axis=1)

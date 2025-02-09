@@ -1,27 +1,40 @@
 import time
 
+import numpy as np
+import pandas as pd
+from fast_simplification import simplify
+
+from .agglomerate import agglomerate_split_mesh, aggregate_features
 from .decompose import compute_hks
+from .laplacian import compute_vertex_areas
 from .split import MeshStitcher
 from .types import interpret_mesh
+from .utils import (
+    component_size_transform,
+    compute_distances_to_point,
+)
 
 
 def chunked_hks_pipeline(
     mesh,
-    mesh_indices=None,
-    n_scales=64,
+    query_indices=None,
+    simplify_agg=7,
+    simplify_target_reduction=0.7,
+    overlap_distance=20_000,
+    max_vertex_threshold=20_000,
+    min_vertex_threshold=200,
+    n_scales=32,
     t_min=5e4,
     t_max=2e7,
     max_eval=5e-6,
-    overlap_distance=20_000,
-    max_vertex_threshold=20_000,
-    min_vertex_threshold=50,
     robust=True,
     mollify_factor=1e-5,
     truncate_extra=True,
-    reindex=True,
+    drop_first=True,
+    nuc_point=None,
+    distance_threshold=5.0,
     n_jobs=-1,
     verbose=False,
-    return_timing=False,
 ):
     """
     Compute the Heat Kernel Signature (HKS) on a mesh in a chunked fashion.
@@ -68,7 +81,18 @@ def chunked_hks_pipeline(
         The HKS features for the mesh, potentially subset to the specified
         `mesh_indices`.
     """
+    timing_info = {}
+
+    # input mesh
     mesh = interpret_mesh(mesh)
+
+    # mesh simplification
+    mesh = simplify(
+        mesh[0], mesh[1], agg=simplify_agg, target_reduction=simplify_target_reduction
+    )
+    mesh_indices = np.arange(mesh[0].shape[0])
+
+    # mesh splitting
     currtime = time.time()
     stitcher = MeshStitcher(mesh, n_jobs=n_jobs, verbose=verbose)
     stitcher.split_mesh(
@@ -76,12 +100,14 @@ def chunked_hks_pipeline(
         max_vertex_threshold=max_vertex_threshold,
         min_vertex_threshold=min_vertex_threshold,
     )
-    split_time = time.time() - currtime
+    timing_info["split_time"] = time.time() - currtime
+
+    # compute HKS
     currtime = time.time()
     if verbose:
         print("Computing HKS across submeshes...")
-    if mesh_indices is None:
-        X = stitcher.apply(
+    if query_indices is None:
+        X_hks = stitcher.apply(
             compute_hks,
             n_scales=n_scales,
             t_min=t_min,
@@ -90,12 +116,13 @@ def chunked_hks_pipeline(
             robust=robust,
             mollify_factor=mollify_factor,
             truncate_extra=truncate_extra,
+            drop_first=drop_first,
         )
     else:
-        X = stitcher.subset_apply(
+        X_hks = stitcher.subset_apply(
             compute_hks,
-            mesh_indices,
-            reindex=reindex,
+            query_indices,
+            reindex=False,
             n_scales=n_scales,
             t_min=t_min,
             t_max=t_max,
@@ -103,15 +130,45 @@ def chunked_hks_pipeline(
             robust=robust,
             mollify_factor=mollify_factor,
             truncate_extra=truncate_extra,
+            drop_first=drop_first,
         )
-    hks_time = time.time() - currtime
+    log_X_hks = np.log(X_hks)
+    X_hks_df = pd.DataFrame(X_hks, columns=[f"hks_{i}" for i in range(X_hks.shape[1])])
+    timing_info["hks_time"] = time.time() - currtime
 
-    timing_info = {
-        "split_time": split_time,
-        "hks_time": hks_time,
-    }
+    # Non-HKS features
+    currtime = time.time()
+    aux_X = []
+    aux_X_features = []
 
-    if return_timing:
-        return X, timing_info
-    else:
-        return X
+    component_sizes = component_size_transform(mesh, mesh_indices)
+    aux_X.append(component_sizes)
+    aux_X_features.append("component_size")
+
+    if nuc_point is not None:
+        distances_to_nuc = compute_distances_to_point(mesh[0], nuc_point)
+        aux_X.append(distances_to_nuc)
+        aux_X_features.append("distance_to_nucleus")
+
+    aux_X = np.column_stack(aux_X)
+    aux_X_df = pd.DataFrame(aux_X, columns=aux_X_features)
+    timing_info["aux_time"] = time.time() - currtime
+
+    joined_X_df = pd.concat([X_hks_df, aux_X_df], axis=1)
+
+    # agglomeration of mesh to domains
+    currtime = time.time()
+    areas = compute_vertex_areas(mesh)
+    agg_labels = agglomerate_split_mesh(
+        stitcher, log_X_hks, distance_thresholds=distance_threshold
+    )
+    timing_info["agglomeration_time"] = time.time() - currtime
+
+    # aggregate features
+    currtime = time.time()
+    agg_features_df = aggregate_features(
+        joined_X_df, agg_labels, func="mean", weights=areas
+    )
+    timing_info["aggregation_time"] = time.time() - currtime
+
+    return mesh, stitcher, joined_X_df, agg_features_df, agg_labels, timing_info

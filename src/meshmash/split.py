@@ -310,14 +310,18 @@ class MeshStitcher:
         self,
         features_by_submesh: list[np.ndarray],
         fill_value=np.nan,
-        add_label_column=False,
+        # add_label_column=False,
     ) -> np.ndarray:
-        first_feature = [feat for feat in features_by_submesh if feat is not None][0]
+        valid_features = [feat for feat in features_by_submesh if feat is not None]
+        if len(valid_features) == 0:
+            raise ValueError("All features are None")
+        first_feature = valid_features[0]
         all_clean_features = np.full(
             (len(self.mesh[0]), first_feature.shape[1]),
             fill_value,
             dtype=float,
         )
+        
         for i, features in enumerate(features_by_submesh):
             if features is not None:
                 indices_in_original = self.submesh_overlap_indices[i]
@@ -326,18 +330,20 @@ class MeshStitcher:
                 index = np.where(self.submesh_mapping == i)
                 all_clean_features[index] = keep_features
 
-        if add_label_column:
-            submesh_labels, submesh_label_counts = np.unique(
-                self.submesh_mapping, return_counts=True
-            )
-            submesh_indicator = [
-                np.full(count, label)
-                for label, count in zip(submesh_labels, submesh_label_counts)
-            ]
-            submesh_indicator = np.concatenate(submesh_indicator, axis=0)
-            all_clean_features = np.concatenate(
-                [all_clean_features, submesh_indicator[:, None]], axis=1
-            )
+        # if add_label_column:
+        #     mapping = self.submesh_mapping
+        #     valids = mapping[mapping != -1]
+        #     submesh_labels, submesh_label_counts = np.unique(
+        #         valids, return_counts=True
+        #     )
+        #     submesh_indicator = [
+        #         np.full(count, label)
+        #         for label, count in zip(submesh_labels, submesh_label_counts)
+        #     ]
+        #     submesh_indicator = np.concatenate(submesh_indicator, axis=0)
+        #     all_clean_features = np.concatenate(
+        #         [all_clean_features, submesh_indicator[:, None]], axis=1
+        #     )
 
         return all_clean_features
 
@@ -423,7 +429,7 @@ class MeshStitcher:
             return stitched_features
 
     def apply_on_features(
-        self, func, X, *args, fill_value=np.nan, add_label_column=False, **kwargs
+        self, func, X, *args, fill_value=np.nan, **kwargs
     ):
         submeshes = self.submeshes
         if self.n_jobs == 1:
@@ -453,7 +459,7 @@ class MeshStitcher:
                 )
 
         out_features = self.stitch_features(
-            results_by_submesh, fill_value=fill_value, add_label_column=add_label_column
+            results_by_submesh, fill_value=fill_value
         )
 
         return out_features

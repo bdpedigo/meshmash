@@ -4,7 +4,9 @@ from .agglomerate import (
     aggregate_features,
     fix_split_labels,
     multicut_ward,
+    blow_up_features,
 )
+from .cave import find_nucleus_point
 from .decompose import (
     compute_hks,
     compute_hks_old,
@@ -14,7 +16,7 @@ from .decompose import (
     get_hks_filter,
     spectral_geometry_filter,
 )
-from .laplacian import area_matrix, cotangent_laplacian
+from .laplacian import area_matrix, compute_vertex_areas, cotangent_laplacian
 from .pipeline import chunked_hks_pipeline
 from .split import (
     MeshStitcher,
@@ -26,6 +28,7 @@ from .split import (
 from .types import interpret_mesh
 from .utils import (
     component_size_transform,
+    compute_distances_to_point,
     fix_mesh,
     get_label_components,
     largest_mesh_component,
@@ -34,6 +37,7 @@ from .utils import (
     mesh_to_poly,
     poly_to_mesh,
     project_points_to_mesh,
+    shuffle_label_mapping,
     subset_mesh_by_indices,
 )
 
@@ -69,4 +73,9 @@ __all__ = [
     "fix_split_labels",
     "agglomerate_split_mesh",
     "aggregate_features",
+    "shuffle_label_mapping",
+    "compute_distances_to_point",
+    "find_nucleus_point",
+    "compute_vertex_areas",
+    "blow_up_features",
 ]
