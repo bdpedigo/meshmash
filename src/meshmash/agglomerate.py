@@ -137,7 +137,6 @@ def aggregate_features(features, labels, weights=None, func="mean") -> pd.DataFr
     else:
         feature_df = features
     cols = feature_df.columns
-    print(cols)
     if labels is None:
         return feature_df
     feature_df["label"] = labels
@@ -157,7 +156,6 @@ def aggregate_features(features, labels, weights=None, func="mean") -> pd.DataFr
     else:
         agg_feature_df = feature_df.groupby("label").agg(func=func)
     out = agg_feature_df[cols]
-    print(out.columns)
     return out
 
 
