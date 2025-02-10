@@ -2,7 +2,7 @@ import time
 
 import numpy as np
 import pandas as pd
-from fast_simplification import simplify
+from fast_simplification import replay_simplification, simplify
 
 from .agglomerate import agglomerate_split_mesh, aggregate_features
 from .decompose import compute_hks
@@ -37,16 +37,40 @@ def chunked_hks_pipeline(
     verbose=False,
 ):
     """
-    Compute the Heat Kernel Signature (HKS) on a mesh in a chunked fashion.
+    Compute the Heat Kernel Signature (HKS) on a mesh in a chunked fashion. Also
+    aggregates HKS features in local regions of the mesh.
 
     Parameters
     ----------
     mesh :
-        The input mesh.
-    mesh_indices :
-        The indices of the mesh to compute the HKS on.
+        The input mesh. Should be a tuple of (vertices, faces), or an object with
+        `vertices` and `faces` attributes.
+    query_indices :
+        The indices of the mesh of interest. If provided, will only compute the HKS for
+        chunks which contain these indices. Otherwise, will compute the HKS for all
+        chunks.
+    simplify_agg :
+        Controls how aggressively to decimate the mesh. A value of 10 will result in a
+        fast decimation at the expense of mesh quality and shape. A value of 0 will
+        attempt to preserve the original mesh geometry at the expense of time. Setting
+        a low value may result in being unable to reach the `target_reduction`.
+    simplify_target_reduction :
+        The target reduction for the mesh simplification. Fraction of the original mesh
+        to remove. If set to 0.9, this function will try to reduce the data set to 10%
+        of its original size and will remove 90% of the input triangles.
+    overlap_distance :
+        The geodesic distance to overlap mesh chunks. Larger values will result in less
+        distortion (especially for long timescales) but more computation time.
+    max_vertex_threshold :
+        The maximum number of vertices for a mesh chunk, before overlapping.
+    min_vertex_threshold :
+        The minimum number of vertices for a mesh chunk to be included in subsequent
+        computations. This can be used to filter out small disconnected pieces of the
+        mesh.
     n_scales :
-        The number of scales for the HKS computation.
+        The number of timescales for the HKS computation. This determines the
+        number of HKS features. Timescales will be logarithmically spaced between
+        `t_min` and `t_max`.
     t_min :
         The minimum timescale for the HKS computation.
     t_max :
@@ -54,13 +78,6 @@ def chunked_hks_pipeline(
     max_eval :
         The maximum eigenvalue for the HKS computation. Larger eigenvalues give a more
         detailed HKS result at the expense of computation time.
-    overlap_distance :
-        The distance to overlap the mesh chunks. Larger values will result in less
-        distortion (especially for long timescales) but more computation time.
-    max_vertex_threshold :
-        The maximum number of vertices for a mesh chunk, before overlapping.
-    min_vertex_threshold :
-        The minimum number of vertices for a mesh chunk, before overlapping.
     robust :
         Whether to use the robust laplacian for the HKS computation. This is generally
         recommended as it does a better job of handling degenerate meshes.
@@ -68,18 +85,40 @@ def chunked_hks_pipeline(
         The mollification factor for the robust laplacian computation.
     truncate_extra :
         Whether to truncate extra eigenpairs that may be computed past `max_eigenvalue`.
+    drop_first :
+        Whether to drop the first eigenpair from the computation, which will always be
+        proportional to the areas of each vertex.
+    nuc_point:
+        The coordinates of the nucleus point. If provided, will compute the distance
+        from each vertex to this point and include it as a feature.
+    distance_threshold:
+        The distance threshold for agglomerating the mesh. This is used to
+        determine which chunks to merge together based on their HKS features.
     n_jobs :
         The number of jobs to use for the computation. See `joblib.Parallel`.
     verbose :
         Whether to print verbose output.
-    return_timing :
-        Whether to return the timing information for each process.
 
     Returns
     -------
-    np.ndarray
-        The HKS features for the mesh, potentially subset to the specified
-        `mesh_indices`.
+    :
+        The mesh after simplification.
+    :
+        The mapping from the original mesh to the simplified mesh. Has length of the
+        number of vertices in the original mesh; each element contains the index that
+        the vertex maps to in the simplified mesh.
+    :
+        The mesh stitcher object. Contains information about the mesh chunks and their
+        overlaps.
+    :
+        The HKS features for each vertex in the simplified mesh.
+    :
+        The aggregated HKS features for each domain in the mesh.
+    :
+        The labels for each vertex in the simplified mesh, indicating which domain it
+        belongs to.
+    :
+        Timing information for each step of the pipeline.
     """
     timing_info = {}
 
@@ -87,9 +126,20 @@ def chunked_hks_pipeline(
     mesh = interpret_mesh(mesh)
 
     # mesh simplification
-    mesh = simplify(
-        mesh[0], mesh[1], agg=simplify_agg, target_reduction=simplify_target_reduction
+    vertices, faces, collapses = simplify(
+        mesh[0],
+        mesh[1],
+        agg=simplify_agg,
+        target_reduction=simplify_target_reduction,
+        return_collapses=True,
     )
+
+    _, _, mapping = replay_simplification(
+        points=mesh[0],
+        triangles=mesh[1],
+        collapses=collapses,
+    )
+    mesh = (vertices, faces)
     mesh_indices = np.arange(mesh[0].shape[0])
 
     # mesh splitting
@@ -171,4 +221,12 @@ def chunked_hks_pipeline(
     )
     timing_info["aggregation_time"] = time.time() - currtime
 
-    return mesh, stitcher, joined_X_df, agg_features_df, agg_labels, timing_info
+    return (
+        mesh,
+        mapping,
+        stitcher,
+        joined_X_df,
+        agg_features_df,
+        agg_labels,
+        timing_info,
+    )
