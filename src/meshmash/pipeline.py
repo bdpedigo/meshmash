@@ -119,6 +119,23 @@ def chunked_hks_pipeline(
         belongs to.
     :
         Timing information for each step of the pipeline.
+
+    Notes
+    -----
+    This pipeline currently consists of the following steps: 
+
+        1. Mesh simplification, using https://github.com/pyvista/fast-simplification.
+        2. Mesh splitting, using a routine which iteratively does spectral bisection of 
+           the mesh until all chunks are below the `max_vertex_threshold`. These chunks
+           are then grown to overlap using the `overlap_distance` parameter.
+        3. Computation of the heat kernel signature of Sun et al (2008). This routine 
+           uses the robust laplacian of Crane et al. (2020) for more stable results. It 
+           also leverages the band-by-band eigensolver method of Vallet and Levy (2008).
+        4. Agglomeration of the mesh into local domains which are bounded in the 
+           variance of the HKS features. This uses the implementation of Ward's method
+           in scikit-learn which allows for a connectivity constraint.
+        5. Aggregation of the computed features to the local domains. This takes the 
+           area-weighted mean of the features for each domain.
     """
     timing_info = {}
 
