@@ -3,10 +3,11 @@ from typing import Callable, Optional
 
 import numpy as np
 import scipy.sparse as sparse
+from scipy.interpolate import BSpline
 from scipy.linalg import eigh
 from tqdm.auto import tqdm
 
-from .laplacian import area_matrix, cotangent_laplacian
+from .laplacian import cotangent_laplacian
 from .types import ArrayLike, Mesh
 
 
@@ -71,10 +72,11 @@ def decompose_mesh(
     op_inv=None,
     sigma=-1e-10,
     tol=1e-10,
+    robust=True,
+    mollify_factor=1e-5,
     prefactor=None,
 ):
-    L = cotangent_laplacian(mesh)
-    M = area_matrix(mesh)
+    L, M = cotangent_laplacian(mesh, robust=robust, mollify_factor=mollify_factor)
     return decompose_laplacian(
         L,
         M,
@@ -298,9 +300,41 @@ def get_hks_filter(
     return hks_filter
 
 
+def construct_bspline_basis(e_min: float, e_max: float, n_components: int):
+    extrapolate = False
+    basis_degree = 3
+    domain = np.array([e_min, e_max])
+
+    width = (domain[1] - domain[0]) / (n_components + basis_degree - 1)
+
+    t = np.linspace(
+        domain[0] - width * (basis_degree - 1),
+        domain[1] + width * (basis_degree - 1),
+        n_components + basis_degree,
+    )
+
+    bases = []
+    for shift in range(n_components):
+        knots = t[shift : shift + basis_degree + 1]
+        b = BSpline.basis_element(knots, extrapolate=extrapolate)
+        bases.append(b)
+    return bases
+
+
+def construct_bspline_filter(e_min: float, e_max: float, n_components: int):
+    bases = construct_bspline_basis(e_min, e_max, n_components)
+
+    def bspline_filter(eigenvalues):
+        coefs = np.stack([b(eigenvalues) for b in bases])
+        coefs[~np.isfinite(coefs)] = 0
+        return coefs
+
+    return bspline_filter
+
+
 def spectral_geometry_filter(
     mesh: Mesh,
-    filter: Callable,
+    filter: Optional[Callable] = None,
     max_eigenvalue: float = 1e-8,
     band_size: int = 50,
     truncate_extra: bool = True,
@@ -319,7 +353,8 @@ def spectral_geometry_filter(
     filter :
         A function that takes 1D array of eigenvalues, and returns a 2D array of filter
         coefficients, where the first dimension is the number of filters, and the second
-        is the number of eigenvalues.
+        is the number of eigenvalues. If None, the eigenvectors and eigenvalues
+        themselves will be returned, and no filtering will be applied.
     max_eigenvalue :
         The maximum eigenvalue to compute the eigendecomposition up to.
     band_size :
@@ -369,14 +404,18 @@ def spectral_geometry_filter(
 
     eigenvalues = []
     band_max_eigenvalue = 0
-    sigma = -0.000001
+    sigma = -1e-10
     last_eigenvalue = 0
     eigenvalue_bandwidth = 0
 
-    # HACK: get the number of features for the filter
-    n_features = filter([1, 2, 3]).shape[0]
+    if filter is not None:
+        # HACK: get the number of features for the filter
+        n_features = filter([1, 2, 3]).shape[0]
+        features = np.zeros((L.shape[0], n_features))
+    else:
+        # will just store the eigenvectors themselves
+        features = []
 
-    features = np.zeros((L.shape[0], n_features))
     timing = {}
     timing["decompose"] = 0
     timing["filter"] = 0
@@ -423,17 +462,20 @@ def spectral_geometry_filter(
         else:
             first_idx = 0
 
-        # compute filter based on eigenvalues
-        band_coefs = filter(band_eigenvalues[first_idx:])
+        if filter is not None:
+            # compute filter based on eigenvalues
+            band_coefs = filter(band_eigenvalues[first_idx:])
 
-        band_features = np.einsum(
-            "tk,nk->nt", band_coefs, np.square(band_eigenvectors[:, first_idx:])
-        )
-        timing["filter"] += time.time() - currtime
+            band_features = np.einsum(
+                "tk,nk->nt", band_coefs, np.square(band_eigenvectors[:, first_idx:])
+            )
+            timing["filter"] += time.time() - currtime
 
-        currtime = time.time()
-        features += band_features
-        timing["sum"] += time.time() - currtime
+            currtime = time.time()
+            features += band_features
+            timing["sum"] += time.time() - currtime
+        else:
+            features.append(band_eigenvectors)
 
         # update values for next iteration
         eigenvalues.extend(band_eigenvalues)
@@ -454,7 +496,12 @@ def spectral_geometry_filter(
         for key, value in timing.items():
             print(f"{key}: {value:.3f} ({value / total_time:.2%})")
 
-    return features
+    if filter is None:
+        eigenvalues = np.array(eigenvalues)
+        features = np.concatenate(features, axis=1)
+        return eigenvalues, features
+    else:
+        return features
 
 
 def compute_hks(
@@ -462,7 +509,7 @@ def compute_hks(
     max_eigenvalue: float = 1e-8,
     t_max: Optional[float] = None,
     t_min: Optional[float] = None,
-    n_scales: int = 32,
+    n_components: int = 32,
     band_size: int = 50,
     truncate_extra: bool = False,
     drop_first: bool = False,
@@ -470,7 +517,33 @@ def compute_hks(
     mollify_factor: float = 1e-5,
     verbose: int = False,
 ):
-    filter_func = get_hks_filter(t_max, t_min, n_scales)
+    filter_func = get_hks_filter(t_max, t_min, n_components)
+    out = spectral_geometry_filter(
+        mesh,
+        filter_func,
+        max_eigenvalue=max_eigenvalue,
+        band_size=band_size,
+        truncate_extra=truncate_extra,
+        drop_first=drop_first,
+        robust=robust,
+        mollify_factor=mollify_factor,
+        verbose=verbose,
+    )
+    return out
+
+
+def compute_geometry_vectors(
+    mesh: Mesh,
+    max_eigenvalue: float = 1e-8,
+    n_components: int = 32,
+    band_size: int = 50,
+    truncate_extra: bool = False,
+    drop_first: bool = False,
+    robust: bool = True,
+    mollify_factor: float = 1e-5,
+    verbose: int = False,
+):
+    filter_func = construct_bspline_filter(0.0, max_eigenvalue, n_components)
     out = spectral_geometry_filter(
         mesh,
         filter_func,

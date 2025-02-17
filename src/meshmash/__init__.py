@@ -15,6 +15,9 @@ from .decompose import (
     decompose_mesh,
     get_hks_filter,
     spectral_geometry_filter,
+    construct_bspline_basis, 
+    construct_bspline_filter,
+    compute_geometry_vectors
 )
 from .laplacian import area_matrix, compute_vertex_areas, cotangent_laplacian
 from .pipeline import chunked_hks_pipeline
@@ -24,6 +27,8 @@ from .split import (
     fit_mesh_split,
     fit_overlapping_mesh_split,
     get_submesh_borders,
+    graph_laplacian_split,
+    fit_mesh_split_lap
 )
 from .types import interpret_mesh
 from .utils import (
@@ -39,6 +44,8 @@ from .utils import (
     project_points_to_mesh,
     shuffle_label_mapping,
     subset_mesh_by_indices,
+    edges_to_lines,
+    rough_subset_mesh_by_indices
 )
 
 __all__ = [
@@ -78,4 +85,11 @@ __all__ = [
     "find_nucleus_point",
     "compute_vertex_areas",
     "blow_up_features",
+    "graph_laplacian_split",
+    "edges_to_lines",
+    "fit_mesh_split_lap",
+    "construct_bspline_basis",
+    "construct_bspline_filter",
+    "compute_geometry_vectors",
+    "rough_subset_mesh_by_indices",
 ]

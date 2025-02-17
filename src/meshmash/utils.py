@@ -132,10 +132,26 @@ def subset_mesh_by_indices(mesh: Mesh, indices: np.ndarray) -> Mesh:
     vertices, faces = interpret_mesh(mesh)
     new_vertices = vertices[indices]
     index_mapping = dict(zip(indices, np.arange(len(indices))))
+
     # use numpy to get faces for which all indices are in the subset
     face_mask = np.all(np.isin(faces, indices), axis=1)
+
     new_faces = np.vectorize(index_mapping.get)(faces[face_mask])
     return new_vertices, new_faces
+
+
+# actually, let's just move to a separate function
+def rough_subset_mesh_by_indices(mesh: Mesh, indices: np.ndarray):
+    vertices, faces = interpret_mesh(mesh)
+
+    face_mask = np.any(np.isin(faces, indices), axis=1)
+    vertex_indices = np.unique(faces[face_mask])
+    new_vertices = vertices[vertex_indices]
+    index_mapping = dict(zip(vertex_indices, np.arange(len(vertex_indices))))
+
+    new_faces = np.vectorize(index_mapping.get)(faces[face_mask])
+    new_mesh = (new_vertices, new_faces)
+    return new_mesh, vertex_indices
 
 
 def largest_mesh_component(mesh: Mesh) -> Mesh:
@@ -157,3 +173,8 @@ def shuffle_label_mapping(x):
 def compute_distances_to_point(points, center_point):
     """Computes the distance of each point in a mesh to a particular point."""
     return np.linalg.norm(points - center_point, axis=1)
+
+
+def edges_to_lines(edges: np.ndarray) -> np.ndarray:
+    lines = np.column_stack((np.full((len(edges), 1), 2), edges))
+    return lines

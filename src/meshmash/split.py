@@ -7,11 +7,19 @@ from joblib import Parallel, delayed
 from scipy.sparse import csr_array
 from scipy.sparse.csgraph import connected_components, dijkstra, laplacian
 from scipy.sparse.linalg import eigsh
+from scipy.stats import rankdata
 from tqdm.auto import tqdm
 from tqdm_joblib import tqdm_joblib
 
+from .decompose import decompose_laplacian
+from .laplacian import cotangent_laplacian
 from .types import Mesh, interpret_mesh
-from .utils import mesh_to_adjacency, mesh_to_poly, subset_mesh_by_indices
+from .utils import (
+    mesh_to_adjacency,
+    mesh_to_poly,
+    rough_subset_mesh_by_indices,
+    subset_mesh_by_indices,
+)
 
 
 def graph_laplacian_split(adj: csr_array):
@@ -133,6 +141,146 @@ def fit_mesh_split(
     return submesh_mapping
 
 
+# def laplacian_split(L: csr_array, M):
+#     # TODO normed didn't seem to make much of a difference here; perhaps just because
+#     # degrees are fairly homogeneous?
+#     # lap, degrees = laplacian(adj, normed=False, symmetrized=True, return_diag=True)
+
+#     # NOTE: tried this as initialization, but it also didn't seem to make a difference
+#     # maybe overhead is all in the LU decomposition?
+#     # n = adj.shape[0]
+#     # v0 = np.full(n, 1 / np.sqrt(n))
+#     eigenvalues, eigenvectors = eigsh(
+#         L,
+
+#         k=2,
+#         sigma=-1e-10,
+#     )
+#     indices1 = np.nonzero(eigenvectors[:, 1] >= 0)[0]
+#     indices2 = np.nonzero(eigenvectors[:, 1] < 0)[0]
+#     return indices1, indices2
+
+from scipy.sparse import diags_array
+
+
+def subset_diags(matrix, indices):
+    return diags_array(matrix.diagonal()[indices], shape=(len(indices), len(indices)))
+
+
+def bisect_laplacian(L, M):
+    # get the split indices
+    # indices1, indices2 = graph_laplacian_split(adj)
+
+    _, eigenvectors = decompose_laplacian(L, M, n_components=2)
+    indices1 = np.nonzero(eigenvectors[:, 1] >= 0)[0]
+    indices2 = np.nonzero(eigenvectors[:, 1] < 0)[0]
+
+    # get the sub-adjacencies
+    sub_adj1 = L[indices1][:, indices1]
+    sub_adj2 = L[indices2][:, indices2]
+
+    # make sure we didn't disconnect any nodes
+    # degrees1 = np.sum(sub_adj1, axis=1) + np.sum(sub_adj1, axis=0)
+    # degrees2 = np.sum(sub_adj2, axis=1) + np.sum(sub_adj2, axis=0)
+    # if np.any(degrees1 == 0):
+    #     raise RuntimeError("Some nodes were disconnected in the split.")
+    # if np.any(degrees2 == 0):
+    #     raise RuntimeError("Some nodes were disconnected in the split.")
+
+    sub_laps = (
+        (sub_adj1, subset_diags(M, indices1)),
+        (sub_adj2, subset_diags(M, indices2)),
+    )
+
+    submesh_indices = (indices1, indices2)
+
+    return sub_laps, submesh_indices
+
+
+def fit_mesh_split_lap(
+    mesh: Union[Mesh, np.ndarray, csr_array],
+    max_vertex_threshold=20_000,
+    min_vertex_threshold=100,
+    max_rounds=100000,
+    robust=True,
+    mollify_factor=1e-5,
+    verbose=False,
+):
+    if isinstance(mesh, (csr_array, np.ndarray)):
+        whole_adj = mesh
+    else:
+        mesh = interpret_mesh(mesh)
+        whole_adj = mesh_to_adjacency(mesh)
+
+    n_vertices = whole_adj.shape[0]
+    mesh_indices = np.arange(n_vertices)
+
+    # first, append all the connected components that are large enough to the queue
+    n_components, component_labels = connected_components(whole_adj)
+
+    adj_queue = []
+    for component_id in range(n_components):
+        component_mask = component_labels == component_id
+        count = component_mask.sum()
+        if count >= min_vertex_threshold:
+            component_indices = mesh_indices[component_mask]
+            # component_adj = whole_adj[component_indices][:, component_indices]
+            submesh = subset_mesh_by_indices(mesh, component_indices)
+            L, M = cotangent_laplacian(
+                submesh, robust=robust, mollify_factor=mollify_factor
+            )
+            adj_queue.append(((L, M), component_indices))
+
+    submesh_mapping = np.full(n_vertices, -1, dtype=int)
+    indices_by_submesh = []
+
+    n_finished = 0
+    rounds = 0
+
+    while len(adj_queue) > 0 and rounds < max_rounds:
+        if verbose:
+            print("Meshes in queue:", len(adj_queue))
+        current_adj, current_indices = adj_queue.pop(0)
+
+        # if this submesh is small enough, add it to the finished list
+        # this can happen if ccs are already small
+        if current_adj[0].shape[0] <= max_vertex_threshold:
+            sub_adjs, submesh_indices_to_main = [current_adj], [current_indices]
+        else:  # otherwise, split
+            sub_adjs, submesh_indices = bisect_laplacian(*current_adj)
+            submesh_colors = np.zeros(n_vertices, dtype=float)
+            submesh_colors[submesh_indices[0]] = 0
+            submesh_colors[submesh_indices[1]] = 1
+
+            # adjust indices to be in terms of the main mesh
+            submesh_indices_to_main = [
+                current_indices[indices] for indices in submesh_indices
+            ]
+
+        for sub_adj, indices in zip(sub_adjs, submesh_indices_to_main):
+            if sub_adj[0].shape[0] > max_vertex_threshold:
+                adj_queue.append((sub_adj, indices))
+            else:
+                # TODO maybe add ensure_connected as a flag?
+                # assert connected_components(sub_adj)[0] == 1
+                # finished_meshes.append((sub_adj, indices))
+                submesh_mapping[indices] = n_finished
+                indices_by_submesh.append(indices)
+                n_finished += 1
+        rounds += 1
+
+    # remap so the first submesh is largest
+    valid_submesh_mapping = submesh_mapping[submesh_mapping != -1]
+    labels, counts = np.unique(valid_submesh_mapping, return_counts=True)
+    reorder = np.argsort(-counts)
+    new_labels = np.arange(labels.max() + 1)
+    old_to_new = dict(zip(labels[reorder], new_labels))
+    old_to_new[-1] = -1
+    submesh_mapping = np.vectorize(old_to_new.get)(submesh_mapping)
+
+    return submesh_mapping
+
+
 def apply_mesh_split(mesh: Mesh, split_mapping: np.ndarray) -> list[Mesh]:
     vertices, faces = interpret_mesh(mesh)
     faces = pd.DataFrame(faces)
@@ -228,6 +376,8 @@ class MeshStitcher:
         min_vertex_threshold=100,
         overlap_distance=20_000,
         max_rounds=100000,
+        max_overlap_neighbors=40_000,
+        verify_connected=True,
     ):
         if self.verbose:
             currtime = time.time()
@@ -271,25 +421,40 @@ class MeshStitcher:
                 min_only=True,
             )
             neighbor_mask = np.isfinite(neighbor_dists)
+
+            # only keep the top max_overlap_neighbors neighbors
+            if max_overlap_neighbors is not None:
+                ranks = rankdata(neighbor_dists, method="min", nan_policy="omit")
+                is_closest = ranks < max_overlap_neighbors + 1
+                neighbor_mask = neighbor_mask & is_closest
+
             indices = np.arange(adjacency.shape[0])
             indices = indices[neighbor_mask | (submesh_mapping == i)]
-            # TODO this is a total hack but sometimes a node can get disconnected by
-            # this operation since it only keeps faces where all vertices are in the
-            # subset. Could change that in the future (but then we have opposite
-            # problem of getting too many nodes) or do something that selects faces is
-            # maybe more natural
-            new_submesh = subset_mesh_by_indices(self.mesh, indices)
-            adj = mesh_to_adjacency(new_submesh)
-            n_components, labels = connected_components(adj)
-            uni_labels, counts = np.unique(labels, return_counts=True)
-            largest = uni_labels[np.argmax(counts)]
-            fixed_indices = indices[labels == largest]
-            new_submesh = subset_mesh_by_indices(self.mesh, fixed_indices)
+
+            if max_overlap_neighbors is None:
+                # TODO this is a total hack but sometimes a node can get disconnected by
+                # this operation since it only keeps faces where all vertices are in the
+                # subset. Could change that in the future (but then we have opposite
+                # problem of getting too many nodes) or do something that selects faces is
+                # maybe more natural
+                new_submesh = subset_mesh_by_indices(self.mesh, indices)
+                adj = mesh_to_adjacency(new_submesh)
+                n_components, labels = connected_components(adj)
+                uni_labels, counts = np.unique(labels, return_counts=True)
+                largest = uni_labels[np.argmax(counts)]
+                fixed_indices = indices[labels == largest]
+                new_submesh = subset_mesh_by_indices(self.mesh, fixed_indices)
+            else:
+                # new behavior
+                new_submesh, fixed_indices = rough_subset_mesh_by_indices(
+                    self.mesh, indices
+                )
 
             # check if all submeshes are one connected component
-            adj = mesh_to_adjacency(new_submesh)
-            n_components, labels = connected_components(adj)
-            assert n_components == 1
+            if verify_connected:
+                adj = mesh_to_adjacency(new_submesh)
+                n_components, labels = connected_components(adj)
+                assert n_components == 1
 
             self.submesh_overlap_indices.append(fixed_indices)
             self.submeshes.append(new_submesh)
@@ -321,7 +486,7 @@ class MeshStitcher:
             fill_value,
             dtype=float,
         )
-        
+
         for i, features in enumerate(features_by_submesh):
             if features is not None:
                 indices_in_original = self.submesh_overlap_indices[i]
@@ -428,9 +593,7 @@ class MeshStitcher:
         else:
             return stitched_features
 
-    def apply_on_features(
-        self, func, X, *args, fill_value=np.nan, **kwargs
-    ):
+    def apply_on_features(self, func, X, *args, fill_value=np.nan, **kwargs):
         submeshes = self.submeshes
         if self.n_jobs == 1:
             results_by_submesh = []
@@ -458,8 +621,6 @@ class MeshStitcher:
                     for i, submesh in enumerate(submeshes)
                 )
 
-        out_features = self.stitch_features(
-            results_by_submesh, fill_value=fill_value
-        )
+        out_features = self.stitch_features(results_by_submesh, fill_value=fill_value)
 
         return out_features
