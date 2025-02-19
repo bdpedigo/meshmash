@@ -2,22 +2,22 @@ from .agglomerate import (
     agglomerate_mesh,
     agglomerate_split_mesh,
     aggregate_features,
+    blow_up_features,
     fix_split_labels,
     multicut_ward,
-    blow_up_features,
 )
 from .cave import find_nucleus_point
 from .decompose import (
+    compute_geometry_vectors,
     compute_hks,
     compute_hks_old,
+    construct_bspline_basis,
+    construct_bspline_filter,
     decompose_laplacian,
     decompose_laplacian_by_bands,
     decompose_mesh,
     get_hks_filter,
     spectral_geometry_filter,
-    construct_bspline_basis, 
-    construct_bspline_filter,
-    compute_geometry_vectors
 )
 from .laplacian import area_matrix, compute_vertex_areas, cotangent_laplacian
 from .pipeline import chunked_hks_pipeline
@@ -25,27 +25,30 @@ from .split import (
     MeshStitcher,
     apply_mesh_split,
     fit_mesh_split,
+    fit_mesh_split_lap,
     fit_overlapping_mesh_split,
     get_submesh_borders,
     graph_laplacian_split,
-    fit_mesh_split_lap
 )
 from .types import interpret_mesh
 from .utils import (
+    combine_meshes,
     component_size_transform,
     compute_distances_to_point,
+    edges_to_lines,
     fix_mesh,
     get_label_components,
     largest_mesh_component,
+    mesh_connected_components,
     mesh_to_adjacency,
     mesh_to_edges,
     mesh_to_poly,
     poly_to_mesh,
     project_points_to_mesh,
+    rough_subset_mesh_by_indices,
     shuffle_label_mapping,
     subset_mesh_by_indices,
-    edges_to_lines,
-    rough_subset_mesh_by_indices
+    threshold_mesh_by_component_size,
 )
 
 __all__ = [
@@ -92,4 +95,7 @@ __all__ = [
     "construct_bspline_filter",
     "compute_geometry_vectors",
     "rough_subset_mesh_by_indices",
+    "mesh_connected_components",
+    "combine_meshes",
+    "threshold_mesh_by_component_size",
 ]

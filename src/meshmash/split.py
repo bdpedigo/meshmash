@@ -1,3 +1,4 @@
+import logging
 import time
 from typing import Union
 
@@ -41,7 +42,7 @@ def graph_laplacian_split(adj: csr_array):
     return indices1, indices2
 
 
-def bisect_adjacency(adj: csr_array):
+def bisect_adjacency(adj: csr_array, n_retries: int = 5):
     # get the split indices
     indices1, indices2 = graph_laplacian_split(adj)
 
@@ -52,10 +53,9 @@ def bisect_adjacency(adj: csr_array):
     # make sure we didn't disconnect any nodes
     degrees1 = np.sum(sub_adj1, axis=1) + np.sum(sub_adj1, axis=0)
     degrees2 = np.sum(sub_adj2, axis=1) + np.sum(sub_adj2, axis=0)
-    if np.any(degrees1 == 0):
-        raise RuntimeError("Some nodes were disconnected in the split.")
-    if np.any(degrees2 == 0):
-        raise RuntimeError("Some nodes were disconnected in the split.")
+    if np.any(degrees1 == 0) or np.any(degrees2 == 0):
+        logging.warning("Some nodes were disconnected in the split, retrying.")
+        return bisect_adjacency(adj, n_retries=n_retries - 1)
 
     sub_adjs = (sub_adj1, sub_adj2)
     submesh_indices = (indices1, indices2)
@@ -466,7 +466,7 @@ class MeshStitcher:
         # for submesh in self.submeshes:
         #     adj = mesh_to_adjacency(submesh)
         #     assert connected_components(adj)[0] == 1
-        if self.verbose:
+        if self.verbose >= 2:
             print(f"Overlap detection took {time.time() - currtime:.3f} seconds.")
 
         return self.submeshes
@@ -519,18 +519,19 @@ class MeshStitcher:
         fill_value=np.nan,
         **kwargs,
     ):
+        func_name = func.__name__
         submeshes = self.submeshes
         if self.n_jobs == 1:
             results_by_submesh = []
             for submesh in tqdm(
                 submeshes,
-                desc="Applying function over submeshes",
+                desc=f"Applying function {func_name}",
                 disable=self.verbose < 1,
             ):
                 results_by_submesh.append(func(submesh, *args, **kwargs))
         else:
             with tqdm_joblib(
-                desc="Applying function over submeshes",
+                desc=f"Applying function {func_name}",
                 total=len(submeshes),
                 disable=self.verbose < 1,
             ):
@@ -549,6 +550,7 @@ class MeshStitcher:
         fill_value=np.nan,
         **kwargs,
     ):
+        func_name = func.__name__
         index_submesh_mappings = self.submesh_mapping[indices]
         relevant_submesh_indices = np.unique(index_submesh_mappings)
         relevant_submesh_indices = relevant_submesh_indices[
@@ -560,13 +562,13 @@ class MeshStitcher:
             results_by_relevant_submesh = []
             for submesh in tqdm(
                 relevant_submeshes,
-                desc="Applying function over submeshes",
+                desc=f"Applying function {func_name}",
                 disable=self.verbose < 1,
             ):
                 results_by_relevant_submesh.append(func(submesh, *args, **kwargs))
         else:
             with tqdm_joblib(
-                desc="Applying function over submeshes",
+                desc=f"Applying function {func_name}",
                 total=len(relevant_submeshes),
                 disable=self.verbose < 1,
             ):
@@ -594,13 +596,14 @@ class MeshStitcher:
             return stitched_features
 
     def apply_on_features(self, func, X, *args, fill_value=np.nan, **kwargs):
+        func_name = func.__name__
         submeshes = self.submeshes
         if self.n_jobs == 1:
             results_by_submesh = []
             for i, submesh in enumerate(
                 tqdm(
                     submeshes,
-                    desc="Applying function over submeshes",
+                    desc=f"Applying function {func_name}",
                     disable=self.verbose < 1,
                 )
             ):
@@ -610,7 +613,7 @@ class MeshStitcher:
                 )
         else:
             with tqdm_joblib(
-                desc="Applying function over submeshes",
+                desc=f"Applying function {func_name}",
                 total=len(submeshes),
                 disable=self.verbose < 1,
             ):

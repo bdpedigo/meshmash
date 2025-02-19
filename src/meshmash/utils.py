@@ -136,7 +136,7 @@ def subset_mesh_by_indices(mesh: Mesh, indices: np.ndarray) -> Mesh:
     # use numpy to get faces for which all indices are in the subset
     face_mask = np.all(np.isin(faces, indices), axis=1)
 
-    new_faces = np.vectorize(index_mapping.get)(faces[face_mask])
+    new_faces = np.vectorize(index_mapping.get)(faces[face_mask]).astype(faces.dtype)
     return new_vertices, new_faces
 
 
@@ -178,3 +178,46 @@ def compute_distances_to_point(points, center_point):
 def edges_to_lines(edges: np.ndarray) -> np.ndarray:
     lines = np.column_stack((np.full((len(edges), 1), 2), edges))
     return lines
+
+
+def combine_meshes(meshes):
+    meshes = [interpret_mesh(mesh) for mesh in meshes]
+    n_vertices_per_mesh = [mesh[0].shape[0] for mesh in meshes]
+    cumulative_n_vertices = list(np.cumsum(n_vertices_per_mesh))
+    shifts = [0] + cumulative_n_vertices[:-1]
+    vertices = []
+    faces = []
+    for i, (v, f) in enumerate(meshes):
+        vertices.append(v)
+        faces.append(f + shifts[i])
+    vertices = np.concatenate(vertices, axis=0, dtype=meshes[0][0].dtype)
+    faces = np.concatenate(faces, axis=0, dtype=meshes[0][1].dtype)
+    return (vertices, faces)
+
+
+def mesh_connected_components(mesh, size_threshold=100):
+    adj = mesh_to_adjacency(mesh)
+    _, component_labels = connected_components(adj, directed=False)
+    uni_labels, counts = np.unique(component_labels, return_counts=True)
+    if size_threshold is not None:
+        uni_labels = uni_labels[counts >= size_threshold]
+
+    for label in uni_labels:
+        indices = np.where(component_labels == label)[0]
+        yield subset_mesh_by_indices(mesh, indices)
+
+
+def threshold_mesh_by_component_size(mesh, size_threshold=100): 
+    adj = mesh_to_adjacency(mesh)
+
+    _, component_labels = connected_components(adj, directed=False)
+    uni_labels, counts = np.unique(component_labels, return_counts=True)
+    uni_labels = uni_labels[counts >= size_threshold]
+
+    mask = np.isin(component_labels, uni_labels)
+    indices = np.arange(len(mesh[0]))[mask]
+
+    mesh = subset_mesh_by_indices(mesh, indices)
+
+    return mesh, indices
+

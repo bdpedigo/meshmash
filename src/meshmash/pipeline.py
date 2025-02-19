@@ -12,6 +12,7 @@ from .types import interpret_mesh
 from .utils import (
     component_size_transform,
     compute_distances_to_point,
+    threshold_mesh_by_component_size,
 )
 
 
@@ -23,10 +24,11 @@ def chunked_hks_pipeline(
     overlap_distance=20_000,
     max_vertex_threshold=20_000,
     min_vertex_threshold=200,
-    n_scales=32,
+    max_overlap_neighbors=40_000,
+    n_components=32,
     t_min=5e4,
     t_max=2e7,
-    max_eval=5e-6,
+    max_eigenvalue=5e-6,
     robust=True,
     mollify_factor=1e-5,
     truncate_extra=True,
@@ -67,7 +69,10 @@ def chunked_hks_pipeline(
         The minimum number of vertices for a mesh chunk to be included in subsequent
         computations. This can be used to filter out small disconnected pieces of the
         mesh.
-    n_scales :
+    max_overlap_neighbors :
+        The maximum number of neighbors to consider when overlapping mesh chunks. This
+        overrules `overlap_distance`.
+    n_components :
         The number of timescales for the HKS computation. This determines the
         number of HKS features. Timescales will be logarithmically spaced between
         `t_min` and `t_max`.
@@ -122,28 +127,34 @@ def chunked_hks_pipeline(
 
     Notes
     -----
-    This pipeline currently consists of the following steps: 
+    This pipeline currently consists of the following steps:
 
         1. Mesh simplification, using https://github.com/pyvista/fast-simplification.
-        2. Mesh splitting, using a routine which iteratively does spectral bisection of 
+        2. Mesh splitting, using a routine which iteratively does spectral bisection of
            the mesh until all chunks are below the `max_vertex_threshold`. These chunks
            are then grown to overlap using the `overlap_distance` parameter.
-        3. Computation of the heat kernel signature of Sun et al (2008). This routine 
-           uses the robust laplacian of Crane et al. (2020) for more stable results. It 
+        3. Computation of the heat kernel signature of Sun et al (2008). This routine
+           uses the robust laplacian of Crane et al. (2020) for more stable results. It
            also leverages the band-by-band eigensolver method of Vallet and Levy (2008).
-        4. Agglomeration of the mesh into local domains which are bounded in the 
+        4. Agglomeration of the mesh into local domains which are bounded in the
            variance of the HKS features. This uses the implementation of Ward's method
            in scikit-learn which allows for a connectivity constraint.
-        5. Aggregation of the computed features to the local domains. This takes the 
+        5. Aggregation of the computed features to the local domains. This takes the
            area-weighted mean of the features for each domain.
     """
     timing_info = {}
 
     # input mesh
-    mesh = interpret_mesh(mesh)
+    original_mesh = interpret_mesh(mesh)
+
+    mesh, indices_from_original = threshold_mesh_by_component_size(
+        original_mesh, size_threshold=min_vertex_threshold
+    )
 
     # mesh simplification
-    vertices, faces, collapses = simplify(
+    # NOTE: for some reason the order here differs from that in replay_simplification,
+    # we want the latter so as to preserve the indices for `mapping`
+    _, _, collapses = simplify(
         mesh[0],
         mesh[1],
         agg=simplify_agg,
@@ -151,7 +162,7 @@ def chunked_hks_pipeline(
         return_collapses=True,
     )
 
-    _, _, mapping = replay_simplification(
+    vertices, faces, thresh_to_simple_mapping = replay_simplification(
         points=mesh[0],
         triangles=mesh[1],
         collapses=collapses,
@@ -166,6 +177,8 @@ def chunked_hks_pipeline(
         overlap_distance=overlap_distance,
         max_vertex_threshold=max_vertex_threshold,
         min_vertex_threshold=min_vertex_threshold,
+        max_overlap_neighbors=max_overlap_neighbors,
+        verify_connected=False,
     )
     timing_info["split_time"] = time.time() - currtime
 
@@ -176,10 +189,10 @@ def chunked_hks_pipeline(
     if query_indices is None:
         X_hks = stitcher.apply(
             compute_hks,
-            n_scales=n_scales,
+            n_components=n_components,
             t_min=t_min,
             t_max=t_max,
-            max_eigenvalue=max_eval,
+            max_eigenvalue=max_eigenvalue,
             robust=robust,
             mollify_factor=mollify_factor,
             truncate_extra=truncate_extra,
@@ -190,10 +203,10 @@ def chunked_hks_pipeline(
             compute_hks,
             query_indices,
             reindex=False,
-            n_scales=n_scales,
+            n_components=n_components,
             t_min=t_min,
             t_max=t_max,
-            max_eigenvalue=max_eval,
+            max_eigenvalue=max_eigenvalue,
             robust=robust,
             mollify_factor=mollify_factor,
             truncate_extra=truncate_extra,
@@ -237,6 +250,10 @@ def chunked_hks_pipeline(
         joined_X_df, agg_labels, func="mean", weights=areas
     )
     timing_info["aggregation_time"] = time.time() - currtime
+
+    # reconstruct mapping to original mesh
+    mapping = np.full(len(original_mesh[0]), -1, dtype=np.int32)
+    mapping[indices_from_original] = thresh_to_simple_mapping
 
     return (
         mesh,

@@ -159,7 +159,7 @@ def aggregate_features(features, labels, weights=None, func="mean") -> pd.DataFr
     return out
 
 
-def blow_up_features(agg_features, labels):
-    out = agg_features.loc[labels]
+def blow_up_features(agg_features_df: pd.DataFrame, labels: np.ndarray) -> pd.DataFrame:
+    out = agg_features_df.loc[labels]
     out.reset_index(drop=True, inplace=True)
     return out
