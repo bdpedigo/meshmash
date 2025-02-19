@@ -19,6 +19,8 @@ from .decompose import (
     get_hks_filter,
     spectral_geometry_filter,
 )
+from .graph import compute_edge_widths, condense_mesh_to_graph
+from .io import read_condensed_features, save_condensed_features
 from .laplacian import area_matrix, compute_vertex_areas, cotangent_laplacian
 from .pipeline import chunked_hks_pipeline
 from .split import (
@@ -98,4 +100,8 @@ __all__ = [
     "mesh_connected_components",
     "combine_meshes",
     "threshold_mesh_by_component_size",
+    "compute_edge_widths",
+    "condense_mesh_to_graph",
+    "save_condensed_features",
+    "read_condensed_features",
 ]

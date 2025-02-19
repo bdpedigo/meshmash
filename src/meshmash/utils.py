@@ -207,7 +207,7 @@ def mesh_connected_components(mesh, size_threshold=100):
         yield subset_mesh_by_indices(mesh, indices)
 
 
-def threshold_mesh_by_component_size(mesh, size_threshold=100): 
+def threshold_mesh_by_component_size(mesh, size_threshold=100):
     adj = mesh_to_adjacency(mesh)
 
     _, component_labels = connected_components(adj, directed=False)
@@ -221,3 +221,9 @@ def threshold_mesh_by_component_size(mesh, size_threshold=100):
 
     return mesh, indices
 
+
+def expand_labels(condensed_labels: np.ndarray, mapping: np.ndarray) -> np.ndarray:
+    """Take a condensed set of labels for a reduced mesh and expand them to the full mesh."""
+    labels = condensed_labels[mapping]
+    labels[mapping == -1] = -1
+    return labels

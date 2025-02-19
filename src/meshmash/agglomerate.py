@@ -92,7 +92,7 @@ def fix_split_labels(agg_labels, submesh_mapping):
 
         valid_labels = agg_labels[valid_mask, label_column]
         submesh_labels = submesh_mapping[valid_mask]
-
+        
         tuple_labels = pd.Index(list(zip(valid_labels, submesh_labels)))
         unique_labels = np.unique(tuple_labels)
 

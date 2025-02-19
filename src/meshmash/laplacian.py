@@ -126,6 +126,9 @@ def cotangent_laplacian(
         return L, M
 
 
-def compute_vertex_areas(mesh):
-    _, D = cotangent_laplacian(mesh, robust=True)
-    return D.diagonal()
+def compute_vertex_areas(mesh, robust=False, mollify_factor=1e-5):
+    if not robust:
+        return area_matrix(mesh).diagonal()
+    else:
+        _, D = cotangent_laplacian(mesh, robust=robust, mollify_factor=mollify_factor)
+        return D.diagonal()

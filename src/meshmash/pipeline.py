@@ -1,4 +1,5 @@
 import time
+from collections import namedtuple
 
 import numpy as np
 import pandas as pd
@@ -12,7 +13,24 @@ from .types import interpret_mesh
 from .utils import (
     component_size_transform,
     compute_distances_to_point,
+    expand_labels,
     threshold_mesh_by_component_size,
+)
+
+# create a named tuple for the return type
+
+result = namedtuple(
+    "result",
+    [
+        "simple_mesh",
+        "mapping",
+        "stitcher",
+        "simple_features",
+        "simple_agg_labels",
+        "agg_features",
+        "agg_labels",
+        "timing_info",
+    ],
 )
 
 
@@ -227,8 +245,10 @@ def chunked_hks_pipeline(
 
     if nuc_point is not None:
         distances_to_nuc = compute_distances_to_point(mesh[0], nuc_point)
-        aux_X.append(distances_to_nuc)
-        aux_X_features.append("distance_to_nucleus")
+    else:
+        distances_to_nuc = np.full(mesh[0].shape[0], np.nan)
+    aux_X.append(distances_to_nuc)
+    aux_X_features.append("distance_to_nucleus")
 
     aux_X = np.column_stack(aux_X)
     aux_X_df = pd.DataFrame(aux_X, columns=aux_X_features)
@@ -239,7 +259,7 @@ def chunked_hks_pipeline(
     # agglomeration of mesh to domains
     currtime = time.time()
     areas = compute_vertex_areas(mesh)
-    agg_labels = agglomerate_split_mesh(
+    simple_agg_labels = agglomerate_split_mesh(
         stitcher, log_X_hks, distance_thresholds=distance_threshold
     )
     timing_info["agglomeration_time"] = time.time() - currtime
@@ -247,7 +267,7 @@ def chunked_hks_pipeline(
     # aggregate features
     currtime = time.time()
     agg_features_df = aggregate_features(
-        joined_X_df, agg_labels, func="mean", weights=areas
+        joined_X_df, simple_agg_labels, func="mean", weights=areas
     )
     timing_info["aggregation_time"] = time.time() - currtime
 
@@ -255,12 +275,17 @@ def chunked_hks_pipeline(
     mapping = np.full(len(original_mesh[0]), -1, dtype=np.int32)
     mapping[indices_from_original] = thresh_to_simple_mapping
 
-    return (
+    agg_labels = expand_labels(simple_agg_labels, mapping)
+
+    out = result(
         mesh,
         mapping,
         stitcher,
         joined_X_df,
+        simple_agg_labels,
         agg_features_df,
         agg_labels,
         timing_info,
     )
+
+    return out
