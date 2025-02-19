@@ -127,7 +127,7 @@ def chunked_hks_pipeline(
 
     Notes
     -----
-    This pipeline currently consists of the following steps:
+    This pipeline consists of the following steps:
 
         1. Mesh simplification, using https://github.com/pyvista/fast-simplification.
         2. Mesh splitting, using a routine which iteratively does spectral bisection of
