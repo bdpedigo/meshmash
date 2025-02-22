@@ -155,6 +155,10 @@ def aggregate_features(features, labels, weights=None, func="mean") -> pd.DataFr
         )
     else:
         agg_feature_df = feature_df.groupby("label").agg(func=func)
+    
+    expected_indices = np.arange(-1, labels.max() + 1)
+    agg_feature_df = agg_feature_df.reindex(expected_indices, copy=False)
+
     out = agg_feature_df[cols]
     return out
 

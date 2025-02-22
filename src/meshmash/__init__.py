@@ -10,7 +10,6 @@ from .cave import find_nucleus_point
 from .decompose import (
     compute_geometry_vectors,
     compute_hks,
-    compute_hks_old,
     construct_bspline_basis,
     construct_bspline_filter,
     decompose_laplacian,
@@ -20,7 +19,12 @@ from .decompose import (
     spectral_geometry_filter,
 )
 from .graph import compute_edge_widths, condense_mesh_to_graph
-from .io import read_condensed_features, save_condensed_features
+from .io import (
+    read_condensed_edges,
+    read_condensed_features,
+    save_condensed_edges,
+    save_condensed_features,
+)
 from .laplacian import area_matrix, compute_vertex_areas, cotangent_laplacian
 from .pipeline import chunked_hks_pipeline
 from .split import (
@@ -76,7 +80,6 @@ __all__ = [
     "mesh_to_edges",
     "component_size_transform",
     "spectral_geometry_filter",
-    "compute_hks_old",
     "get_hks_filter",
     "subset_mesh_by_indices",
     "largest_mesh_component",
@@ -104,4 +107,6 @@ __all__ = [
     "condense_mesh_to_graph",
     "save_condensed_features",
     "read_condensed_features",
+    "save_condensed_edges",
+    "read_condensed_edges",
 ]

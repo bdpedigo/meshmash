@@ -1,7 +1,8 @@
 def find_nucleus_point(root_id, client):
-    nuc_table = client.materialize.query_view(
-        "nucleus_detection_lookup_v1",
-        filter_equal_dict={"pt_root_id": root_id},
+    current_root_id = client.chunkedgraph.suggest_latest_roots(root_id)
+    nuc_table = client.materialize.views.nucleus_detection_lookup_v1(
+        pt_root_id=current_root_id
+    ).query(
         split_positions=True,
         desired_resolution=[1, 1, 1],
     )

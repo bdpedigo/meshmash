@@ -54,7 +54,7 @@ def bisect_adjacency(adj: csr_array, n_retries: int = 5):
     degrees1 = np.sum(sub_adj1, axis=1) + np.sum(sub_adj1, axis=0)
     degrees2 = np.sum(sub_adj2, axis=1) + np.sum(sub_adj2, axis=0)
     if np.any(degrees1 == 0) or np.any(degrees2 == 0):
-        logging.warning("Some nodes were disconnected in the split, retrying.")
+        logging.info("Some nodes were disconnected in the split, retrying.")
         return bisect_adjacency(adj, n_retries=n_retries - 1)
 
     sub_adjs = (sub_adj1, sub_adj2)
@@ -376,7 +376,7 @@ class MeshStitcher:
         min_vertex_threshold=100,
         overlap_distance=20_000,
         max_rounds=100000,
-        max_overlap_neighbors=40_000,
+        max_overlap_neighbors=None,
         verify_connected=True,
     ):
         if self.verbose:

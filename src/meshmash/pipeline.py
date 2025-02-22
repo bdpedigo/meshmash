@@ -7,17 +7,15 @@ from fast_simplification import replay_simplification, simplify
 
 from .agglomerate import agglomerate_split_mesh, aggregate_features
 from .decompose import compute_hks
+from .graph import condense_mesh_to_graph
 from .laplacian import compute_vertex_areas
 from .split import MeshStitcher
 from .types import interpret_mesh
 from .utils import (
-    component_size_transform,
     compute_distances_to_point,
     expand_labels,
     threshold_mesh_by_component_size,
 )
-
-# create a named tuple for the return type
 
 result = namedtuple(
     "result",
@@ -26,9 +24,10 @@ result = namedtuple(
         "mapping",
         "stitcher",
         "simple_features",
-        "simple_agg_labels",
-        "agg_features",
-        "agg_labels",
+        "simple_labels",
+        "condensed_features",
+        "labels",
+        "condensed_edges",
         "timing_info",
     ],
 )
@@ -52,7 +51,8 @@ def chunked_hks_pipeline(
     truncate_extra=True,
     drop_first=True,
     nuc_point=None,
-    distance_threshold=5.0,
+    distance_threshold=3.0,
+    auxiliary_features=True,
     n_jobs=-1,
     verbose=False,
 ):
@@ -186,7 +186,6 @@ def chunked_hks_pipeline(
         collapses=collapses,
     )
     mesh = (vertices, faces)
-    mesh_indices = np.arange(mesh[0].shape[0])
 
     # mesh splitting
     currtime = time.time()
@@ -235,30 +234,32 @@ def chunked_hks_pipeline(
     timing_info["hks_time"] = time.time() - currtime
 
     # Non-HKS features
-    currtime = time.time()
-    aux_X = []
-    aux_X_features = []
+    # currtime = time.time()
+    # aux_X = []
+    # aux_X_features = []
 
-    component_sizes = component_size_transform(mesh, mesh_indices)
-    aux_X.append(component_sizes)
-    aux_X_features.append("component_size")
+    # component_sizes = component_size_transform(mesh, mesh_indices)
+    # aux_X.append(component_sizes)
+    # aux_X_features.append("component_size")
 
-    if nuc_point is not None:
-        distances_to_nuc = compute_distances_to_point(mesh[0], nuc_point)
-    else:
-        distances_to_nuc = np.full(mesh[0].shape[0], np.nan)
-    aux_X.append(distances_to_nuc)
-    aux_X_features.append("distance_to_nucleus")
+    # if nuc_point is not None:
+    #     distances_to_nuc = compute_distances_to_point(mesh[0], nuc_point)
+    # else:
+    #     distances_to_nuc = np.full(mesh[0].shape[0], np.nan)
+    # aux_X.append(distances_to_nuc)
+    # aux_X_features.append("distance_to_nucleus")
 
-    aux_X = np.column_stack(aux_X)
-    aux_X_df = pd.DataFrame(aux_X, columns=aux_X_features)
-    timing_info["aux_time"] = time.time() - currtime
+    # aux_X = np.column_stack(aux_X)
+    # aux_X_df = pd.DataFrame(aux_X, columns=aux_X_features)
+    # timing_info["aux_time"] = time.time() - currtime
 
-    joined_X_df = pd.concat([X_hks_df, aux_X_df], axis=1)
+    # joined_X_df = pd.concat([X_hks_df, aux_X_df], axis=1)
+
+    joined_X_df = X_hks_df
 
     # agglomeration of mesh to domains
     currtime = time.time()
-    areas = compute_vertex_areas(mesh)
+
     simple_agg_labels = agglomerate_split_mesh(
         stitcher, log_X_hks, distance_thresholds=distance_threshold
     )
@@ -266,9 +267,11 @@ def chunked_hks_pipeline(
 
     # aggregate features
     currtime = time.time()
+    areas = compute_vertex_areas(mesh)
     agg_features_df = aggregate_features(
         joined_X_df, simple_agg_labels, func="mean", weights=areas
     )
+    agg_features_df = np.log(agg_features_df)
     timing_info["aggregation_time"] = time.time() - currtime
 
     # reconstruct mapping to original mesh
@@ -276,6 +279,24 @@ def chunked_hks_pipeline(
     mapping[indices_from_original] = thresh_to_simple_mapping
 
     agg_labels = expand_labels(simple_agg_labels, mapping)
+
+    # condense mesh to graph, compute some additional auxiliary features
+    condensed_node_table, condensed_edge_table = condense_mesh_to_graph(
+        original_mesh, agg_labels, add_component_features=True
+    )
+
+    if auxiliary_features:
+        if nuc_point is not None:
+            condensed_node_table["distance_to_nucleus"] = compute_distances_to_point(
+                condensed_node_table[["x", "y", "z"]].values, nuc_point
+            )
+        else:
+            condensed_node_table["distance_to_nucleus"] = np.nan
+
+        agg_features_df = pd.concat(
+            [agg_features_df, condensed_node_table],
+            axis=1,
+        )
 
     out = result(
         mesh,
@@ -285,6 +306,7 @@ def chunked_hks_pipeline(
         simple_agg_labels,
         agg_features_df,
         agg_labels,
+        condensed_edge_table,
         timing_info,
     )
 

@@ -8,7 +8,7 @@ from scipy.linalg import eigh
 from tqdm.auto import tqdm
 
 from .laplacian import cotangent_laplacian
-from .types import ArrayLike, Mesh
+from .types import Mesh
 
 
 def decompose_laplacian(
@@ -166,126 +166,6 @@ def decompose_laplacian_by_bands(
     return eigenvalues, eigenvectors
 
 
-def compute_hks_old(
-    mesh: Mesh,
-    max_eigenvalue: float = 1e-8,
-    t_max: Optional[float] = None,
-    t_min: Optional[float] = None,
-    n_scales: int = 32,
-    scales: Optional[ArrayLike] = None,
-    band_size=50,
-    truncate_extra=False,
-    # robust_eps=None,
-    # fix=False,
-    robust=False,
-    mollify_factor=1e-5,
-    verbose=False,
-):
-    # TODO unify this with the code above, mostly redundant!
-
-    L, M = cotangent_laplacian(mesh, robust=robust, mollify_factor=mollify_factor)
-
-    eigenvalues = []
-    band_max_eigenvalue = 0
-    sigma = -0.000001
-    last_eigenvalue = 0
-    eigenvalue_bandwidth = 0
-    if scales is not None:
-        n_scales = len(scales)
-    if t_max is not None and t_min is not None:
-        scales = np.geomspace(t_min, t_max, n_scales)
-    hks = np.zeros((L.shape[0], n_scales))
-    timing = {}
-    timing["decompose"] = 0
-    timing["band_hks"] = 0
-    timing["sum"] = 0
-    pbar = tqdm(total=max_eigenvalue, disable=not verbose)
-    while band_max_eigenvalue < max_eigenvalue:
-        if verbose >= 2:
-            print(f"Computing band with sigma={sigma:.3g}")
-
-        currtime = time.time()
-        band_eigenvalues, band_eigenvectors = decompose_laplacian(
-            L, M, n_components=band_size, sigma=sigma
-        )
-        timing["decompose"] += time.time() - currtime
-
-        if band_max_eigenvalue == 0 and scales is None:
-            min_eigenvalue = band_eigenvalues[1]  # skip the first eigenvalue, is 0
-            t_min = 4 * np.log(10) / max_eigenvalue
-            t_max = 4 * np.log(10) / min_eigenvalue
-            scales = np.geomspace(t_min, t_max, n_scales)
-
-        # find the index where the new eigenvalues are within the tolerance
-        # of the last eigenvalue
-        diffs = np.abs(band_eigenvalues - last_eigenvalue)
-        tol = 1e-16
-        if np.min(diffs) > tol:
-            # retry with a smaller sigma
-            sigma = sigma - 0.2 * eigenvalue_bandwidth
-            if verbose >= 2:
-                print(f"Will retry band with sigma={sigma:.3g}")
-            band_eigenvalues = None
-            band_eigenvectors = None
-            continue
-        else:
-            # get the non-overlapping part of this band
-            closest_idx = np.argmin(diffs)
-            band_eigenvalues = band_eigenvalues[closest_idx + 1 :]
-            band_eigenvectors = band_eigenvectors[:, closest_idx + 1 :]
-
-        # TODO could include other signatures/functions here
-        # if method == "heat":
-        # elif method == "wave":
-        #     sigma = 7 * (np.max(scales) - np.min(scales)) / len(scales)
-        #     band_coefs = np.exp(
-        #         -np.square(scales[:, None] - np.log(np.abs(band_eigenvalues))[None, :])
-        #         / (2 * sigma**2)
-        #     )
-
-        if truncate_extra and (band_eigenvalues[-1] > max_eigenvalue):
-            # Truncate to the max_eigenvalue
-            truncation_idx = np.searchsorted(band_eigenvalues, max_eigenvalue)
-            band_eigenvalues = band_eigenvalues[: truncation_idx + 1]
-            band_eigenvectors = band_eigenvectors[:, : truncation_idx + 1]
-
-        currtime = time.time()
-        # compute HKS
-        band_coefs = np.exp(-np.outer(scales, band_eigenvalues))
-
-        band_hks = np.einsum("tk,nk->nt", band_coefs, np.square(band_eigenvectors))
-        timing["band_hks"] += time.time() - currtime
-
-        currtime = time.time()
-        hks += band_hks
-        timing["sum"] += time.time() - currtime
-
-        # update values for next iteration
-        eigenvalues.extend(band_eigenvalues)
-        band_max_eigenvalue = np.max(band_eigenvalues)
-        band_min_eigenvalue = np.min(band_eigenvalues)
-        eigenvalue_bandwidth = band_max_eigenvalue - band_min_eigenvalue
-        sigma = band_max_eigenvalue + 0.4 * eigenvalue_bandwidth
-
-        # update by the amount the max eigenvalue increased
-        pbar.update(band_max_eigenvalue - last_eigenvalue)
-        last_eigenvalue = band_eigenvalues[-1]
-
-    pbar.close()
-
-    # if fix:
-    #     hks = hks[fixed_to_original_indices]
-    #     hks[fixed_to_original_indices == -1] = np.nan
-
-    if verbose >= 2:
-        print("Timing:")
-        total_time = sum(timing.values())
-        for key, value in timing.items():
-            print(f"{key}: {value:.3f} ({value / total_time:.2%})")
-
-    return hks
-
-
 def get_hks_filter(
     t_max: Optional[float] = None,
     t_min: Optional[float] = None,
@@ -339,6 +219,7 @@ def spectral_geometry_filter(
     band_size: int = 50,
     truncate_extra: bool = True,
     drop_first: bool = True,
+    decomposition_dtype: Optional[np.dtype] = np.float64,
     robust: bool = True,
     mollify_factor: bool = 1e-5,
     verbose: int = False,
@@ -402,6 +283,11 @@ def spectral_geometry_filter(
 
     L, M = cotangent_laplacian(mesh, robust=robust, mollify_factor=mollify_factor)
 
+    if decomposition_dtype is not None:
+        original_dtype = L.dtype
+        L = L.astype(decomposition_dtype)
+        M = M.astype(decomposition_dtype)
+
     eigenvalues = []
     band_max_eigenvalue = 0
     sigma = -1e-10
@@ -461,6 +347,12 @@ def spectral_geometry_filter(
             first_idx = 1
         else:
             first_idx = 0
+
+        # TODO: not sure if necessary, but for now, going to keep this part of the
+        # algo in the original dtype
+        if band_eigenvalues.dtype != original_dtype:
+            band_eigenvalues = band_eigenvalues.astype(original_dtype)
+            band_eigenvectors = band_eigenvectors.astype(original_dtype)
 
         if filter is not None:
             # compute filter based on eigenvalues

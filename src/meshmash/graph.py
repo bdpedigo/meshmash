@@ -3,7 +3,7 @@ import pandas as pd
 from scipy.sparse import csr_array
 
 from .laplacian import compute_vertex_areas
-from .utils import mesh_to_edges
+from .utils import connected_components, mesh_to_adjacency, mesh_to_edges
 
 
 def compute_edge_widths(mesh, mollify_factor: float = 0.0) -> csr_array:
@@ -45,7 +45,7 @@ def compute_edge_widths(mesh, mollify_factor: float = 0.0) -> csr_array:
     return radii_adjacency
 
 
-def condense_mesh_to_graph(mesh, labels):
+def condense_mesh_to_graph(mesh, labels, add_component_features: bool = False):
     edges = mesh_to_edges(mesh)
 
     sources, targets = edges[:, 0], edges[:, 1]
@@ -58,7 +58,7 @@ def condense_mesh_to_graph(mesh, labels):
             "target": targets,
         }
     )
-    edge_table["width"] = radii_adjacency[(sources, targets)]
+    edge_table["boundary_length"] = radii_adjacency[(sources, targets)]
     edge_table["count"] = 1
 
     edge_table["source_group"] = labels[edge_table["source"]]
@@ -69,37 +69,64 @@ def condense_mesh_to_graph(mesh, labels):
         inplace=True,
     )
 
-    edge_table["length"] = np.linalg.norm(
-        mesh[0][edge_table["source"].values] - mesh[0][edge_table["target"].values],
-        axis=1,
-    )
-
     group_edge_table = (
         edge_table.groupby(["source_group", "target_group"])
-        .agg({"width": "sum", "count": "sum"})
+        .agg({"boundary_length": "sum", "count": "sum"})
         .reset_index()
     )
 
     areas = compute_vertex_areas(mesh, robust=False)
 
     node_table = pd.DataFrame(mesh[0], columns=["x", "y", "z"])
-    node_table["count"] = 1
+    node_table["n_vertices"] = 1
     node_table["group"] = labels
     node_table["area"] = areas
+
+    agg_dict = {
+        "x": "mean",
+        "y": "mean",
+        "z": "mean",
+        "area": "sum",
+        "n_vertices": "sum",
+    }
+
+    if add_component_features:
+        adj = mesh_to_adjacency(mesh)
+
+        _, cc_labels = connected_components(adj, directed=False)
+        node_table["component"] = cc_labels
+        agg_dict["component"] = "first"
+
     node_table.query("group != -1", inplace=True)
 
     group_node_table = (
         node_table.groupby(["group"])
-        .agg({"x": "mean", "y": "mean", "z": "mean", "area": "sum", "count": "sum"})
+        .agg(agg_dict)
         .loc[np.arange(labels.max() + 1)]  # make sure we are indexed correctly
     )
 
-    group_edge_table["length"] = np.linalg.norm(
+    if add_component_features:
+        component_area = group_node_table.groupby("component")["area"].sum()
+        group_node_table["component_area"] = group_node_table["component"].map(
+            component_area
+        )
+        component_n_vertices = group_node_table.groupby("component")["n_vertices"].sum()
+        group_node_table["component_n_vertices"] = group_node_table["component"].map(
+            component_n_vertices
+        )
+        group_node_table.drop("component", axis=1, inplace=True)
+
+    group_edge_table["edge_length"] = np.linalg.norm(
         group_node_table.loc[group_edge_table["source_group"]][["x", "y", "z"]].values
         - group_node_table.loc[group_edge_table["target_group"]][
             ["x", "y", "z"]
         ].values,
         axis=1,
     )
+
+    group_edge_table.rename(
+        {"source_group": "source", "target_group": "target"}, axis=1, inplace=True
+    )
+    group_node_table.index.name = None
 
     return group_node_table, group_edge_table
