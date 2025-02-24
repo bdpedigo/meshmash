@@ -35,7 +35,7 @@ def multicut_ward(X, connectivity=None, distance_thresholds=None):
 
 def agglomerate_mesh(mesh, features, distance_thresholds=None) -> np.ndarray:
     """this is the version that fixes issues where only some parts of a mesh are nan"""
-    if not (np.isfinite(features)).any():
+    if not (np.isfinite(features).all(axis=1)).any():
         return None
     else:
         features = features.copy()

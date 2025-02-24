@@ -63,6 +63,9 @@ def decompose_laplacian(
         eigenvalues, eigenvectors = sparse.linalg.eigsh(
             L, k=n_components, M=M, sigma=sigma, OPinv=op_inv, tol=tol, ncv=ncv
         )
+    indices = np.argsort(eigenvalues)
+    eigenvalues = eigenvalues[indices]
+    eigenvectors = eigenvectors[:, indices]
     return eigenvalues, eigenvectors
 
 
@@ -170,8 +173,9 @@ def get_hks_filter(
     t_max: Optional[float] = None,
     t_min: Optional[float] = None,
     n_scales: int = 32,
+    dtype: np.dtype = np.float64,
 ) -> Callable:
-    scales = np.geomspace(t_min, t_max, n_scales)
+    scales = np.geomspace(t_min, t_max, n_scales, dtype=dtype)
 
     def hks_filter(eigenvalues):
         coefs = np.exp(-np.outer(scales, eigenvalues))
@@ -284,9 +288,18 @@ def spectral_geometry_filter(
     L, M = cotangent_laplacian(mesh, robust=robust, mollify_factor=mollify_factor)
 
     if decomposition_dtype is not None:
-        original_dtype = L.dtype
         L = L.astype(decomposition_dtype)
         M = M.astype(decomposition_dtype)
+
+    if decomposition_dtype == np.float32 or decomposition_dtype == "float32":
+        tol = 1e-8
+        # this suprisingly didn't make much difference in time to go lower here
+        eigen_tol = 1e-7
+    elif decomposition_dtype == np.float64 or decomposition_dtype == "float64":
+        tol = 1e-16
+        eigen_tol = 1e-10
+    else:
+        raise ValueError(f"Unknown decomposition_dtype: {decomposition_dtype}")
 
     eigenvalues = []
     band_max_eigenvalue = 0
@@ -297,7 +310,7 @@ def spectral_geometry_filter(
     if filter is not None:
         # HACK: get the number of features for the filter
         n_features = filter([1, 2, 3]).shape[0]
-        features = np.zeros((L.shape[0], n_features))
+        features = np.zeros((L.shape[0], n_features), dtype=decomposition_dtype)
     else:
         # will just store the eigenvectors themselves
         features = []
@@ -313,14 +326,14 @@ def spectral_geometry_filter(
 
         currtime = time.time()
         band_eigenvalues, band_eigenvectors = decompose_laplacian(
-            L, M, n_components=band_size, sigma=sigma
+            L, M, n_components=band_size, sigma=sigma, tol=eigen_tol
         )
         timing["decompose"] += time.time() - currtime
 
         # find the index where the new eigenvalues are within the tolerance
         # of the last eigenvalue
         diffs = np.abs(band_eigenvalues - last_eigenvalue)
-        tol = 1e-16
+
         if np.min(diffs) > tol:
             # retry with a smaller sigma
             sigma = sigma - 0.2 * eigenvalue_bandwidth
@@ -350,16 +363,19 @@ def spectral_geometry_filter(
 
         # TODO: not sure if necessary, but for now, going to keep this part of the
         # algo in the original dtype
-        if band_eigenvalues.dtype != original_dtype:
-            band_eigenvalues = band_eigenvalues.astype(original_dtype)
-            band_eigenvectors = band_eigenvectors.astype(original_dtype)
+        # if band_eigenvalues.dtype != original_dtype:
+        #     band_eigenvalues = band_eigenvalues.astype(original_dtype)
+        #     band_eigenvectors = band_eigenvectors.astype(original_dtype)
 
         if filter is not None:
             # compute filter based on eigenvalues
             band_coefs = filter(band_eigenvalues[first_idx:])
 
             band_features = np.einsum(
-                "tk,nk->nt", band_coefs, np.square(band_eigenvectors[:, first_idx:])
+                "tk,nk->nt",
+                band_coefs,
+                np.square(band_eigenvectors[:, first_idx:]),
+                dtype=decomposition_dtype,
             )
             timing["filter"] += time.time() - currtime
 
@@ -389,8 +405,8 @@ def spectral_geometry_filter(
             print(f"{key}: {value:.3f} ({value / total_time:.2%})")
 
     if filter is None:
-        eigenvalues = np.array(eigenvalues)
-        features = np.concatenate(features, axis=1)
+        eigenvalues = np.array(eigenvalues, dtype=decomposition_dtype)
+        features = np.concatenate(features, axis=1, dtype=decomposition_dtype)
         return eigenvalues, features
     else:
         return features
@@ -407,9 +423,10 @@ def compute_hks(
     drop_first: bool = False,
     robust: bool = True,
     mollify_factor: float = 1e-5,
+    decomposition_dtype: Optional[np.dtype] = np.float64,
     verbose: int = False,
 ):
-    filter_func = get_hks_filter(t_max, t_min, n_components)
+    filter_func = get_hks_filter(t_max, t_min, n_components, dtype=decomposition_dtype)
     out = spectral_geometry_filter(
         mesh,
         filter_func,
@@ -419,6 +436,7 @@ def compute_hks(
         drop_first=drop_first,
         robust=robust,
         mollify_factor=mollify_factor,
+        decomposition_dtype=decomposition_dtype,
         verbose=verbose,
     )
     return out
@@ -433,6 +451,7 @@ def compute_geometry_vectors(
     drop_first: bool = False,
     robust: bool = True,
     mollify_factor: float = 1e-5,
+    decomposition_dtype: Optional[np.dtype] = np.float64,
     verbose: int = False,
 ):
     filter_func = construct_bspline_filter(0.0, max_eigenvalue, n_components)
@@ -445,6 +464,7 @@ def compute_geometry_vectors(
         drop_first=drop_first,
         robust=robust,
         mollify_factor=mollify_factor,
+        decomposition_dtype=decomposition_dtype,
         verbose=verbose,
     )
     return out

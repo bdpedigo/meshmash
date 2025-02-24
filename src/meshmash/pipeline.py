@@ -50,6 +50,7 @@ def chunked_hks_pipeline(
     mollify_factor=1e-5,
     truncate_extra=True,
     drop_first=True,
+    decomposition_dtype=np.float64,
     nuc_point=None,
     distance_threshold=3.0,
     auxiliary_features=True,
@@ -214,6 +215,7 @@ def chunked_hks_pipeline(
             mollify_factor=mollify_factor,
             truncate_extra=truncate_extra,
             drop_first=drop_first,
+            decomposition_dtype=decomposition_dtype,
         )
     else:
         X_hks = stitcher.subset_apply(
@@ -228,8 +230,10 @@ def chunked_hks_pipeline(
             mollify_factor=mollify_factor,
             truncate_extra=truncate_extra,
             drop_first=drop_first,
+            decomposition_dtype=decomposition_dtype,
         )
-    log_X_hks = np.log(X_hks)
+    with np.errstate(divide="ignore"):
+        log_X_hks = np.log(X_hks)
     X_hks_df = pd.DataFrame(X_hks, columns=[f"hks_{i}" for i in range(X_hks.shape[1])])
     timing_info["hks_time"] = time.time() - currtime
 

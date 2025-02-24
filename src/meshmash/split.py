@@ -23,22 +23,31 @@ from .utils import (
 )
 
 
-def graph_laplacian_split(adj: csr_array):
+def graph_laplacian_split(adj: csr_array, dtype=np.float32):
+    # TODO didn't understand why this took longer when float32 for some meshes
+    # probably some issue with tolerance/sigma?
     # TODO normed didn't seem to make much of a difference here; perhaps just because
     # degrees are fairly homogeneous?
-    lap, degrees = laplacian(adj, normed=False, symmetrized=True, return_diag=True)
-
+    lap = laplacian(adj, normed=False, symmetrized=True, return_diag=False, dtype=dtype)
     # NOTE: tried this as initialization, but it also didn't seem to make a difference
     # maybe overhead is all in the LU decomposition?
-    # n = adj.shape[0]
-    # v0 = np.full(n, 1 / np.sqrt(n))
+    if dtype == np.float32 or dtype == "float32":
+        eigen_tol = 1e-7
+    elif dtype == np.float64 or dtype == "float64":
+        eigen_tol = 1e-10
+    n = adj.shape[0]
+    currtime = time.time()
     eigenvalues, eigenvectors = eigsh(
         lap,
         k=2,
         sigma=-1e-10,
+        v0=np.full(n, 1 / np.sqrt(n), dtype=dtype),
+        tol=eigen_tol,
     )
-    indices1 = np.nonzero(eigenvectors[:, 1] >= 0)[0]
-    indices2 = np.nonzero(eigenvectors[:, 1] < 0)[0]
+    print(f"{time.time() - currtime:.3f} seconds elapsed for size {n}.")
+    index = np.argmax(eigenvalues)
+    indices1 = np.nonzero(eigenvectors[:, index] >= 0)[0]
+    indices2 = np.nonzero(eigenvectors[:, index] < 0)[0]
     return indices1, indices2
 
 
@@ -54,6 +63,8 @@ def bisect_adjacency(adj: csr_array, n_retries: int = 5):
     degrees1 = np.sum(sub_adj1, axis=1) + np.sum(sub_adj1, axis=0)
     degrees2 = np.sum(sub_adj2, axis=1) + np.sum(sub_adj2, axis=0)
     if np.any(degrees1 == 0) or np.any(degrees2 == 0):
+        # TODO no idea why retrying here helps almost always after one go... 
+        # did not think randomness should have that much of an effect?
         logging.info("Some nodes were disconnected in the split, retrying.")
         return bisect_adjacency(adj, n_retries=n_retries - 1)
 
