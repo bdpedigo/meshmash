@@ -132,3 +132,4 @@ def read_condensed_edges(path: Union[str, Path]) -> tuple[pd.DataFrame, pd.DataF
     edges = pd.concat([edges, edge_features], axis=1)
 
     return edges
+
