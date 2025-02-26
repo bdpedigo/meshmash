@@ -10,13 +10,20 @@ from cloudfiles import CloudFiles
 HEADER_FILE_NAME = "header.txt"
 
 
-def _interpret_path(path: Union[str, Path]) -> Path:
+def interpret_path(path: Union[str, Path]) -> Path:
     if isinstance(path, str):
         path = Path(path)
 
-    file_name = path.name
-    path = path.parent
+    if path.suffix == "":
+        file_name = None
+        path = path
+    else:
+        file_name = path.name
+        path = path.parent
+    
     path_str = str(path)
+    if path_str.startswith("gs:/"):
+        path_str = "gs://" + path_str[4:]
 
     cf = CloudFiles(path_str)
 
@@ -38,7 +45,7 @@ def save_condensed_features(
     label_dtype: type = np.int32,
     check_header: bool = True,
 ):
-    cf, file_name = _interpret_path(path)
+    cf, file_name = interpret_path(path)
 
     columns: list = features.columns.tolist()
 
@@ -75,7 +82,7 @@ def save_condensed_features(
 
 
 def read_condensed_features(path: Union[str, Path]) -> tuple[pd.DataFrame, np.ndarray]:
-    cf, file_name = _interpret_path(path)
+    cf, file_name = interpret_path(path)
 
     with BytesIO(cf.get(file_name)) as bio:
         data = np.load(bio)
@@ -92,7 +99,7 @@ def read_condensed_features(path: Union[str, Path]) -> tuple[pd.DataFrame, np.nd
 def save_condensed_edges(
     path: Union[str, Path], edges: pd.DataFrame, check_header: bool = True
 ):
-    cf, file_name = _interpret_path(path)
+    cf, file_name = interpret_path(path)
 
     edge_list = edges[["source", "target"]].values.astype(np.int32)
     edge_features = edges.drop(columns=["source", "target"])
@@ -122,7 +129,7 @@ def save_condensed_edges(
 
 
 def read_condensed_edges(path: Union[str, Path]) -> tuple[pd.DataFrame, pd.DataFrame]:
-    cf, file_name = _interpret_path(path)
+    cf, file_name = interpret_path(path)
 
     with BytesIO(cf.get(file_name)) as bio:
         data = np.load(bio)
@@ -133,3 +140,23 @@ def read_condensed_edges(path: Union[str, Path]) -> tuple[pd.DataFrame, pd.DataF
 
     return edges
 
+
+def save_id_to_mesh_map(path: Union[str, Path], id_to_mesh_map: np.ndarray):
+    assert id_to_mesh_map.shape[1] == 2
+
+    cf, file_name = interpret_path(path)
+
+    with BytesIO() as bio:
+        np.savez_compressed(bio, id_to_mesh_map=id_to_mesh_map)
+
+        cf.put(file_name, bio.getvalue())
+
+
+def read_id_to_mesh_map(path: Union[str, Path]) -> np.ndarray:
+    cf, file_name = interpret_path(path)
+
+    with BytesIO(cf.get(file_name)) as bio:
+        data = np.load(bio)
+        id_to_mesh_map = data["id_to_mesh_map"]
+
+    return id_to_mesh_map

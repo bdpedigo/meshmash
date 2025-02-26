@@ -6,7 +6,7 @@ from .agglomerate import (
     fix_split_labels,
     multicut_ward,
 )
-from .cave import find_nucleus_point
+from .cave import find_nucleus_point, get_synapse_mapping
 from .decompose import (
     compute_geometry_vectors,
     compute_hks,
@@ -22,8 +22,11 @@ from .graph import compute_edge_widths, condense_mesh_to_graph
 from .io import (
     read_condensed_edges,
     read_condensed_features,
+    read_id_to_mesh_map,
     save_condensed_edges,
     save_condensed_features,
+    save_id_to_mesh_map,
+    interpret_path
 )
 from .laplacian import area_matrix, compute_vertex_areas, cotangent_laplacian
 from .pipeline import chunked_hks_pipeline
@@ -109,4 +112,8 @@ __all__ = [
     "read_condensed_features",
     "save_condensed_edges",
     "read_condensed_edges",
+    "save_id_to_mesh_map",
+    "read_id_to_mesh_map",
+    "interpret_path",
+    "get_synapse_mapping",
 ]
