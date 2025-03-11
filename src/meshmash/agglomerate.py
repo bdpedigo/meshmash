@@ -1,3 +1,4 @@
+import logging
 import warnings
 from typing import Union
 
@@ -92,7 +93,7 @@ def fix_split_labels(agg_labels, submesh_mapping):
 
         valid_labels = agg_labels[valid_mask, label_column]
         submesh_labels = submesh_mapping[valid_mask]
-        
+
         tuple_labels = pd.Index(list(zip(valid_labels, submesh_labels)))
         unique_labels = np.unique(tuple_labels)
 
@@ -142,20 +143,31 @@ def aggregate_features(features, labels, weights=None, func="mean") -> pd.DataFr
     feature_df["label"] = labels
     if func == "mean" and weights is not None:
         feature_df["weight"] = weights
+
+        def _weighted_average(x):
+            weights = feature_df.loc[x.index, "weight"]
+            if weights.sum() == 0:
+                weights = None
+                logging.warning(
+                    "Weights sum to zero for a group, using unweighted average in aggregation."
+                )
+            out = pd.Series(
+                np.average(x, weights=weights, axis=0),
+                index=x.columns,
+            )
+            return out
+
         agg_feature_df = (
             feature_df.groupby("label")
             .apply(
-                lambda x: pd.Series(
-                    np.average(x, weights=feature_df.loc[x.index, "weight"], axis=0),
-                    index=x.columns,
-                ),
+                _weighted_average,
                 include_groups=False,
             )
             .drop(columns="weight")
         )
     else:
         agg_feature_df = feature_df.groupby("label").agg(func=func)
-    
+
     expected_indices = np.arange(-1, labels.max() + 1)
     agg_feature_df = agg_feature_df.reindex(expected_indices, copy=False)
 

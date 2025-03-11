@@ -20,7 +20,7 @@ def interpret_path(path: Union[str, Path]) -> Path:
     else:
         file_name = path.name
         path = path.parent
-    
+
     path_str = str(path)
     if path_str.startswith("gs:/"):
         path_str = "gs://" + path_str[4:]
@@ -139,6 +139,34 @@ def read_condensed_edges(path: Union[str, Path]) -> tuple[pd.DataFrame, pd.DataF
     edges = pd.concat([edges, edge_features], axis=1)
 
     return edges
+
+
+def save_condensed_graph(
+    path: Union[str, Path],
+    nodes: np.ndarray,
+    edges: np.ndarray,
+    nodes_dtype=np.float32,
+    edges_dtype=np.int32,
+):
+    cf, file_name = interpret_path(path)
+
+    with BytesIO() as bio:
+        np.savez_compressed(
+            bio, nodes=nodes.astype(nodes_dtype), edges=edges.astype(edges_dtype)
+        )
+
+        cf.put(file_name, bio.getvalue())
+
+
+def read_condensed_graph(path: Union[str, Path]) -> tuple[np.ndarray, np.ndarray]:
+    cf, file_name = interpret_path(path)
+
+    with BytesIO(cf.get(file_name)) as bio:
+        data = np.load(bio)
+        nodes = data["nodes"]
+        edges = data["edges"]
+
+    return nodes, edges
 
 
 def save_id_to_mesh_map(path: Union[str, Path], id_to_mesh_map: np.ndarray):

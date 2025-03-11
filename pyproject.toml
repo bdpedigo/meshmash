@@ -1,7 +1,8 @@
 [project]
 dependencies = [
-    "fast-simplification>=0.1.9",
-    "numpy>=2.0",
+    "fast-simplification>=0.1.7",
+    "gpytoolbox>=0.3.3",
+    "numpy>=1.26.0",
     "pandas>=2.2.3",
     "pyvista>=0.44.1",
     "robust-laplacian>=1.0.0",
