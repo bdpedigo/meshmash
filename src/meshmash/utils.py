@@ -129,6 +129,9 @@ def get_label_components(mesh, labels):
 
 
 def subset_mesh_by_indices(mesh: Mesh, indices: np.ndarray) -> Mesh:
+    if indices.dtype == bool:
+        indices = np.where(indices)[0]
+
     vertices, faces = interpret_mesh(mesh)
     new_vertices = vertices[indices]
     index_mapping = dict(zip(indices, np.arange(len(indices))))

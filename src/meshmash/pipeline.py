@@ -173,20 +173,21 @@ def chunked_hks_pipeline(
     # mesh simplification
     # NOTE: for some reason the order here differs from that in replay_simplification,
     # we want the latter so as to preserve the indices for `mapping`
-    _, _, collapses = simplify(
-        mesh[0],
-        mesh[1],
-        agg=simplify_agg,
-        target_reduction=simplify_target_reduction,
-        return_collapses=True,
-    )
+    if simplify_target_reduction is not None:
+        _, _, collapses = simplify(
+            mesh[0],
+            mesh[1],
+            agg=simplify_agg,
+            target_reduction=simplify_target_reduction,
+            return_collapses=True,
+        )
 
-    vertices, faces, thresh_to_simple_mapping = replay_simplification(
-        points=mesh[0],
-        triangles=mesh[1],
-        collapses=collapses,
-    )
-    mesh = (vertices, faces)
+        vertices, faces, thresh_to_simple_mapping = replay_simplification(
+            points=mesh[0],
+            triangles=mesh[1],
+            collapses=collapses,
+        )
+        mesh = (vertices, faces)
 
     # mesh splitting
     currtime = time.time()

@@ -28,9 +28,7 @@ def graph_laplacian_split(adj: csr_array, dtype=np.float32):
     # probably some issue with tolerance/sigma?
     # TODO normed didn't seem to make much of a difference here; perhaps just because
     # degrees are fairly homogeneous?
-    lap = laplacian(
-        adj, normed=False, symmetrized=True, return_diag=False, dtype=dtype
-    )
+    lap = laplacian(adj, normed=False, symmetrized=True, return_diag=False, dtype=dtype)
     # NOTE: tried this as initialization, but it also didn't seem to make a difference
     # maybe overhead is all in the LU decomposition?
     if dtype == np.float32 or dtype == "float32":
@@ -52,7 +50,7 @@ def graph_laplacian_split(adj: csr_array, dtype=np.float32):
     index = np.argmax(eigenvalues)
     indices1 = np.nonzero(eigenvectors[:, index] >= 0)[0]
     indices2 = np.nonzero(eigenvectors[:, index] < 0)[0]
-    
+
     return indices1, indices2
 
 
@@ -401,6 +399,11 @@ class MeshStitcher:
         max_overlap_neighbors=None,
         verify_connected=True,
     ):
+        if max_vertex_threshold is None:
+            max_vertex_threshold = len(self.mesh[0])
+        if min_vertex_threshold is None:
+            min_vertex_threshold = 0
+
         if self.verbose:
             currtime = time.time()
             print("Subdividing mesh...")
