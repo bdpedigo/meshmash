@@ -230,3 +230,13 @@ def expand_labels(condensed_labels: np.ndarray, mapping: np.ndarray) -> np.ndarr
     labels = condensed_labels[mapping]
     labels[mapping == -1] = -1
     return labels
+
+
+def graph_to_adjacency(graph: tuple) -> csr_array:
+    """Convert a graph to an adjacency matrix."""
+    vertices, edges = graph
+    adj = csr_array(
+        (np.ones(len(edges)), (edges[:, 0], edges[:, 1])),
+        shape=(len(vertices), len(vertices)),
+    )
+    return adj

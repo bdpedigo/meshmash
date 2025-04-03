@@ -45,7 +45,9 @@ def compute_edge_widths(mesh, mollify_factor: float = 0.0) -> csr_array:
     return radii_adjacency
 
 
-def condense_mesh_to_graph(mesh, labels, add_component_features: bool = False):
+def condense_mesh_to_graph(
+    mesh, labels, add_component_features: bool = False
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     edges = mesh_to_edges(mesh)
 
     sources, targets = edges[:, 0], edges[:, 1]

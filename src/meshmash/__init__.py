@@ -20,16 +20,18 @@ from .decompose import (
 )
 from .graph import compute_edge_widths, condense_mesh_to_graph
 from .io import (
+    interpret_path,
     read_condensed_edges,
     read_condensed_features,
+    read_condensed_graph,
     read_id_to_mesh_map,
     save_condensed_edges,
     save_condensed_features,
+    save_condensed_graph,
     save_id_to_mesh_map,
-    interpret_path
 )
 from .laplacian import area_matrix, compute_vertex_areas, cotangent_laplacian
-from .pipeline import chunked_hks_pipeline
+from .pipeline import chunked_hks_pipeline, chunked_hks_pipeline2
 from .split import (
     MeshStitcher,
     apply_mesh_split,
@@ -47,6 +49,7 @@ from .utils import (
     edges_to_lines,
     fix_mesh,
     get_label_components,
+    graph_to_adjacency,
     largest_mesh_component,
     mesh_connected_components,
     mesh_to_adjacency,
@@ -79,6 +82,7 @@ __all__ = [
     "fix_mesh",
     "project_points_to_mesh",
     "chunked_hks_pipeline",
+    "chunked_hks_pipeline2",
     "get_label_components",
     "mesh_to_edges",
     "component_size_transform",
@@ -116,4 +120,7 @@ __all__ = [
     "read_id_to_mesh_map",
     "interpret_path",
     "get_synapse_mapping",
+    "graph_to_adjacency",
+    "read_condensed_graph",
+    "save_condensed_graph",
 ]

@@ -38,6 +38,8 @@ def agglomerate_mesh(mesh, features, distance_thresholds=None) -> np.ndarray:
     """this is the version that fixes issues where only some parts of a mesh are nan"""
     if not (np.isfinite(features).all(axis=1)).any():
         return None
+    elif len(distance_thresholds) == 1 and distance_thresholds[0] is None:
+        return np.arange(len(features)).reshape(-1, 1)
     else:
         features = features.copy()
         # features[mask] = 1000000
@@ -111,7 +113,7 @@ def agglomerate_split_mesh(
     features: np.ndarray,
     distance_thresholds: Union[list, int, float],
 ):
-    if isinstance(distance_thresholds, (int, float)):
+    if isinstance(distance_thresholds, (int, float)) or distance_thresholds is None:
         distance_thresholds = [distance_thresholds]
         was_single = True
     else:
