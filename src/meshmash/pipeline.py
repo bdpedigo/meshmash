@@ -201,6 +201,8 @@ def chunked_hks_pipeline(
             collapses=collapses,
         )
         mesh = (vertices, faces)
+    else:
+        thresh_to_simple_mapping = np.arange(len(mesh[0]))
 
     # mesh splitting
     currtime = time.time()
@@ -331,7 +333,6 @@ def chunked_hks_pipeline(
     )
 
     return out
-
 
 
 class Result2(NamedTuple):
@@ -503,6 +504,8 @@ def chunked_hks_pipeline2(
             collapses=collapses,
         )
         mesh = (vertices, faces)
+    else:
+        thresh_to_simple_mapping = np.arange(len(mesh[0]))
 
     # mesh splitting
     currtime = time.time()
@@ -593,11 +596,6 @@ def chunked_hks_pipeline2(
             )
         else:
             condensed_node_table["distance_to_nucleus"] = np.nan
-
-        # agg_features_df = pd.concat(
-        #     [agg_features_df, condensed_node_table],
-        #     axis=1,
-        # )
 
     out = Result2(
         mesh,
