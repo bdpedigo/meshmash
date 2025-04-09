@@ -127,7 +127,8 @@ def fix_split_labels_and_features(agg_labels, submesh_mapping, features_by_subme
     agg_labels[valid_mask] = new_labels
 
     for submesh_index, data in enumerate(features_by_submesh):
-        data.drop(-1, inplace=True)
+        data: pd.DataFrame
+        data.drop(-1, inplace=True, errors="ignore")
         data.index = data.index.map(label_mapping_series.loc[submesh_index])
         data.drop(data.index[data.index.isna()], inplace=True)
         data.index = data.index.astype(int)
