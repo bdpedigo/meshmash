@@ -614,7 +614,7 @@ def condensed_hks_pipeline(
             )
 
     # for consistency with the rest of the pipeline, make sure null label is present
-    assert -1 in condensed_hks_df
+    assert -1 in condensed_hks_df.index
     
     timing_info["pipeline_time"] = time.time() - starttime
     out = CondensedHKSResult(

@@ -240,3 +240,10 @@ def graph_to_adjacency(graph: tuple) -> csr_array:
         shape=(len(vertices), len(vertices)),
     )
     return adj
+
+
+def scale_mesh(mesh: Mesh, scale: float) -> Mesh:
+    """Scale a mesh by a given factor."""
+    vertices, faces = interpret_mesh(mesh)
+    scaled_vertices = vertices * scale
+    return scaled_vertices, faces

@@ -58,6 +58,7 @@ from .utils import (
     poly_to_mesh,
     project_points_to_mesh,
     rough_subset_mesh_by_indices,
+    scale_mesh,
     shuffle_label_mapping,
     subset_mesh_by_indices,
     threshold_mesh_by_component_size,
@@ -123,4 +124,5 @@ __all__ = [
     "graph_to_adjacency",
     "read_condensed_graph",
     "save_condensed_graph",
+    "scale_mesh",
 ]
