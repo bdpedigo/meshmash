@@ -31,7 +31,7 @@ from .io import (
     save_id_to_mesh_map,
 )
 from .laplacian import area_matrix, compute_vertex_areas, cotangent_laplacian
-from .pipeline import chunked_hks_pipeline, chunked_hks_pipeline2
+from .pipeline import chunked_hks_pipeline, condensed_hks_pipeline
 from .split import (
     MeshStitcher,
     apply_mesh_split,
@@ -82,7 +82,7 @@ __all__ = [
     "fix_mesh",
     "project_points_to_mesh",
     "chunked_hks_pipeline",
-    "chunked_hks_pipeline2",
+    "condensed_hks_pipeline",
     "get_label_components",
     "mesh_to_edges",
     "component_size_transform",

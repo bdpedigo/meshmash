@@ -36,6 +36,8 @@ def multicut_ward(X, connectivity=None, distance_thresholds=None):
 
 def agglomerate_mesh(mesh, features, distance_thresholds=None) -> np.ndarray:
     """this is the version that fixes issues where only some parts of a mesh are nan"""
+    if isinstance(distance_thresholds, (int, float)) or distance_thresholds is None:
+        distance_thresholds = [distance_thresholds]
     if not (np.isfinite(features).all(axis=1)).any():
         return None
     elif len(distance_thresholds) == 1 and distance_thresholds[0] is None:
@@ -108,6 +110,34 @@ def fix_split_labels(agg_labels, submesh_mapping):
     return agg_labels
 
 
+def fix_split_labels_and_features(agg_labels, submesh_mapping, features_by_submesh):
+    valid_mask = agg_labels != -1
+
+    valid_labels = agg_labels[valid_mask]
+    submesh_labels = submesh_mapping[valid_mask]
+
+    tuple_labels = pd.Index(list(zip(submesh_labels, valid_labels)))
+    unique_labels = np.unique(tuple_labels)
+
+    new_unique_labels = np.arange(len(unique_labels))
+    label_mapping = dict(zip(unique_labels, new_unique_labels))
+    label_mapping_series = pd.Series(label_mapping)
+    new_labels = np.array([label_mapping[label] for label in tuple_labels])
+
+    agg_labels[valid_mask] = new_labels
+
+    for submesh_index, data in enumerate(features_by_submesh):
+        data.drop(-1, inplace=True)
+        data.index = data.index.map(label_mapping_series.loc[submesh_index])
+        data.drop(data.index[data.index.isna()], inplace=True)
+        data.index = data.index.astype(int)
+
+    empty_data = pd.DataFrame(columns=data.columns, index=[-1])
+    new_data = pd.concat([empty_data] + features_by_submesh)
+
+    return agg_labels, new_data
+
+
 def agglomerate_split_mesh(
     splitter: MeshStitcher,
     features: np.ndarray,
@@ -138,7 +168,7 @@ def aggregate_features(features, labels, weights=None, func="mean") -> pd.DataFr
     if not isinstance(features, pd.DataFrame):
         feature_df = pd.DataFrame(features)
     else:
-        feature_df = features
+        feature_df = features.copy()
     cols = feature_df.columns
     if labels is None:
         return feature_df

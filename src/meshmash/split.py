@@ -509,7 +509,7 @@ class MeshStitcher:
         all_clean_features = np.full(
             (len(self.mesh[0]), first_feature.shape[1]),
             fill_value,
-            dtype=float,
+            dtype=first_feature.dtype,
         )
 
         for i, features in enumerate(features_by_submesh):
@@ -542,6 +542,7 @@ class MeshStitcher:
         func,
         *args,
         fill_value=np.nan,
+        stitch=True,
         **kwargs,
     ):
         func_name = func.__name__
@@ -563,8 +564,11 @@ class MeshStitcher:
                 results_by_submesh = Parallel(n_jobs=self.n_jobs)(
                     delayed(func)(submesh, *args, **kwargs) for submesh in submeshes
                 )
-
-        return self.stitch_features(results_by_submesh, fill_value=fill_value)
+        if stitch:
+            out = self.stitch_features(results_by_submesh, fill_value=fill_value)
+        else: 
+            out = results_by_submesh
+        return out
 
     def subset_apply(
         self,

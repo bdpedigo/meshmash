@@ -80,7 +80,7 @@ def condense_mesh_to_graph(
     areas = compute_vertex_areas(mesh, robust=False)
 
     node_table = pd.DataFrame(mesh[0], columns=["x", "y", "z"])
-    node_table["n_vertices"] = 1
+    node_table["n_vertices"] = np.ones(len(node_table), dtype=np.int32)
     node_table["group"] = labels
     node_table["area"] = areas
 

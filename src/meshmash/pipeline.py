@@ -5,7 +5,12 @@ import numpy as np
 import pandas as pd
 from fast_simplification import replay_simplification, simplify
 
-from .agglomerate import agglomerate_split_mesh, aggregate_features
+from .agglomerate import (
+    agglomerate_mesh,
+    agglomerate_split_mesh,
+    aggregate_features,
+    fix_split_labels_and_features,
+)
 from .decompose import compute_hks
 from .graph import condense_mesh_to_graph
 from .laplacian import compute_vertex_areas
@@ -16,21 +21,6 @@ from .utils import (
     expand_labels,
     threshold_mesh_by_component_size,
 )
-
-# result = namedtuple(
-#     "result",
-#     [
-#         "simple_mesh",
-#         "mapping",
-#         "stitcher",
-#         "simple_features",
-#         "simple_labels",
-#         "condensed_features",
-#         "labels",
-#         "condensed_edges",
-#         "timing_info",
-#     ],
-# )
 
 
 class Result(NamedTuple):
@@ -335,22 +325,68 @@ def chunked_hks_pipeline(
     return out
 
 
-class Result2(NamedTuple):
+class CondensedHKSResult(NamedTuple):
     simple_mesh: tuple
     mapping: np.ndarray
     stitcher: MeshStitcher
-    simple_features: pd.DataFrame
     simple_labels: np.ndarray
-    condensed_features: pd.DataFrame
     labels: np.ndarray
+    condensed_features: pd.DataFrame
     condensed_nodes: pd.DataFrame
     condensed_edges: pd.DataFrame
     timing_info: dict
 
 
-def chunked_hks_pipeline2(
+def compute_condensed_hks(
     mesh,
-    query_indices=None,
+    n_components=32,
+    t_min=5e4,
+    t_max=2e7,
+    max_eigenvalue=5e-6,
+    robust=True,
+    mollify_factor=1e-5,
+    truncate_extra=True,
+    drop_first=True,
+    decomposition_dtype=np.float32,
+    compute_hks_kwargs: dict = {},
+    distance_threshold=3.0,
+) -> tuple[pd.DataFrame, np.ndarray]:
+    X_hks = compute_hks(
+        mesh,
+        n_components=n_components,
+        t_min=t_min,
+        t_max=t_max,
+        max_eigenvalue=max_eigenvalue,
+        robust=robust,
+        mollify_factor=mollify_factor,
+        truncate_extra=truncate_extra,
+        drop_first=drop_first,
+        decomposition_dtype=decomposition_dtype,
+        **compute_hks_kwargs,
+    )
+
+    with np.errstate(divide="ignore"):
+        log_X_hks = np.log(X_hks)
+
+    agg_labels = agglomerate_mesh(
+        mesh,
+        log_X_hks,
+        distance_thresholds=distance_threshold,
+    )
+
+    weights = compute_vertex_areas(mesh)
+    X_hks_condensed = aggregate_features(
+        pd.DataFrame(X_hks, columns=[f"hks_{i}" for i in range(X_hks.shape[1])]),
+        agg_labels,
+        func="mean",
+        weights=weights,
+    )
+
+    return X_hks_condensed, agg_labels
+
+
+def condensed_hks_pipeline(
+    mesh,
     simplify_agg=7,
     simplify_target_reduction=0.7,
     overlap_distance=20_000,
@@ -365,14 +401,14 @@ def chunked_hks_pipeline2(
     mollify_factor=1e-5,
     truncate_extra=True,
     drop_first=True,
-    decomposition_dtype=np.float64,
+    decomposition_dtype=np.float32,
     compute_hks_kwargs: dict = {},
     nuc_point=None,
     distance_threshold=3.0,
     auxiliary_features=True,
     n_jobs=-1,
     verbose=False,
-) -> Result2:
+) -> CondensedHKSResult:
     """
     Compute the Heat Kernel Signature (HKS) on a mesh in a chunked fashion. Also
     aggregates HKS features in local regions of the mesh.
@@ -478,6 +514,7 @@ def chunked_hks_pipeline2(
            area-weighted mean of the features for each domain.
     """
     timing_info = {}
+    starttime = time.time()
 
     # input mesh
     original_mesh = interpret_mesh(mesh)
@@ -523,60 +560,37 @@ def chunked_hks_pipeline2(
     currtime = time.time()
     if verbose:
         print("Computing HKS across submeshes...")
-    if query_indices is None:
-        X_hks = stitcher.apply(
-            compute_hks,
-            n_components=n_components,
-            t_min=t_min,
-            t_max=t_max,
-            max_eigenvalue=max_eigenvalue,
-            robust=robust,
-            mollify_factor=mollify_factor,
-            truncate_extra=truncate_extra,
-            drop_first=drop_first,
-            decomposition_dtype=decomposition_dtype,
-            **compute_hks_kwargs,
-        )
-    else:
-        X_hks = stitcher.subset_apply(
-            compute_hks,
-            query_indices,
-            reindex=False,
-            n_components=n_components,
-            t_min=t_min,
-            t_max=t_max,
-            max_eigenvalue=max_eigenvalue,
-            robust=robust,
-            mollify_factor=mollify_factor,
-            truncate_extra=truncate_extra,
-            drop_first=drop_first,
-            decomposition_dtype=decomposition_dtype,
-            **compute_hks_kwargs,
-        )
-    with np.errstate(divide="ignore"):
-        log_X_hks = np.log(X_hks)
 
-    X_hks_df = pd.DataFrame(X_hks, columns=[f"hks_{i}" for i in range(X_hks.shape[1])])
+    results_by_submesh = stitcher.apply(
+        compute_condensed_hks,
+        n_components=n_components,
+        t_min=t_min,
+        t_max=t_max,
+        max_eigenvalue=max_eigenvalue,
+        robust=robust,
+        mollify_factor=mollify_factor,
+        truncate_extra=truncate_extra,
+        drop_first=drop_first,
+        decomposition_dtype=decomposition_dtype,
+        compute_hks_kwargs=compute_hks_kwargs,
+        distance_threshold=distance_threshold,
+        stitch=False,
+    )
+    sub_agg_labels = stitcher.stitch_features(
+        [result[1] for result in results_by_submesh],
+        fill_value=-1,
+    ).reshape(-1)
+    data_by_submesh = [res[0] for res in results_by_submesh]
+
+    simple_agg_labels, condensed_hks_df = fix_split_labels_and_features(
+        sub_agg_labels,
+        stitcher.submesh_mapping,
+        data_by_submesh,
+    )
+
     timing_info["hks_time"] = time.time() - currtime
 
-    joined_X_df = X_hks_df
-
-    # agglomeration of mesh to domains
-    currtime = time.time()
-
-    simple_agg_labels = agglomerate_split_mesh(
-        stitcher, log_X_hks, distance_thresholds=distance_threshold
-    )
-    timing_info["agglomeration_time"] = time.time() - currtime
-
-    # aggregate features
-    currtime = time.time()
-    areas = compute_vertex_areas(mesh)
-    agg_features_df = aggregate_features(
-        joined_X_df, simple_agg_labels, func="mean", weights=areas
-    )
-    agg_features_df = np.log(agg_features_df)
-    timing_info["aggregation_time"] = time.time() - currtime
+    condensed_hks_df = np.log(condensed_hks_df)
 
     # reconstruct mapping to original mesh
     mapping = np.full(len(original_mesh[0]), -1, dtype=np.int32)
@@ -593,18 +607,23 @@ def chunked_hks_pipeline2(
         if nuc_point is not None:
             condensed_node_table["distance_to_nucleus"] = compute_distances_to_point(
                 condensed_node_table[["x", "y", "z"]].values, nuc_point
-            )
+            ).astype(np.float32)
         else:
-            condensed_node_table["distance_to_nucleus"] = np.nan
+            condensed_node_table["distance_to_nucleus"] = np.empty(
+                condensed_node_table.shape[0], dtype=np.float32
+            )
 
-    out = Result2(
+    # for consistency with the rest of the pipeline, make sure null label is present
+    assert -1 in condensed_hks_df
+    
+    timing_info["pipeline_time"] = time.time() - starttime
+    out = CondensedHKSResult(
         mesh,
         mapping,
         stitcher,
-        joined_X_df,
         simple_agg_labels,
-        agg_features_df,
         agg_labels,
+        condensed_hks_df,
         condensed_node_table,
         condensed_edge_table,
         timing_info,
