@@ -126,15 +126,34 @@ def fix_split_labels_and_features(agg_labels, submesh_mapping, features_by_subme
 
     agg_labels[valid_mask] = new_labels
 
+    new_data = []
     for submesh_index, data in enumerate(features_by_submesh):
         data: pd.DataFrame
         data.drop(-1, inplace=True, errors="ignore")
-        data.index = data.index.map(label_mapping_series.loc[submesh_index])
-        data.drop(data.index[data.index.isna()], inplace=True)
-        data.index = data.index.astype(int)
+        if submesh_index in label_mapping_series.index.get_level_values(0):
+            sub_label_mapping = label_mapping_series.loc[submesh_index]
+            data.index = data.index.map(sub_label_mapping)
+            data.drop(data.index[data.index.isna()], inplace=True)
+            data.index = data.index.astype(int)
+            new_data.append(data)
+        else:
+            continue
+        # elif len(data) == 1 and data.index[0] == -1:
+        #     # this is the case where the submesh is empty
+        #     data.drop(-1, inplace=True, errors="ignore")
+        # elif len(data) == 0:
+        #     continue
+        # else:
+        #     print(data.shape)
+        #     print(data)
+        #     raise ValueError(
+        #         f"Submesh {submesh_index} has no mapping in label mapping series. {data.shape}"
+        #     )
 
     empty_data = pd.DataFrame(columns=data.columns, index=[-1])
-    new_data = pd.concat([empty_data] + features_by_submesh)
+    new_data = pd.concat([empty_data] + new_data)
+
+    assert np.isin(np.unique(agg_labels), new_data.index).all()
 
     return agg_labels, new_data
 
