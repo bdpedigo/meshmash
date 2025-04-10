@@ -138,17 +138,6 @@ def fix_split_labels_and_features(agg_labels, submesh_mapping, features_by_subme
             new_data.append(data)
         else:
             continue
-        # elif len(data) == 1 and data.index[0] == -1:
-        #     # this is the case where the submesh is empty
-        #     data.drop(-1, inplace=True, errors="ignore")
-        # elif len(data) == 0:
-        #     continue
-        # else:
-        #     print(data.shape)
-        #     print(data)
-        #     raise ValueError(
-        #         f"Submesh {submesh_index} has no mapping in label mapping series. {data.shape}"
-        #     )
 
     empty_data = pd.DataFrame(columns=data.columns, index=[-1])
     new_data = pd.concat([empty_data] + new_data)
