@@ -29,53 +29,58 @@ def graph_laplacian_split(adj: csr_array, dtype=np.float32):
     # TODO normed didn't seem to make much of a difference here; perhaps just because
     # degrees are fairly homogeneous?
     lap = laplacian(adj, normed=False, symmetrized=True, return_diag=False, dtype=dtype)
-    # NOTE: tried this as initialization, but it also didn't seem to make a difference
-    # maybe overhead is all in the LU decomposition?
     if dtype == np.float32 or dtype == "float32":
         eigen_tol = 1e-7
     elif dtype == np.float64 or dtype == "float64":
         eigen_tol = 1e-10
     n = adj.shape[0]
-    # currtime = time.time()
+
+    # TODO cannot figure out why this isn't deterministic
+    # or if the random errors are from some other part of the pipeline
     eigenvalues, eigenvectors = eigsh(
         lap,
         k=2,
         sigma=-1e-10,
         v0=np.full(n, 1 / np.sqrt(n), dtype=dtype),
         tol=eigen_tol,
-        maxiter=10,
-        ncv=10,
+        maxiter=20,
+        ncv=20, # TODO revisit this sensitivity to NCV for speed
     )
-    # print(f"{time.time() - currtime:.3f} seconds elapsed for size {n}.")
+
     index = np.argmax(eigenvalues)
-    indices1 = np.nonzero(eigenvectors[:, index] >= 0)[0]
-    indices2 = np.nonzero(eigenvectors[:, index] < 0)[0]
+    eigenvector = eigenvectors[:, index]
+    eigenvector *= np.sign(eigenvector[0]) * 1
+    indices1 = np.nonzero(eigenvector >= 0)[0]
+    indices2 = np.nonzero(eigenvector < 0)[0]
 
     return indices1, indices2
 
 
-def bisect_adjacency(adj: csr_array, n_retries: int = 5):
+def bisect_adjacency(adj: csr_array, n_retries: int = 7, check=True):
+    if n_retries == 0:
+        raise RuntimeError("Split failed to divide mesh.")
+
     # get the split indices
     indices1, indices2 = graph_laplacian_split(adj)
 
     if len(indices1) == 0 or len(indices2) == 0:
+        # print(adj.shape)
         logging.info("Split failed to divide mesh, retrying.")
-        if n_retries == 0:
-            raise RuntimeError("Split failed to divide mesh.")
         return bisect_adjacency(adj, n_retries=n_retries - 1)
 
     # get the sub-adjacencies
     sub_adj1 = adj[indices1][:, indices1]
     sub_adj2 = adj[indices2][:, indices2]
 
-    # make sure we didn't disconnect any nodes
-    degrees1 = np.sum(sub_adj1, axis=1) + np.sum(sub_adj1, axis=0)
-    degrees2 = np.sum(sub_adj2, axis=1) + np.sum(sub_adj2, axis=0)
-    if np.any(degrees1 == 0) or np.any(degrees2 == 0):
-        # TODO no idea why retrying here helps almost always after one go...
-        # did not think randomness should have that much of an effect?
-        logging.info("Some nodes were disconnected in the split, retrying.")
-        return bisect_adjacency(adj, n_retries=n_retries - 1)
+    if check:
+        # make sure we didn't disconnect any nodes
+        degrees1 = np.sum(sub_adj1, axis=1) + np.sum(sub_adj1, axis=0)
+        degrees2 = np.sum(sub_adj2, axis=1) + np.sum(sub_adj2, axis=0)
+        if np.any(degrees1 == 0) or np.any(degrees2 == 0):
+            # TODO no idea why retrying here helps almost always after one go...
+            # did not think randomness should have that much of an effect?
+            logging.info("Some nodes were disconnected in the split, retrying.")
+            return bisect_adjacency(adj, n_retries=n_retries - 1)
 
     sub_adjs = (sub_adj1, sub_adj2)
     submesh_indices = (indices1, indices2)
@@ -566,7 +571,7 @@ class MeshStitcher:
                 )
         if stitch:
             out = self.stitch_features(results_by_submesh, fill_value=fill_value)
-        else: 
+        else:
             out = results_by_submesh
         return out
 

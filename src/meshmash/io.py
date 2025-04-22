@@ -10,7 +10,7 @@ from cloudfiles import CloudFiles
 HEADER_FILE_NAME = "header.txt"
 
 
-def interpret_path(path: Union[str, Path]) -> Path:
+def interpret_path(path: Union[str, Path], **kwargs) -> Path:
     if isinstance(path, str):
         path = Path(path)
 
@@ -25,16 +25,35 @@ def interpret_path(path: Union[str, Path]) -> Path:
     if path_str.startswith("gs:/"):
         path_str = "gs://" + path_str[4:]
 
-    cf = CloudFiles(path_str)
+    cf = CloudFiles(path_str, **kwargs)
 
     return cf, file_name
 
 
-def _read_header(cf: CloudFiles) -> list[str]:
-    header_bytes = cf.get(HEADER_FILE_NAME)
+def _read_header(cf: CloudFiles, header_file_name=HEADER_FILE_NAME) -> list[str]:
+    header_bytes = cf.get(header_file_name)
     header = header_bytes.decode()
     columns = header.split("\t")
     return columns
+
+
+def _check_header(
+    cf: CloudFiles,
+    columns: list[str],
+    check_header: bool = True,
+    header_file_name: str = HEADER_FILE_NAME,
+) -> None:
+    if check_header:
+        if cf.exists(header_file_name):
+            read_columns = _read_header(cf, header_file_name)
+            if not np.array_equal(columns, read_columns):
+                raise ValueError(
+                    f"Columns in {header_file_name} do not match columns in features: {columns} != {read_columns}"
+                )
+        else:
+            header = "\t".join(columns)
+            header_bytes = header.encode()
+            cf.put(header_file_name, header_bytes)
 
 
 def save_condensed_features(
@@ -143,12 +162,32 @@ def read_condensed_edges(path: Union[str, Path]) -> tuple[pd.DataFrame, pd.DataF
 
 def save_condensed_graph(
     path: Union[str, Path],
-    nodes: np.ndarray,
-    edges: np.ndarray,
+    nodes: pd.DataFrame,
+    edges: pd.DataFrame,
     nodes_dtype=np.float32,
     edges_dtype=np.int32,
+    check_header: bool = True,
 ):
     cf, file_name = interpret_path(path)
+
+    _check_header(
+        cf,
+        nodes.columns,
+        check_header=check_header,
+        header_file_name="nodes_header.txt",
+    )
+    _check_header(
+        cf,
+        edges.columns,
+        check_header=check_header,
+        header_file_name="edges_header.txt",
+    )
+
+    pre_len = len(nodes)
+    nodes = nodes.reindex(np.arange(len(nodes)), copy=False)
+    post_len = len(nodes)
+    if pre_len != post_len:
+        logging.warning("Node rows were missing.")
 
     with BytesIO() as bio:
         np.savez_compressed(
@@ -158,13 +197,23 @@ def save_condensed_graph(
         cf.put(file_name, bio.getvalue())
 
 
-def read_condensed_graph(path: Union[str, Path]) -> tuple[np.ndarray, np.ndarray]:
+def read_condensed_graph(path: Union[str, Path]) -> tuple[pd.DataFrame, pd.DataFrame]:
     cf, file_name = interpret_path(path)
 
     with BytesIO(cf.get(file_name)) as bio:
         data = np.load(bio)
         nodes = data["nodes"]
+        nodes = pd.DataFrame(
+            nodes,
+            columns=_read_header(
+                cf,
+                header_file_name="nodes_header.txt",
+            ),
+        )
         edges = data["edges"]
+        edges = pd.DataFrame(
+            edges, columns=_read_header(cf, header_file_name="edges_header.txt")
+        )
 
     return nodes, edges
 

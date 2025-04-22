@@ -49,6 +49,7 @@ def condense_mesh_to_graph(
     mesh, labels, add_component_features: bool = False
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     edges = mesh_to_edges(mesh)
+    edges = np.unique(np.sort(edges, axis=1), axis=0)
 
     sources, targets = edges[:, 0], edges[:, 1]
 
@@ -70,6 +71,10 @@ def condense_mesh_to_graph(
         "(source_group != -1) and (target_group != -1) and (source_group != target_group)",
         inplace=True,
     )
+    sources = edge_table[['source_group', 'target_group']].min(axis=1)
+    targets = edge_table[['source_group', 'target_group']].max(axis=1)
+    edge_table["source_group"] = sources
+    edge_table["target_group"] = targets
 
     group_edge_table = (
         edge_table.groupby(["source_group", "target_group"])
