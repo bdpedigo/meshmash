@@ -27,6 +27,23 @@ def find_nucleus_point(
             split_positions=True,
             desired_resolution=[1, 1, 1],
         )
+        if len(nuc_table) > 1:  # find correct nucleus, hopefully one is a neuron
+            cell_table = client.materialize.query_table(
+                "aibs_metamodel_mtypes_v661_v2",
+                filter_in_dict={"target_id": nuc_table["id"].values},
+            )
+            if len(cell_table) == 1:
+                neuron_nuc_id = cell_table["id_ref"].values[0]
+                nuc_table = nuc_table.set_index("id").loc[[neuron_nuc_id]]
+            else:
+                raise ValueError(
+                    f"Found more than one neuron nucleus for root {root_id}"
+                )
+        elif len(nuc_table) == 0:
+            raise ValueError(f"Found no nucleus for root {root_id}")
+        else:
+            pass  # has one nucleus``
+
     elif "v1dd" in client.datastack_name:
         nuc_table = client.materialize.views.nucleus_alternative_lookup(
             pt_root_id=current_root_id
@@ -34,20 +51,6 @@ def find_nucleus_point(
             split_positions=True,
             desired_resolution=[1, 1, 1],
         )
-    if len(nuc_table) > 1:  # find correct nucleus, hopefully one is a neuron
-        cell_table = client.materialize.query_table(
-            "aibs_metamodel_mtypes_v661_v2",
-            filter_in_dict={"target_id": nuc_table["id"].values},
-        )
-        if len(cell_table) == 1:
-            neuron_nuc_id = cell_table["id_ref"].values[0]
-            nuc_table = nuc_table.set_index("id").loc[[neuron_nuc_id]]
-        else:
-            raise ValueError(f"Found more than one neuron nucleus for root {root_id}")
-    elif len(nuc_table) == 0:
-        raise ValueError(f"Found no nucleus for root {root_id}")
-    else:
-        pass  # has one nucleus
 
     nuc_coords = nuc_table[["pt_position_x", "pt_position_y", "pt_position_z"]].values
 
@@ -63,22 +66,23 @@ def get_synapse_mapping(
     client: CAVEclient,
     distance_threshold: Optional[float] = None,
     mapping_column: str = "ctr_pt_position",
+    side: str = "post",
 ) -> np.ndarray:
     synapse_table_name = client.info.get_datastack_info()["synapse_table"]
-    post_synapses = client.materialize.query_table(
+    synapses = client.materialize.query_table(
         synapse_table_name,
-        filter_equal_dict={"post_pt_root_id": root_id},
+        filter_equal_dict={f"{side}_pt_root_id": root_id},
         log_warning=False,
         split_positions=True,
         desired_resolution=[1, 1, 1],
     )
-    post_synapses.query("pre_pt_root_id != post_pt_root_id", inplace=True)
-    post_synapses.set_index("id", inplace=True)
+    synapses.query("pre_pt_root_id != post_pt_root_id", inplace=True)
+    synapses.set_index("id", inplace=True)
 
-    if len(post_synapses) == 0:
+    if len(synapses) == 0:
         return np.empty(shape=(0, 2), dtype="int32")
 
-    synapse_locs = post_synapses[
+    synapse_locs = synapses[
         [f"{mapping_column}_x", f"{mapping_column}_y", f"{mapping_column}_z"]
     ].values
 
@@ -89,9 +93,9 @@ def get_synapse_mapping(
         return_distances=False,
     )
 
-    post_synapses["mesh_index"] = indices.astype("int32")
-    post_synapses.query("mesh_index != -1", inplace=True)
+    synapses["mesh_index"] = indices.astype("int32")
+    synapses.query("mesh_index != -1", inplace=True)
 
-    out = post_synapses["mesh_index"]
+    out = synapses["mesh_index"]
     out = out.to_frame().reset_index().values
     return out

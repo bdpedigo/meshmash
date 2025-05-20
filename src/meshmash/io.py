@@ -32,6 +32,8 @@ def interpret_path(path: Union[str, Path], **kwargs) -> Path:
 
 def _read_header(cf: CloudFiles, header_file_name=HEADER_FILE_NAME) -> list[str]:
     header_bytes = cf.get(header_file_name)
+    if header_bytes is None:
+        return None
     header = header_bytes.decode()
     columns = header.split("\t")
     return columns
@@ -203,17 +205,14 @@ def read_condensed_graph(path: Union[str, Path]) -> tuple[pd.DataFrame, pd.DataF
     with BytesIO(cf.get(file_name)) as bio:
         data = np.load(bio)
         nodes = data["nodes"]
+        node_columns = _read_header(cf, header_file_name="nodes_header.txt")
         nodes = pd.DataFrame(
             nodes,
-            columns=_read_header(
-                cf,
-                header_file_name="nodes_header.txt",
-            ),
+            columns=node_columns,
         )
         edges = data["edges"]
-        edges = pd.DataFrame(
-            edges, columns=_read_header(cf, header_file_name="edges_header.txt")
-        )
+        edge_columns = _read_header(cf, header_file_name="edges_header.txt")
+        edges = pd.DataFrame(edges, columns=edge_columns)
 
     return nodes, edges
 

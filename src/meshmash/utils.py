@@ -106,7 +106,7 @@ def component_size_transform(mesh, indices=None):
     return component_sizes
 
 
-def get_label_components(mesh, labels):
+def get_label_components(mesh, labels) -> np.ndarray:
     """Returns the connected components of a mesh which share the same label."""
     if isinstance(labels, pd.Series):
         labels = labels.values
