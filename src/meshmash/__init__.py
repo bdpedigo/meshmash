@@ -63,6 +63,8 @@ from .utils import (
     subset_mesh_by_indices,
     threshold_mesh_by_component_size,
 )
+from .morphometry_pipeline import component_morphometry_pipeline
+
 
 __all__ = [
     "compute_hks",
@@ -125,4 +127,5 @@ __all__ = [
     "read_condensed_graph",
     "save_condensed_graph",
     "scale_mesh",
+    "component_morphometry_pipeline",
 ]

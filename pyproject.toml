@@ -1,6 +1,7 @@
 [project]
 dependencies = [
     "fast-simplification>=0.1.7",
+    "fastremap>=1.16.1",
     "gpytoolbox>=0.3.3",
     "numpy>=1.26.0",
     "pandas>=2.2.3",

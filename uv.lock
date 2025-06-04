@@ -87,6 +87,22 @@ wheels = [
 ]
 
 [[package]]
+name = "fastremap"
+version = "1.16.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9c/81/10d52fa3baa0c3b2791a426b7ebf5702358f9bb40bff3feff4852c94c981/fastremap-1.16.1.tar.gz", hash = "sha256:a01005f7db3056cbbd0faaf229045e27a3525e42e09e22362870499e999ca9b6", size = 45864 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ca/f1/c8b4927f633220dfbefb912e97c2da4d32bb34ca631b53771562bdf4dd7c/fastremap-1.16.1-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:26e36afea436201470c09a83a3a5bb9bab89b5e2232dc0689128af158c7b4f09", size = 714060 },
+    { url = "https://files.pythonhosted.org/packages/55/16/7062b1fb389e77cef9cbeb5c7ae34d88c8f4d0968ac879fd791a9c7c60c4/fastremap-1.16.1-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:13a6d568a1b7eed4481cc5f96822504011468c727e20488c073c041b4d6f3a85", size = 584133 },
+    { url = "https://files.pythonhosted.org/packages/fe/58/b79bc0a88f4618c6e1415d16ecfa0983e492c78e7bd92a3746f844b567f0/fastremap-1.16.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:8f8b92f1e4cb45c62291353a2b0ed80c0a776f0ddcbff4416cdbe5868d2dc557", size = 6719260 },
+    { url = "https://files.pythonhosted.org/packages/14/e0/2258ea50604fabb3100861389ca07cd85429d35aad0a1eef2978a24dfd48/fastremap-1.16.1-cp312-cp312-win32.whl", hash = "sha256:a6345ead273761af0c899394ed48c3e7469ef98cb0a2c29ccde8b3c0ea724b60", size = 418149 },
+    { url = "https://files.pythonhosted.org/packages/41/1b/e96b0fa2016709dd1812612d0e09e1aba355ef05370afbc68fc48e555a7d/fastremap-1.16.1-cp312-cp312-win_amd64.whl", hash = "sha256:6ac847aa9c7d1c7243ece0569ee2e979f718024c808c7801312336f96e265d3e", size = 581911 },
+]
+
+[[package]]
 name = "fonttools"
 version = "4.56.0"
 source = { registry = "https://pypi.org/simple" }
@@ -209,6 +225,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fast-simplification" },
+    { name = "fastremap" },
     { name = "gpytoolbox" },
     { name = "numpy" },
     { name = "pandas" },
@@ -221,6 +238,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "fast-simplification", specifier = ">=0.1.7" },
+    { name = "fastremap", specifier = ">=1.16.1" },
     { name = "gpytoolbox", specifier = ">=0.3.3" },
     { name = "numpy", specifier = ">=1.26.0" },
     { name = "pandas", specifier = ">=2.2.3" },
