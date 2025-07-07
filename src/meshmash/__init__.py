@@ -6,7 +6,12 @@ from .agglomerate import (
     fix_split_labels,
     multicut_ward,
 )
-from .cave import find_nucleus_point, get_synapse_mapping
+from .cave import (
+    find_nucleus_point,
+    get_synapse_mapping,
+    get_synapses,
+    get_synapses_at_oldest,
+)
 from .decompose import (
     compute_geometry_vectors,
     compute_hks,
@@ -21,16 +26,19 @@ from .decompose import (
 from .graph import compute_edge_widths, condense_mesh_to_graph
 from .io import (
     interpret_path,
+    read_array,
     read_condensed_edges,
     read_condensed_features,
     read_condensed_graph,
     read_id_to_mesh_map,
+    save_array,
     save_condensed_edges,
     save_condensed_features,
     save_condensed_graph,
     save_id_to_mesh_map,
 )
 from .laplacian import area_matrix, compute_vertex_areas, cotangent_laplacian
+from .morphometry_pipeline import component_morphometry_pipeline
 from .pipeline import chunked_hks_pipeline, condensed_hks_pipeline
 from .split import (
     MeshStitcher,
@@ -63,8 +71,6 @@ from .utils import (
     subset_mesh_by_indices,
     threshold_mesh_by_component_size,
 )
-from .morphometry_pipeline import component_morphometry_pipeline
-
 
 __all__ = [
     "compute_hks",
@@ -128,4 +134,8 @@ __all__ = [
     "save_condensed_graph",
     "scale_mesh",
     "component_morphometry_pipeline",
+    "save_array",
+    "read_array",
+    "get_synapses",
+    "get_synapses_at_oldest",
 ]

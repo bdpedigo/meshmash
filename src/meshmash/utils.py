@@ -139,7 +139,7 @@ def subset_mesh_by_indices(mesh: Mesh, indices: np.ndarray) -> Mesh:
     # use numpy to get faces for which all indices are in the subset
     face_mask = np.all(np.isin(faces, indices), axis=1)
 
-    new_faces = np.vectorize(index_mapping.get)(faces[face_mask]).astype(faces.dtype)
+    new_faces = np.vectorize(index_mapping.get, otypes=[faces.dtype])(faces[face_mask])
     return new_vertices, new_faces
 
 
@@ -219,6 +219,12 @@ def threshold_mesh_by_component_size(mesh, size_threshold=100):
 
     mask = np.isin(component_labels, uni_labels)
     indices = np.arange(len(mesh[0]))[mask]
+    if len(indices) == 0:
+        mesh = (
+            np.empty((0, 3), dtype=mesh[0].dtype),
+            np.empty((0, 3), dtype=mesh[1].dtype),
+        )
+        return (mesh, indices)
 
     mesh = subset_mesh_by_indices(mesh, indices)
 

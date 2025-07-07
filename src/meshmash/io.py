@@ -24,6 +24,8 @@ def interpret_path(path: Union[str, Path], **kwargs) -> Path:
     path_str = str(path)
     if path_str.startswith("gs:/"):
         path_str = "gs://" + path_str[4:]
+    elif path_str.startswith("file:/"):
+        path_str = "file://" + path_str[6:]
 
     cf = CloudFiles(path_str, **kwargs)
 
@@ -232,7 +234,31 @@ def read_id_to_mesh_map(path: Union[str, Path]) -> np.ndarray:
     cf, file_name = interpret_path(path)
 
     with BytesIO(cf.get(file_name)) as bio:
+        # try:
+        #     data = np.load(bio)
+        # except EOFError:
+        #     # TODO add a retry here or not?
+        #     return np.empty((0, 2), dtype=np.int32)
         data = np.load(bio)
         id_to_mesh_map = data["id_to_mesh_map"]
 
     return id_to_mesh_map
+
+
+def save_array(path: Union[str, Path], array: np.ndarray):
+    cf, file_name = interpret_path(path)
+
+    with BytesIO() as bio:
+        np.savez_compressed(bio, array=array)
+
+        cf.put(file_name, bio.getvalue())
+
+
+def read_array(path: Union[str, Path]) -> np.ndarray:
+    cf, file_name = interpret_path(path)
+
+    with BytesIO(cf.get(file_name)) as bio:
+        data = np.load(bio)
+        array = data["array"]
+
+    return array

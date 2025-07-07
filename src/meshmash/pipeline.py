@@ -172,6 +172,7 @@ def chunked_hks_pipeline(
     mesh, indices_from_original = threshold_mesh_by_component_size(
         original_mesh, size_threshold=min_vertex_threshold
     )
+    # TODO need to somehow handle the case where the mesh is empty after thresholding
 
     # mesh simplification
     # NOTE: for some reason the order here differs from that in replay_simplification,
@@ -615,7 +616,7 @@ def condensed_hks_pipeline(
 
     # for consistency with the rest of the pipeline, make sure null label is present
     assert -1 in condensed_hks_df.index
-    
+
     timing_info["pipeline_time"] = time.time() - starttime
     out = CondensedHKSResult(
         mesh,

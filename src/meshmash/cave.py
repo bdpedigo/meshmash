@@ -1,6 +1,7 @@
 from typing import Optional, Union
 
 import numpy as np
+import pandas as pd
 from caveclient import CAVEclient
 
 from .types import Mesh
@@ -60,24 +61,88 @@ def find_nucleus_point(
     return nuc_coords
 
 
+def get_synapses(root_ids, client, side="pre", materialization_version=None):
+    if isinstance(root_ids, (int, np.integer, np.int64, np.uint64)):
+        filter_equal_dict = {f"{side}_pt_root_id": root_ids}
+        filter_in_dict = None
+    elif isinstance(root_ids, (list, np.ndarray, pd.Series, pd.Index)):
+        filter_equal_dict = None
+        filter_in_dict = {f"{side}_pt_root_id": root_ids}
+    synapse_table_name = client.info.get_datastack_info()["synapse_table"]
+    synapses = client.materialize.query_table(
+        synapse_table_name,
+        filter_equal_dict=filter_equal_dict,
+        filter_in_dict=filter_in_dict,
+        log_warning=False,
+        split_positions=True,
+        desired_resolution=[1, 1, 1],
+        materialization_version=materialization_version,
+    )
+    synapses.query("pre_pt_root_id != post_pt_root_id", inplace=True)
+    synapses.set_index("id", inplace=True)
+    return synapses
+
+
+def get_synapses_at_oldest(root_id, client, side="pre", check_root=False):
+    oldest_cg_time = client.chunkedgraph.get_oldest_timestamp()
+
+    # optional - make sure the root being looked up is valid at t0 in the chunkedgraph
+    if check_root:
+        oldest_cg_roots = client.chunkedgraph.get_original_roots(root_id)
+    else:
+        oldest_cg_roots = [root_id]
+
+    # find the oldest materialization version
+    oldest_mat = min(client.materialize.get_versions())
+    oldest_mat_time = client.materialize.get_timestamp(oldest_mat)
+
+    # map the oldest cg roots forward in time to get the latest roots
+    oldest_mat_roots = client.chunkedgraph.get_latest_roots(
+        oldest_cg_roots, timestamp=oldest_mat_time
+    )
+
+    # lookup synapses at the oldest materialization version
+    # synapse_table_name = client.info.get_datastack_info()["synapse_table"]
+    # possible_synapses = client.materialize.query_table(
+    #     synapse_table_name,
+    #     filter_in_dict={f"{side}_pt_root_id": oldest_mat_roots},
+    #     log_warning=False,
+    #     split_positions=True,
+    #     desired_resolution=[1, 1, 1],
+    #     materialization_version=oldest_mat,
+    # )
+    # possible_synapses.query("pre_pt_root_id != post_pt_root_id", inplace=True)
+    # possible_synapses.set_index("id", inplace=True)
+    possible_synapses = get_synapses(
+        oldest_mat_roots,
+        client,
+        side=side,
+        materialization_version=oldest_mat,
+    )
+
+    possible_synapses[f"{side}_pt_root_id"] = client.chunkedgraph.get_roots(
+        possible_synapses[f"{side}_pt_supervoxel_id"], timestamp=oldest_cg_time
+    ).astype(np.int64)
+    synapses = possible_synapses.query(f"{side}_pt_root_id == {root_id}")
+
+    return synapses
+
+
 def get_synapse_mapping(
     root_id: int,
     mesh: Mesh,
     client: CAVEclient,
+    version: Optional[int] = None,
     distance_threshold: Optional[float] = None,
     mapping_column: str = "ctr_pt_position",
     side: str = "post",
 ) -> np.ndarray:
-    synapse_table_name = client.info.get_datastack_info()["synapse_table"]
-    synapses = client.materialize.query_table(
-        synapse_table_name,
-        filter_equal_dict={f"{side}_pt_root_id": root_id},
-        log_warning=False,
-        split_positions=True,
-        desired_resolution=[1, 1, 1],
-    )
-    synapses.query("pre_pt_root_id != post_pt_root_id", inplace=True)
-    synapses.set_index("id", inplace=True)
+    if isinstance(version, int) and (version == 0):
+        synapses = get_synapses_at_oldest(root_id, client, side=side, check_root=False)
+    else:
+        synapses = get_synapses(
+            root_id, client, side=side, materialization_version=version
+        )
 
     if len(synapses) == 0:
         return np.empty(shape=(0, 2), dtype="int32")

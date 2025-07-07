@@ -52,6 +52,9 @@ def agglomerate_mesh(mesh, features, distance_thresholds=None) -> np.ndarray:
         indices = np.arange(len(features))[mask]
 
         submesh = subset_mesh_by_indices(mesh, indices)
+        if len(submesh[1]) == 0:
+            return None
+
         subfeatures = features[mask]
 
         submesh_adj = mesh_to_adjacency(submesh)
