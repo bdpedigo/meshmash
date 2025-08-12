@@ -5,6 +5,7 @@ import numpy as np
 import scipy.sparse as sparse
 from scipy.interpolate import BSpline
 from scipy.linalg import eigh
+from scipy.sparse import coo_array, csc_array, csr_array
 from tqdm.auto import tqdm
 
 from .laplacian import cotangent_laplacian
@@ -284,20 +285,30 @@ def spectral_geometry_filter(
     # TODO look up whether the eigenvector should be x or M^{-1}x from the generalized
     # eigenvalue problem. In other words, dividing by the area. I saw something about
     # this in a paper and highlighted it and now I can't find
-
-    L, M = cotangent_laplacian(mesh, robust=robust, mollify_factor=mollify_factor)
+    if isinstance(mesh, tuple):
+        if isinstance(mesh[0], (csr_array, csc_array, coo_array)):
+            L, M = mesh
+        else:
+            raise ValueError(
+                "If mesh is a tuple, it must be a tuple of (L, M) where L is the Laplacian "
+                "and M is the mass matrix (or None)."
+            )
+    else:
+        L, M = cotangent_laplacian(mesh, robust=robust, mollify_factor=mollify_factor)
 
     if decomposition_dtype is not None:
         L = L.astype(decomposition_dtype)
-        M = M.astype(decomposition_dtype)
+        if M is not None:
+            M = M.astype(decomposition_dtype)
 
     if decomposition_dtype == np.float32 or decomposition_dtype == "float32":
         tol = 1e-8
         # this suprisingly didn't make much difference in time to go lower here
         eigen_tol = 1e-7
     elif decomposition_dtype == np.float64 or decomposition_dtype == "float64":
-        tol = 1e-16
-        eigen_tol = 1e-10
+        # tol = 1e-16
+        tol = 1e-12
+        eigen_tol = 1e-12
     else:
         raise ValueError(f"Unknown decomposition_dtype: {decomposition_dtype}")
 
@@ -333,8 +344,7 @@ def spectral_geometry_filter(
         # find the index where the new eigenvalues are within the tolerance
         # of the last eigenvalue
         diffs = np.abs(band_eigenvalues - last_eigenvalue)
-
-        if np.min(diffs) > tol:
+        if (np.min(diffs)) > tol and (len(eigenvalues) > 0):  # ignore if 1st
             # retry with a smaller sigma
             sigma = sigma - 0.2 * eigenvalue_bandwidth
             if verbose >= 2:
@@ -342,6 +352,9 @@ def spectral_geometry_filter(
             band_eigenvalues = None
             band_eigenvectors = None
             continue
+        elif len(eigenvalues) == 0:
+            # this is the first band, so we can just use it as is
+            pass
         else:
             # get the non-overlapping part of this band
             closest_idx = np.argmin(diffs)

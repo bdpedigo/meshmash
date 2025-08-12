@@ -37,6 +37,7 @@ from .io import (
     save_condensed_graph,
     save_id_to_mesh_map,
 )
+from .label_propagation import label_propagation
 from .laplacian import area_matrix, compute_vertex_areas, cotangent_laplacian
 from .morphometry_pipeline import component_morphometry_pipeline
 from .pipeline import chunked_hks_pipeline, condensed_hks_pipeline
@@ -138,4 +139,5 @@ __all__ = [
     "read_array",
     "get_synapses",
     "get_synapses_at_oldest",
+    "label_propagation",
 ]
