@@ -285,14 +285,10 @@ def spectral_geometry_filter(
     # TODO look up whether the eigenvector should be x or M^{-1}x from the generalized
     # eigenvalue problem. In other words, dividing by the area. I saw something about
     # this in a paper and highlighted it and now I can't find
-    if isinstance(mesh, tuple):
-        if isinstance(mesh[0], (csr_array, csc_array, coo_array)):
-            L, M = mesh
-        else:
-            raise ValueError(
-                "If mesh is a tuple, it must be a tuple of (L, M) where L is the Laplacian "
-                "and M is the mass matrix (or None)."
-            )
+    if isinstance(mesh, tuple) and isinstance(
+        mesh[0], (csr_array, csc_array, coo_array)
+    ):
+        L, M = mesh
     else:
         L, M = cotangent_laplacian(mesh, robust=robust, mollify_factor=mollify_factor)
 

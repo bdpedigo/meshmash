@@ -1,3 +1,4 @@
+import datetime
 from typing import Optional, Union
 
 import numpy as np
@@ -61,7 +62,9 @@ def find_nucleus_point(
     return nuc_coords
 
 
-def get_synapses(root_ids, client, side="pre", materialization_version=None):
+def get_synapses(
+    root_ids, client, side="pre", materialization_version=None, timestamp=None
+):
     if isinstance(root_ids, (int, np.integer, np.int64, np.uint64)):
         filter_equal_dict = {f"{side}_pt_root_id": root_ids}
         filter_in_dict = None
@@ -77,6 +80,7 @@ def get_synapses(root_ids, client, side="pre", materialization_version=None):
         split_positions=True,
         desired_resolution=[1, 1, 1],
         materialization_version=materialization_version,
+        timestamp=timestamp,
     )
     synapses.query("pre_pt_root_id != post_pt_root_id", inplace=True)
     synapses.set_index("id", inplace=True)
@@ -133,6 +137,7 @@ def get_synapse_mapping(
     mesh: Mesh,
     client: CAVEclient,
     version: Optional[int] = None,
+    timestamp: Optional[datetime.datetime] = None,
     distance_threshold: Optional[float] = None,
     mapping_column: str = "ctr_pt_position",
     side: str = "post",
@@ -141,7 +146,11 @@ def get_synapse_mapping(
         synapses = get_synapses_at_oldest(root_id, client, side=side, check_root=False)
     else:
         synapses = get_synapses(
-            root_id, client, side=side, materialization_version=version
+            root_id,
+            client,
+            side=side,
+            materialization_version=version,
+            timestamp=timestamp,
         )
 
     if len(synapses) == 0:

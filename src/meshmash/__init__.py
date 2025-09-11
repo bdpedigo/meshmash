@@ -72,6 +72,7 @@ from .utils import (
     subset_mesh_by_indices,
     threshold_mesh_by_component_size,
 )
+# from .implicit_solver import HeatSolver
 
 __all__ = [
     "compute_hks",
@@ -140,4 +141,5 @@ __all__ = [
     "get_synapses",
     "get_synapses_at_oldest",
     "label_propagation",
+    # "HeatSolver",
 ]
