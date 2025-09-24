@@ -1,17 +1,18 @@
+import time
+
 import fastremap
 import numpy as np
 import pandas as pd
 from gpytoolbox import fast_winding_number
 from point_cloud_utils import closest_points_on_mesh
-from scipy.sparse.csgraph import laplacian
+from scipy.sparse.csgraph import connected_components, laplacian
 from scipy.sparse.linalg import eigsh
 from sklearn.decomposition import PCA
 from sklearn.metrics import pairwise_distances
 from tqdm import tqdm
 
-from .decompose import decompose_mesh
 from .laplacian import compute_vertex_areas
-from .utils import get_label_components, mesh_to_adjacency
+from .utils import get_label_components, mesh_to_adjacency, subset_mesh_by_indices
 
 
 def component_morphometry_pipeline(
@@ -22,6 +23,7 @@ def component_morphometry_pipeline(
     split_laplacian="graph",
     split_threshold=None,
     split_min_size=10,
+    bound_volume_threshold=None,  # um^3
     verbose=False,
 ):
     # TODO would like to generalize this
@@ -57,6 +59,7 @@ def component_morphometry_pipeline(
     next_id = np.max(components) + 1
     with tqdm(total=len(component_queue), disable=not verbose) as pbar:
         while len(component_queue) > 0:
+            start_time = time.time()
             select_component_id = component_queue.pop(0)
             row_data = {}
             row_data["select_component_id"] = select_component_id
@@ -77,28 +80,45 @@ def component_morphometry_pipeline(
             subvertices = vertices[used_vertices]
 
             submesh = (subvertices, subfaces)
-            # TODO this should account for disconnected components here, otherwise 
+            # TODO this should account for disconnected components here, otherwise
             # taking the 2nd eigenpair will be wrong
 
-            if split_laplacian == "graph":
-                subadj = mesh_to_adjacency(submesh)
-                L = laplacian(subadj, normed=False, symmetrized=True)
-                evals, evecs = eigsh(L, k=2, sigma=-1e-10, return_eigenvectors=True)
-                indices = np.argsort(evals)
-                evals = evals[indices]
-                evecs = evecs[:, indices]
-                fiedler_eval = evals[1]
-                fiedler_evec = evecs[:, 1]
-            elif split_laplacian == "mesh":
-                evals, evecs = decompose_mesh(
-                    submesh,
-                    n_components=2,
-                    robust=True,
-                )
-                fiedler_eval = evals[1]
-                fiedler_evec = evecs[:, 1]
-            else:
-                fiedler_eval = 0
+            # if split_laplacian == "graph":
+            subadj = mesh_to_adjacency(submesh)
+            bounds = np.array([submesh[0].min(axis=0), submesh[0].max(axis=0)])
+            bound_volume_um3 = np.prod(bounds[1] - bounds[0]) * 1e-9
+            if (bound_volume_threshold is not None) and (
+                bound_volume_um3 > bound_volume_threshold
+            ):
+                pbar.update(1)
+                continue
+
+            n_cc, labels = connected_components(
+                subadj, directed=False, return_labels=True
+            )
+            if n_cc > 1:
+                biggest_cc = np.argmax(np.bincount(labels))
+                lcc_indices = np.where(labels == biggest_cc)[0]
+                subadj = subadj[lcc_indices][:, lcc_indices]
+                submesh = subset_mesh_by_indices(submesh, lcc_indices)
+
+            L = laplacian(subadj, normed=False, symmetrized=True)
+            evals, evecs = eigsh(L, k=2, sigma=-1e-10, return_eigenvectors=True)
+            indices = np.argsort(evals)
+            evals = evals[indices]
+            evecs = evecs[:, indices]
+            fiedler_eval = evals[1]
+            fiedler_evec = evecs[:, 1]
+            # elif split_laplacian == "mesh":
+            #     evals, evecs = decompose_mesh(
+            #         submesh,
+            #         n_components=2,
+            #         robust=True,
+            #     )
+            #     fiedler_eval = evals[1]
+            #     fiedler_evec = evecs[:, 1]
+            # else:
+            #     fiedler_eval = 0
 
             if (split_threshold is not None) and (fiedler_eval < split_threshold):
                 split_indices_1 = np.where(fiedler_evec > 0)[0]
@@ -154,9 +174,6 @@ def component_morphometry_pipeline(
 
             row_data[f"{split_laplacian}_fiedler_eval"] = np.float32(fiedler_eval)
 
-            bounds = np.array([submesh[0].min(axis=0), submesh[0].max(axis=0)])
-            bound_volume_um3 = np.prod(bounds[1] - bounds[0]) * 1e-9
-
             n_points = max(int(bound_volume_um3 * points_per_um3), 1000)
             # TODO make this just a grid
             sample_points = np.random.uniform(bounds[0], bounds[1], (n_points, 3))
@@ -208,6 +225,12 @@ def component_morphometry_pipeline(
                 row_data["max_dt_nm"] = np.float32(dists.max())
                 row_data["mean_dt_nm"] = np.float32(dists.mean())
 
+            row_data["n_vertices"] = np.int32(len(submesh[0]))
+            row_data["n_faces"] = np.int32(len(submesh[1]))
+            row_data["time"] = np.float32(time.time() - start_time)
+            row_data["n_sampled_points"] = np.int32(n_points)
+            row_data["bound_volume_um3"] = np.float32(bound_volume_um3)
+
             rows.append(row_data)
             pbar.update(1)
 
@@ -225,7 +248,7 @@ def component_morphometry_pipeline(
         post_synapse_components = corrected_components[post_synapse_mappings]
         results["n_post_synapses"] = np.zeros(len(results), dtype=np.uint16)
         for component in post_synapse_components:
-            if component != -1:
+            if component != -1 and component in results.index:
                 results.loc[component, "n_post_synapses"] += 1
 
     return results, corrected_components
