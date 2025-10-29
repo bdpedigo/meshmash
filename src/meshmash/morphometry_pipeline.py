@@ -20,6 +20,7 @@ def component_morphometry_pipeline(
     labels,
     select_label,
     post_synapse_mappings=None,
+    vertex_features=None,
     split_laplacian="graph",
     split_threshold=None,
     split_min_size=10,
@@ -80,9 +81,6 @@ def component_morphometry_pipeline(
             subvertices = vertices[used_vertices]
 
             submesh = (subvertices, subfaces)
-            # TODO this should account for disconnected components here, otherwise
-            # taking the 2nd eigenpair will be wrong
-
             # if split_laplacian == "graph":
             subadj = mesh_to_adjacency(submesh)
             bounds = np.array([submesh[0].min(axis=0), submesh[0].max(axis=0)])
