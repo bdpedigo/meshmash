@@ -1,3 +1,3 @@
 # meshmash
 
-Random mesh utilities in Python.
+Random mesh and related utilities in Python.
