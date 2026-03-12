@@ -962,6 +962,12 @@ datasets = [
     { name = "pooch" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "meshmash", extra = ["datasets"] },
+    { name = "pytest" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "caveclient", extras = ["cv"], specifier = ">=8.0.1" },
@@ -979,6 +985,12 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.15.0" },
     { name = "tqdm-joblib", specifier = ">=0.0.4" },
     { name = "typer", specifier = ">=0.12" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "meshmash", extras = ["datasets"] },
+    { name = "pytest", specifier = ">=8.0" },
 ]
 
 [[package]]

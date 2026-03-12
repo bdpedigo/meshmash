@@ -21,9 +21,11 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 version = "0.1.0"
 
-
 [project.optional-dependencies]
 datasets = ["pooch>=1.8"]
+
+[dependency-groups]
+dev = ["meshmash[datasets]", "pytest>=8.0"]
 
 [project.scripts]
 meshmash = "meshmash.cli:app"
