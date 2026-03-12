@@ -7,7 +7,7 @@
 Download and cache sample mesh datasets for use with meshmash.
 
 > **Note:** This command requires the optional `datasets` extra.
-> Install it with `pip install meshmash[datasets]` (adds `pooch`).
+> Install it with `pip install meshmash[datasets]` or `uv add meshmash[datasets]`.
 
 ```
 meshmash datasets [NAME]
