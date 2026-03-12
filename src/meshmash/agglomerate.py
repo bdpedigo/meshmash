@@ -20,9 +20,31 @@ def multicut_ward(
     connectivity: Optional[sparse.sparray] = None,
     distance_thresholds: Optional[list[float]] = None,
 ) -> np.ndarray:
-    """
-    Computes labels from ward hierarchical clustering at multiple distance thresholds,
-    without recomputing the tree at each threshold.
+    """Compute Ward cluster labels at multiple distance thresholds.
+
+    Builds the Ward linkage tree once with
+    :func:`sklearn.cluster.ward_tree`, then cuts it at each threshold in
+    ``distance_thresholds`` without rebuilding.  This is more efficient
+    than fitting a separate :class:`sklearn.cluster.AgglomerativeClustering`
+    for each threshold.
+
+    Parameters
+    ----------
+    X :
+        Feature matrix of shape ``(N, F)``.
+    connectivity :
+        Optional sparse connectivity matrix of shape ``(N, N)``
+        constraining which samples may be merged (passed to
+        :func:`sklearn.cluster.ward_tree`).
+    distance_thresholds :
+        List of linkage-distance thresholds at which to cut the tree.
+        Each threshold yields one column in the output.
+
+    Returns
+    -------
+    :
+        Integer label array of shape ``(N, len(distance_thresholds))``.
+        Column ``i`` contains cluster labels for threshold ``i``.
     """
     children, _, n_leaves, _, distances = ward_tree(
         X, connectivity=connectivity, return_distance=True
@@ -41,7 +63,31 @@ def multicut_ward(
 
 
 def agglomerate_mesh(mesh, features, distance_thresholds=None) -> np.ndarray:
-    """this is the version that fixes issues where only some parts of a mesh are nan"""
+    """Apply connectivity-constrained Ward clustering to vertex features on a mesh.
+
+    Handles vertices with non-finite feature values by masking them out and
+    running clustering only on the valid sub-mesh, then filling ``-1`` back
+    into the invalid positions.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by :func:`~meshmash.types.interpret_mesh`.
+    features :
+        Per-vertex feature matrix of shape ``(V, F)``.
+    distance_thresholds :
+        Single threshold or list of thresholds passed to
+        :func:`multicut_ward`.  ``None`` assigns each vertex a unique
+        label (i.e. no clustering).
+
+    Returns
+    -------
+    :
+        Integer label array of shape ``(V, T)`` where ``T`` is the
+        number of thresholds.  Vertices with non-finite features receive
+        label ``-1``.  Returns ``None`` if no vertices have finite
+        features or the sub-mesh has no faces.
+    """
     if isinstance(distance_thresholds, (int, float)) or distance_thresholds is None:
         distance_thresholds = [distance_thresholds]
     if not (np.isfinite(features).all(axis=1)).any():
@@ -101,7 +147,30 @@ def agglomerate_mesh(mesh, features, distance_thresholds=None) -> np.ndarray:
 
 
 def fix_split_labels(agg_labels: np.ndarray, submesh_mapping: np.ndarray) -> np.ndarray:
-    for label_column in range(agg_labels.shape[1]):
+    """Remap per-submesh local labels to globally unique integers.
+
+    When each submesh independently assigns cluster labels ``0, 1, 2, …``,
+    the same integer can refer to different clusters in different submeshes.
+    This function treats each ``(submesh_id, local_label)`` pair as a
+    unique cluster and remaps them to a single contiguous range
+    ``0, 1, 2, …``.
+
+    Parameters
+    ----------
+    agg_labels :
+        Per-vertex label array of shape ``(V, T)`` where ``T`` is the
+        number of distance thresholds.  Vertices not belonging to any
+        submesh have label ``-1`` and are left unchanged.
+    submesh_mapping :
+        Per-vertex integer array of length ``V`` indicating which submesh
+        each vertex belongs to (``-1`` for unassigned vertices).
+
+    Returns
+    -------
+    :
+        Modified ``agg_labels`` with globally unique integers, same shape
+        as the input.
+    """
         valid_mask = agg_labels[:, label_column] != -1
 
         valid_labels = agg_labels[valid_mask, label_column]

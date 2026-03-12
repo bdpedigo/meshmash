@@ -27,7 +27,28 @@ from .utils import (
 def graph_laplacian_split(
     adj: csr_array, dtype: type = np.float32
 ) -> tuple[np.ndarray, np.ndarray]:
-    # TODO didn't understand why this took longer when float32 for some meshes
+    """Bisect a mesh using the Fiedler vector of the graph Laplacian.
+
+    Computes the second smallest eigenvector (Fiedler vector) of the
+    unnormalised graph Laplacian and partitions vertices by the sign of
+    their Fiedler coefficient.
+
+    Parameters
+    ----------
+    adj :
+        Sparse adjacency matrix of the mesh graph, shape ``(V, V)``.
+    dtype :
+        Floating-point dtype used for the eigensolver.
+
+    Returns
+    -------
+    indices1 :
+        Indices of vertices in the first partition
+        (Fiedler coefficient >= 0).
+    indices2 :
+        Indices of vertices in the second partition
+        (Fiedler coefficient < 0).
+    """
     # probably some issue with tolerance/sigma?
     # TODO normed didn't seem to make much of a difference here; perhaps just because
     # degrees are fairly homogeneous?
@@ -315,6 +336,25 @@ def fit_mesh_split_lap(
 
 
 def apply_mesh_split(mesh: Mesh, split_mapping: np.ndarray) -> list[Mesh]:
+    """Separate a mesh into submeshes according to a per-vertex split mapping.
+
+    Only faces whose *all three* vertices share the same label are retained
+    in that submesh.  Faces that span label boundaries are dropped.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by :func:`~meshmash.types.interpret_mesh`.
+    split_mapping :
+        Per-vertex integer label array of length ``V`` as produced by
+        :func:`fit_mesh_split`.  Vertices with label ``-1`` are excluded.
+
+    Returns
+    -------
+    :
+        List of ``(vertices, faces)`` tuples, one per unique non-negative
+        label, with remapped face indices.
+    """
     vertices, faces = interpret_mesh(mesh)
     faces = pd.DataFrame(faces)
     faces["label0"] = split_mapping[faces[0]]
@@ -335,6 +375,22 @@ def apply_mesh_split(mesh: Mesh, split_mapping: np.ndarray) -> list[Mesh]:
 
 
 def get_submesh_borders(submesh: Mesh) -> np.ndarray:
+    """Return the vertex indices that lie on boundary edges of a submesh.
+
+    Uses :mod:`pyvista` boundary-edge extraction to find edges shared by
+    fewer than two faces.
+
+    Parameters
+    ----------
+    submesh :
+        A manifold triangular mesh accepted by
+        :func:`~meshmash.utils.mesh_to_poly`.
+
+    Returns
+    -------
+    :
+        Sorted array of vertex indices located on boundary edges.
+    """
     # TODO currently this only works if input mesh is manifold, should relax this
     # and actually look at what edges are being broken maybe
     poly = mesh_to_poly(submesh)
@@ -355,6 +411,31 @@ def fit_overlapping_mesh_split(
     vertex_threshold: int = 20_000,
     max_rounds: int = 1_000,
 ) -> list[np.ndarray]:
+    """Split a mesh and grow each chunk geodesically to create overlapping regions.
+
+    First calls :func:`fit_mesh_split` to partition the mesh, then expands
+    each chunk by including all vertices reachable within ``overlap_distance``
+    along mesh edges (using shortest-path distances).
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by :func:`~meshmash.types.interpret_mesh`.
+    overlap_distance :
+        Maximum geodesic distance from the core chunk within which
+        additional vertices are included in the overlap region.
+    vertex_threshold :
+        Maximum number of vertices per non-overlapping core chunk passed
+        to :func:`fit_mesh_split`.
+    max_rounds :
+        Maximum bisection rounds; see :func:`fit_mesh_split`.
+
+    Returns
+    -------
+    :
+        List of vertex index arrays (one per chunk), each containing the
+        core vertices plus their overlap neighbourhood.
+    """
     mesh = interpret_mesh(mesh)
     submesh_mapping = fit_mesh_split(
         mesh, vertex_threshold=vertex_threshold, max_rounds=max_rounds
@@ -401,6 +482,30 @@ def fit_overlapping_mesh_split(
 
 
 class MeshStitcher:
+    """Split a mesh into overlapping chunks and apply functions across them.
+
+    Coordinates the full split-compute-stitch workflow:
+
+    1. Call :meth:`split_mesh` to partition the mesh into overlapping
+       submeshes.
+    2. Call :meth:`apply` (or :meth:`apply_on_features` /
+       :meth:`subset_apply`) to run a function on each submesh in
+       parallel.
+    3. Results are stitched back to the full mesh using
+       :meth:`stitch_features`.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by :func:`~meshmash.types.interpret_mesh`.
+    verbose :
+        Verbosity level.  ``0`` / ``False`` is silent; ``>=1`` prints
+        progress; ``>=2`` prints extra diagnostics.
+    n_jobs :
+        Number of parallel workers for :class:`joblib.Parallel`.  ``-1``
+        uses all available CPU cores.
+    """
+
     def __init__(
         self, mesh: Mesh, verbose: Union[bool, int] = False, n_jobs: Optional[int] = -1
     ) -> None:
@@ -519,6 +624,27 @@ class MeshStitcher:
         features_by_submesh: list[np.ndarray],
         fill_value: float = np.nan,
     ) -> np.ndarray:
+        """Combine per-submesh feature arrays into a single full-mesh array.
+
+        Each vertex in the overlap region is covered by multiple submeshes.
+        This method assigns each vertex the value computed by the submesh
+        that "owns" it (i.e. ``submesh_mapping[vertex] == submesh_index``).
+
+        Parameters
+        ----------
+        features_by_submesh :
+            List of 2-D feature arrays, one per submesh, aligned to the
+            submesh vertex ordering.  ``None`` entries are skipped.
+        fill_value :
+            Value used to pre-fill the output array before writing submesh
+            results.  Vertices in chunks where the function returned
+            ``None`` retain this value.
+
+        Returns
+        -------
+        :
+            Full-mesh feature array of shape ``(V, n_features)``.
+        """
         valid_features = [feat for feat in features_by_submesh if feat is not None]
         if len(valid_features) == 0:
             raise ValueError("All features are None")
@@ -562,6 +688,34 @@ class MeshStitcher:
         stitch: bool = True,
         **kwargs,
     ) -> Union[np.ndarray, list]:
+        """Apply a function to each submesh and (optionally) stitch results.
+
+        ``func`` must have signature ``func(submesh, *args, **kwargs)``
+        and return a 2-D array aligned to the submesh vertices, or
+        ``None`` to indicate failure.
+
+        Parameters
+        ----------
+        func :
+            Callable to apply to each submesh.
+        *args :
+            Positional arguments forwarded to ``func`` after ``submesh``.
+        fill_value :
+            Fill value for uncomputed vertices; see :meth:`stitch_features`.
+        stitch :
+            If ``True`` (default), stitch results into a full-mesh array
+            via :meth:`stitch_features`.  If ``False``, return the raw
+            list of per-submesh results.
+        **kwargs :
+            Keyword arguments forwarded to ``func``.
+
+        Returns
+        -------
+        :
+            Stitched full-mesh feature array of shape ``(V, n_features)``
+            when ``stitch=True``, or the raw list of per-submesh results
+            when ``stitch=False``.
+        """
         func_name = func.__name__
         submeshes = self.submeshes
         if self.n_jobs == 1:
@@ -596,6 +750,35 @@ class MeshStitcher:
         fill_value: float = np.nan,
         **kwargs,
     ) -> np.ndarray:
+        """Apply a function only to submeshes that contain ``indices``.
+
+        Useful when features are only needed for a subset of vertices;
+        submeshes that do not overlap with ``indices`` are skipped.
+
+        Parameters
+        ----------
+        func :
+            Callable with signature ``func(submesh, *args, **kwargs)``.
+        indices :
+            Vertex indices of interest.  Only submeshes that contain at
+            least one of these vertices are processed.
+        *args :
+            Positional arguments forwarded to ``func``.
+        reindex :
+            If ``True``, return only the rows of the stitched result
+            corresponding to ``indices``.  If ``False`` (default), return
+            the full-mesh array.
+        fill_value :
+            Fill value for vertices whose submesh was not processed.
+        **kwargs :
+            Keyword arguments forwarded to ``func``.
+
+        Returns
+        -------
+        :
+            Full-mesh feature array of shape ``(V, n_features)`` or, when
+            ``reindex=True``, shape ``(len(indices), n_features)``.
+        """
         func_name = func.__name__
         index_submesh_mappings = self.submesh_mapping[indices]
         relevant_submesh_indices = np.unique(index_submesh_mappings)
@@ -649,6 +832,32 @@ class MeshStitcher:
         fill_value: float = np.nan,
         **kwargs,
     ) -> np.ndarray:
+        """Apply a function that takes both a submesh and a feature slice.
+
+        Like :meth:`apply`, but also passes the slice of ``X`` corresponding
+        to each submesh as the second argument to ``func``.  The expected
+        signature is ``func(submesh, submesh_features, *args, **kwargs)``.
+
+        Parameters
+        ----------
+        func :
+            Callable with signature
+            ``func(submesh, submesh_features, *args, **kwargs)``.
+        X :
+            Full-mesh feature array of shape ``(V, F)``.  Each submesh
+            receives the rows indexed by its overlap vertex indices.
+        *args :
+            Additional positional arguments forwarded to ``func``.
+        fill_value :
+            Fill value for uncomputed vertices.
+        **kwargs :
+            Keyword arguments forwarded to ``func``.
+
+        Returns
+        -------
+        :
+            Stitched full-mesh result array of shape ``(V, n_out_features)``.
+        """
         func_name = func.__name__
         submeshes = self.submeshes
         if self.n_jobs == 1:

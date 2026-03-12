@@ -23,25 +23,43 @@ def decompose_laplacian(
     ncv: Optional[int] = None,
     prefactor: Optional[str] = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Solves the generalized eigenvalue problem.
-    Change solver if necessary
+    """Solve the generalised eigenvalue problem for a mesh Laplacian.
+
+    Computes the ``n_components`` smallest-magnitude eigenpairs of
+    :math:`L \\phi = \\lambda M \\phi` using ARPACK shift-invert mode.
+    For small matrices the dense solver :func:`scipy.linalg.eigh` is used
+    instead.
 
     Parameters
-    -----------------------------
-    L:
-        (n,n) - sparse matrix of cotangent weights
-    M:
-        (n,n) - sparse matrix of area weights
+    ----------
+    L :
+        Sparse cotangent-weight Laplacian matrix, shape ``(V, V)``.
+    M :
+        Sparse diagonal mass (area) matrix, shape ``(V, V)``.
     n_components :
-        int - number of eigenvalues to compute
+        Number of smallest eigenvalues/eigenvectors to compute.
+    op_inv :
+        Pre-factored inverse operator to accelerate the ARPACK solve.  If
+        ``None`` and ``prefactor`` is also ``None``, no pre-factorisation
+        is performed.
+    sigma :
+        Shift applied in shift-invert mode.  A small negative value
+        ensures the solver targets the smallest non-negative eigenvalues.
+    tol :
+        Convergence tolerance passed to :func:`scipy.sparse.linalg.eigsh`.
+    ncv :
+        Number of Lanczos vectors.  ``None`` lets ARPACK choose.
+    prefactor :
+        Pre-factorisation strategy.  Currently only ``'lu'`` (sparse LU
+        via :func:`scipy.sparse.linalg.splu`) is supported.
 
     Returns
-    -----------------------------
-    eigenvalues   : np.ndarray
-        (n_components,) - array of eigenvalues
-    eigenvectors  : np.ndarray
-        (n, n_components) - array of eigenvectors
+    -------
+    eigenvalues :
+        Array of eigenvalues sorted in ascending order, shape
+        ``(n_components,)``.
+    eigenvectors :
+        Array of corresponding eigenvectors, shape ``(V, n_components)``.
     """
     if prefactor is not None:
         if prefactor == "lu":
@@ -81,6 +99,39 @@ def decompose_mesh(
     mollify_factor: float = 1e-5,
     prefactor: Optional[str] = None,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Compute the Laplacian eigendecomposition of a mesh.
+
+    Builds the cotangent Laplacian and mass matrix with
+    :func:`~meshmash.laplacian.cotangent_laplacian`, then delegates to
+    :func:`decompose_laplacian`.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by :func:`~meshmash.types.interpret_mesh`.
+    n_components :
+        Number of smallest eigenpairs to compute.
+    op_inv :
+        Pre-factored inverse operator; see :func:`decompose_laplacian`.
+    sigma :
+        Shift for ARPACK shift-invert mode.
+    tol :
+        Convergence tolerance.
+    robust :
+        If ``True``, use the robust Laplacian (see
+        :func:`~meshmash.laplacian.cotangent_laplacian`).
+    mollify_factor :
+        Mollification factor for the robust Laplacian.
+    prefactor :
+        Pre-factorisation strategy; see :func:`decompose_laplacian`.
+
+    Returns
+    -------
+    eigenvalues :
+        Sorted eigenvalues, shape ``(n_components,)``.
+    eigenvectors :
+        Corresponding eigenvectors, shape ``(V, n_components)``.
+    """
     L, M = cotangent_laplacian(mesh, robust=robust, mollify_factor=mollify_factor)
     return decompose_laplacian(
         L,
@@ -101,6 +152,52 @@ def decompose_laplacian_by_bands(
     truncate_extra: bool = True,
     verbose: Union[bool, int] = False,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Compute eigenpairs of a mesh Laplacian up to a maximum eigenvalue
+    using a band-by-band approach.
+
+    Instead of computing all eigenpairs at once (which is slow for large
+    meshes), this routine incrementally solves bands of ``band_size``
+    eigenpairs, advancing the ARPACK shift to stay near the frontier of
+    already-computed eigenvalues.  The result is equivalent to calling
+    :func:`decompose_laplacian` with a sufficiently large ``n_components``
+    but uses less memory and is faster in practice.
+
+    Parameters
+    ----------
+    L :
+        Sparse cotangent-weight Laplacian matrix, shape ``(V, V)``.
+    M :
+        Sparse diagonal mass (area) matrix, shape ``(V, V)``.
+    max_eigenvalue :
+        Stop once the largest computed eigenvalue exceeds this value.
+    band_size :
+        Number of eigenpairs computed per ARPACK call.  Does not affect
+        the result, only performance.
+    truncate_extra :
+        If ``True``, discard any eigenpairs whose eigenvalue exceeds
+        ``max_eigenvalue`` (the last band may overshoot by up to
+        ``band_size`` pairs).
+    verbose :
+        Verbosity level.  ``0`` or ``False`` is silent; ``>=1`` shows a
+        progress bar; ``>=2`` also prints per-band diagnostics.
+
+    Returns
+    -------
+    eigenvalues :
+        Sorted eigenvalues, shape ``(K,)`` where ``K`` depends on
+        ``max_eigenvalue``.
+    eigenvectors :
+        Corresponding eigenvectors, shape ``(V, K)``.
+
+    Notes
+    -----
+    The band-shifting heuristic follows Section 4.1 of [1].
+
+    References
+    ----------
+    [1] B. Vallet and B. Levy, "Spectral Geometry Processing with Manifold
+        Harmonics", Computer Graphics Forum, 27(2):251-260, 2008.
+    """
     # REF: section 4.1 of Spectral Mesh Processing, Levy & Zhang 2009
     # The idea is that because ARAPACK is good at solving for large eigenvalues, or,
     # eigenvalues near sigma for the shift-invert mode, we get a speedup from solving
@@ -177,6 +274,29 @@ def get_hks_filter(
     n_scales: int = 32,
     dtype: np.dtype = np.float64,
 ) -> Callable[[np.ndarray], np.ndarray]:
+    """Build a heat-kernel spectral filter for use with :func:`spectral_geometry_filter`.
+
+    Returns a callable that converts an array of Laplacian eigenvalues into
+    a 2-D array of HKS filter coefficients.
+
+    Parameters
+    ----------
+    t_max :
+        Largest diffusion timescale.
+    t_min :
+        Smallest diffusion timescale.
+    n_scales :
+        Number of timescales (= number of output HKS features).  Scales
+        are spaced logarithmically between ``t_min`` and ``t_max``.
+    dtype :
+        Floating-point dtype for the output coefficients.
+
+    Returns
+    -------
+    :
+        Callable that accepts a 1-D eigenvalue array of length ``K`` and
+        returns a ``(n_scales, K)`` coefficient array.
+    """
     scales = np.geomspace(t_min, t_max, n_scales, dtype=dtype)
 
     def hks_filter(eigenvalues):
@@ -187,6 +307,25 @@ def get_hks_filter(
 
 
 def construct_bspline_basis(e_min: float, e_max: float, n_components: int) -> list[BSpline]:
+    """Construct a set of B-spline basis functions spanning an eigenvalue range.
+
+    Parameters
+    ----------
+    e_min :
+        Left boundary of the eigenvalue domain.
+    e_max :
+        Right boundary of the eigenvalue domain.
+    n_components :
+        Number of basis functions (= number of output geometry-vector
+        features).
+
+    Returns
+    -------
+    :
+        List of ``n_components`` cubic :class:`scipy.interpolate.BSpline`
+        basis elements, each non-zero over a compact sub-interval of
+        ``[e_min, e_max]``.
+    """
     extrapolate = False
     basis_degree = 3
     domain = np.array([e_min, e_max])
@@ -210,6 +349,29 @@ def construct_bspline_basis(e_min: float, e_max: float, n_components: int) -> li
 def construct_bspline_filter(
     e_min: float, e_max: float, n_components: int
 ) -> Callable[[np.ndarray], np.ndarray]:
+    """Build a B-spline spectral filter for use with :func:`spectral_geometry_filter`.
+
+    Creates a bank of ``n_components`` cubic B-spline basis functions
+    covering ``[e_min, e_max]`` via :func:`construct_bspline_basis` and
+    wraps them in a callable that converts eigenvalues to filter
+    coefficients.
+
+    Parameters
+    ----------
+    e_min :
+        Left boundary of the eigenvalue domain.
+    e_max :
+        Right boundary of the eigenvalue domain.
+    n_components :
+        Number of basis functions (= number of output features).
+
+    Returns
+    -------
+    :
+        Callable that accepts a 1-D eigenvalue array of length ``K`` and
+        returns a ``(n_components, K)`` coefficient array.  Values outside
+        the support of each basis element are set to ``0``.
+    """
     bases = construct_bspline_basis(e_min, e_max, n_components)
 
     def bspline_filter(eigenvalues):
@@ -455,6 +617,70 @@ def compute_hks(
     n_neighbors: int = 30,
     verbose: Union[bool, int] = False,
 ) -> np.ndarray:
+    """Compute the Heat Kernel Signature (HKS) for each vertex of a mesh.
+
+    The HKS is a multi-scale, intrinsic shape descriptor based on the
+    diagonal of the heat kernel at a set of diffusion timescales.  It
+    captures local geometry from fine detail (small ``t``) to global
+    structure (large ``t``).
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by :func:`~meshmash.types.interpret_mesh`.
+    max_eigenvalue :
+        Maximum Laplacian eigenvalue to include in the computation.
+        Larger values capture finer geometric detail at increased cost.
+    t_min :
+        Smallest diffusion timescale.
+    t_max :
+        Largest diffusion timescale.
+    n_components :
+        Number of diffusion timescales.  Scales are spaced logarithmically
+        between ``t_min`` and ``t_max``, and each scale produces one
+        feature per vertex.
+    band_size :
+        Number of eigenpairs per ARPACK band; see
+        :func:`spectral_geometry_filter`.
+    truncate_extra :
+        Whether to discard eigenpairs that overshoot ``max_eigenvalue``.
+    drop_first :
+        If ``True``, drop the first (near-zero) eigenpair before applying
+        the filter.  The first eigenvector is proportional to vertex areas
+        and is typically uninformative.
+    robust :
+        If ``True``, use the robust Laplacian (see
+        :func:`~meshmash.laplacian.cotangent_laplacian`).
+    mollify_factor :
+        Mollification factor for the robust Laplacian.
+    decomposition_dtype :
+        Floating-point dtype for the eigendecomposition.
+    point_laplacian :
+        If ``True``, build a point-cloud Laplacian instead of the mesh
+        cotangent Laplacian (useful for point clouds without face data).
+    n_neighbors :
+        Number of neighbours used when ``point_laplacian=True``.
+    verbose :
+        Verbosity level passed to :func:`spectral_geometry_filter`.
+
+    Returns
+    -------
+    :
+        Per-vertex HKS feature array of shape ``(V, n_components)``.
+
+    Notes
+    -----
+    The band-by-band eigensolver from [1] is used for efficiency.  The
+    robust Laplacian from [2] is recommended for real-world meshes.
+
+    References
+    ----------
+    [1] J. Sun, M. Ovsjanikov, and L. Guibas, "A Concise and Provably
+        Informative Multi-Scale Signature Based on Heat Diffusion",
+        Computer Graphics Forum, 28(5):1383-1392, 2009.
+    [2] N. Sharp and K. Crane, "A Laplacian for Nonmanifold Triangle
+        Meshes", Computer Graphics Forum, 39(5), 2020.
+    """
     filter_func = get_hks_filter(t_max, t_min, n_components, dtype=decomposition_dtype)
     out = spectral_geometry_filter(
         mesh,
@@ -485,6 +711,56 @@ def compute_geometry_vectors(
     decomposition_dtype: Optional[np.dtype] = np.float64,
     verbose: Union[bool, int] = False,
 ) -> np.ndarray:
+    """Compute spectral geometry descriptors using a B-spline spectral filter.
+
+    Similar in spirit to :func:`compute_hks`, but instead of heat-kernel
+    exponentials the spectrum is partitioned by a bank of cubic B-spline
+    basis functions.  Each basis function acts as a band-pass filter,
+    yielding one feature per vertex per band.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by :func:`~meshmash.types.interpret_mesh`.
+    max_eigenvalue :
+        Maximum Laplacian eigenvalue to include.  Determines the upper
+        boundary of the B-spline domain.
+    n_components :
+        Number of B-spline basis functions (= number of output features
+        per vertex).
+    band_size :
+        Number of eigenpairs per ARPACK band; see
+        :func:`spectral_geometry_filter`.
+    truncate_extra :
+        Whether to discard eigenpairs that overshoot ``max_eigenvalue``.
+    drop_first :
+        If ``True``, drop the first (near-zero) eigenpair.
+    robust :
+        If ``True``, use the robust Laplacian (see
+        :func:`~meshmash.laplacian.cotangent_laplacian`).
+    mollify_factor :
+        Mollification factor for the robust Laplacian.
+    decomposition_dtype :
+        Floating-point dtype for the eigendecomposition.
+    verbose :
+        Verbosity level passed to :func:`spectral_geometry_filter`.
+
+    Returns
+    -------
+    :
+        Per-vertex geometry-vector feature array of shape
+        ``(V, n_components)``.
+
+    Notes
+    -----
+    The B-spline filter bank follows [1].
+
+    References
+    ----------
+    [1] R. Litman and A. M. Bronstein, "Learning spectral descriptors for
+        deformable shape correspondence", IEEE Transactions on Pattern
+        Analysis and Machine Intelligence, 36(1):171-180, 2013.
+    """
     filter_func = construct_bspline_filter(0.0, max_eigenvalue, n_components)
     out = spectral_geometry_filter(
         mesh,

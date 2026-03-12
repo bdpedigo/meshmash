@@ -9,21 +9,20 @@ from .types import Mesh, interpret_mesh
 
 
 def area_matrix(mesh: Mesh) -> dia_array:
-    """
-    Compute the diagonal matrix of lumped vertex area for mesh laplacian.
-    Entry i on the diagonal is the area of vertex i, approximated as one third
-    of adjacent triangles
+    """Compute the diagonal lumped-area matrix for a triangle mesh.
+
+    Each diagonal entry is the area associated with that vertex, approximated
+    as one third of the sum of adjacent face areas.
 
     Parameters
-    -----------------------------
-    vertices   :
-        (n,3) array of vertices coordinates
-    faces      :
-        (m,3) array of vertex indices defining faces
+    ----------
+    mesh :
+        Input mesh.
+
     Returns
-    -----------------------------
+    -------
     M :
-        (n,n) sparse diagonal matrix of vertex areas in dia format
+        Sparse diagonal area matrix of shape ``(V, V)`` in DIA format.
     """
     vertices, faces = interpret_mesh(mesh)
     N = vertices.shape[0]
