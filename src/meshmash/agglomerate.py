@@ -1,19 +1,25 @@
 import logging
 import warnings
-from typing import Union
+from typing import Optional, Union
 
 import numpy as np
 import pandas as pd
+import scipy.sparse as sparse
 from sklearn.cluster import ward_tree
 
 # TODO dangerous to import private function here
 from sklearn.cluster._agglomerative import _hc_cut
 
 from .split import MeshStitcher
+from .types import Mesh, ArrayLike
 from .utils import mesh_to_adjacency, subset_mesh_by_indices
 
 
-def multicut_ward(X, connectivity=None, distance_thresholds=None):
+def multicut_ward(
+    X: ArrayLike,
+    connectivity: Optional[sparse.sparray] = None,
+    distance_thresholds: Optional[list[float]] = None,
+) -> np.ndarray:
     """
     Computes labels from ward hierarchical clustering at multiple distance thresholds,
     without recomputing the tree at each threshold.
@@ -94,7 +100,7 @@ def agglomerate_mesh(mesh, features, distance_thresholds=None) -> np.ndarray:
 #         return labels_by_distance
 
 
-def fix_split_labels(agg_labels, submesh_mapping):
+def fix_split_labels(agg_labels: np.ndarray, submesh_mapping: np.ndarray) -> np.ndarray:
     for label_column in range(agg_labels.shape[1]):
         valid_mask = agg_labels[:, label_column] != -1
 
@@ -113,7 +119,11 @@ def fix_split_labels(agg_labels, submesh_mapping):
     return agg_labels
 
 
-def fix_split_labels_and_features(agg_labels, submesh_mapping, features_by_submesh):
+def fix_split_labels_and_features(
+    agg_labels: np.ndarray,
+    submesh_mapping: np.ndarray,
+    features_by_submesh: list[pd.DataFrame],
+) -> tuple[np.ndarray, pd.DataFrame]:
     valid_mask = agg_labels != -1
 
     valid_labels = agg_labels[valid_mask]
@@ -154,7 +164,7 @@ def agglomerate_split_mesh(
     splitter: MeshStitcher,
     features: np.ndarray,
     distance_thresholds: Union[list, int, float],
-):
+) -> np.ndarray:
     if isinstance(distance_thresholds, (int, float)) or distance_thresholds is None:
         distance_thresholds = [distance_thresholds]
         was_single = True
@@ -176,7 +186,12 @@ def agglomerate_split_mesh(
     return agg_labels
 
 
-def aggregate_features(features, labels, weights=None, func="mean") -> pd.DataFrame:
+def aggregate_features(
+    features: Union[np.ndarray, pd.DataFrame],
+    labels: Optional[np.ndarray] = None,
+    weights: Optional[np.ndarray] = None,
+    func: str = "mean",
+) -> pd.DataFrame:
     if not isinstance(features, pd.DataFrame):
         feature_df = pd.DataFrame(features)
     else:

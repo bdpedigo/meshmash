@@ -1,9 +1,10 @@
 import logging
 import time
-from typing import Union
+from typing import Any, Callable, Optional, Union
 
 import numpy as np
 import pandas as pd
+import scipy.sparse as sparse
 from joblib import Parallel, delayed
 from scipy.sparse import csr_array, diags_array
 from scipy.sparse.csgraph import connected_components, dijkstra, laplacian
@@ -23,7 +24,9 @@ from .utils import (
 )
 
 
-def graph_laplacian_split(adj: csr_array, dtype=np.float32):
+def graph_laplacian_split(
+    adj: csr_array, dtype: type = np.float32
+) -> tuple[np.ndarray, np.ndarray]:
     # TODO didn't understand why this took longer when float32 for some meshes
     # probably some issue with tolerance/sigma?
     # TODO normed didn't seem to make much of a difference here; perhaps just because
@@ -56,7 +59,9 @@ def graph_laplacian_split(adj: csr_array, dtype=np.float32):
     return indices1, indices2
 
 
-def bisect_adjacency(adj: csr_array, n_retries: int = 7, check=True):
+def bisect_adjacency(
+    adj: csr_array, n_retries: int = 7, check: bool = True
+) -> tuple[tuple[csr_array, csr_array], tuple[np.ndarray, np.ndarray]]:
     if n_retries == 0:
         raise RuntimeError("Split failed to divide mesh.")
 
@@ -90,11 +95,11 @@ def bisect_adjacency(adj: csr_array, n_retries: int = 7, check=True):
 
 def fit_mesh_split(
     mesh: Union[Mesh, np.ndarray, csr_array],
-    max_vertex_threshold=20_000,
-    min_vertex_threshold=100,
-    max_rounds=100000,
-    verbose=False,
-):
+    max_vertex_threshold: int = 20_000,
+    min_vertex_threshold: int = 100,
+    max_rounds: int = 100_000,
+    verbose: Union[bool, int] = False,
+) -> np.ndarray:
     if isinstance(mesh, (csr_array, np.ndarray)):
         whole_adj = mesh
     else:
@@ -186,11 +191,16 @@ def fit_mesh_split(
 #     return indices1, indices2
 
 
-def subset_diags(matrix, indices):
+def subset_diags(matrix: sparse.sparray, indices: np.ndarray) -> diags_array:
     return diags_array(matrix.diagonal()[indices], shape=(len(indices), len(indices)))
 
 
-def bisect_laplacian(L, M):
+def bisect_laplacian(
+    L: sparse.sparray, M: sparse.sparray
+) -> tuple[
+    tuple[tuple[sparse.sparray, diags_array], tuple[sparse.sparray, diags_array]],
+    tuple[np.ndarray, np.ndarray],
+]:
     # get the split indices
     # indices1, indices2 = graph_laplacian_split(adj)
 
@@ -222,13 +232,13 @@ def bisect_laplacian(L, M):
 
 def fit_mesh_split_lap(
     mesh: Union[Mesh, np.ndarray, csr_array],
-    max_vertex_threshold=20_000,
-    min_vertex_threshold=100,
-    max_rounds=100000,
-    robust=True,
-    mollify_factor=1e-5,
-    verbose=False,
-):
+    max_vertex_threshold: int = 20_000,
+    min_vertex_threshold: int = 100,
+    max_rounds: int = 100_000,
+    robust: bool = True,
+    mollify_factor: float = 1e-5,
+    verbose: Union[bool, int] = False,
+) -> np.ndarray:
     if isinstance(mesh, (csr_array, np.ndarray)):
         whole_adj = mesh
     else:
@@ -324,7 +334,7 @@ def apply_mesh_split(mesh: Mesh, split_mapping: np.ndarray) -> list[Mesh]:
     return new_meshes
 
 
-def get_submesh_borders(submesh):
+def get_submesh_borders(submesh: Mesh) -> np.ndarray:
     # TODO currently this only works if input mesh is manifold, should relax this
     # and actually look at what edges are being broken maybe
     poly = mesh_to_poly(submesh)
@@ -340,8 +350,11 @@ def get_submesh_borders(submesh):
 
 
 def fit_overlapping_mesh_split(
-    mesh, overlap_distance=20_000, vertex_threshold=20_000, max_rounds=1_000
-):
+    mesh: Mesh,
+    overlap_distance: float = 20_000,
+    vertex_threshold: int = 20_000,
+    max_rounds: int = 1_000,
+) -> list[np.ndarray]:
     mesh = interpret_mesh(mesh)
     submesh_mapping = fit_mesh_split(
         mesh, vertex_threshold=vertex_threshold, max_rounds=max_rounds
@@ -388,20 +401,22 @@ def fit_overlapping_mesh_split(
 
 
 class MeshStitcher:
-    def __init__(self, mesh: Mesh, verbose=False, n_jobs=-1):
+    def __init__(
+        self, mesh: Mesh, verbose: Union[bool, int] = False, n_jobs: Optional[int] = -1
+    ) -> None:
         self.mesh = interpret_mesh(mesh)
         self.verbose = verbose
         self.n_jobs = n_jobs
 
     def split_mesh(
         self,
-        max_vertex_threshold=20_000,
-        min_vertex_threshold=100,
-        overlap_distance=20_000,
-        max_rounds=100000,
-        max_overlap_neighbors=None,
-        verify_connected=True,
-    ):
+        max_vertex_threshold: int = 20_000,
+        min_vertex_threshold: int = 100,
+        overlap_distance: float = 20_000,
+        max_rounds: int = 100000,
+        max_overlap_neighbors: Optional[int] = None,
+        verify_connected: bool = True,
+    ) -> list[Mesh]:
         if max_vertex_threshold is None:
             max_vertex_threshold = len(self.mesh[0])
         if min_vertex_threshold is None:
@@ -502,8 +517,7 @@ class MeshStitcher:
     def stitch_features(
         self,
         features_by_submesh: list[np.ndarray],
-        fill_value=np.nan,
-        # add_label_column=False,
+        fill_value: float = np.nan,
     ) -> np.ndarray:
         valid_features = [feat for feat in features_by_submesh if feat is not None]
         if len(valid_features) == 0:
@@ -542,12 +556,12 @@ class MeshStitcher:
 
     def apply(
         self,
-        func,
+        func: Callable[..., Any],
         *args,
-        fill_value=np.nan,
-        stitch=True,
+        fill_value: float = np.nan,
+        stitch: bool = True,
         **kwargs,
-    ):
+    ) -> Union[np.ndarray, list]:
         func_name = func.__name__
         submeshes = self.submeshes
         if self.n_jobs == 1:
@@ -575,13 +589,13 @@ class MeshStitcher:
 
     def subset_apply(
         self,
-        func,
-        indices,
+        func: Callable[..., Any],
+        indices: np.ndarray,
         *args,
-        reindex=False,
-        fill_value=np.nan,
+        reindex: bool = False,
+        fill_value: float = np.nan,
         **kwargs,
-    ):
+    ) -> np.ndarray:
         func_name = func.__name__
         index_submesh_mappings = self.submesh_mapping[indices]
         relevant_submesh_indices = np.unique(index_submesh_mappings)
@@ -627,7 +641,14 @@ class MeshStitcher:
         else:
             return stitched_features
 
-    def apply_on_features(self, func, X, *args, fill_value=np.nan, **kwargs):
+    def apply_on_features(
+        self,
+        func: Callable[..., Any],
+        X: np.ndarray,
+        *args,
+        fill_value: float = np.nan,
+        **kwargs,
+    ) -> np.ndarray:
         func_name = func.__name__
         submeshes = self.submeshes
         if self.n_jobs == 1:

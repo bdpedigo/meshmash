@@ -1,7 +1,7 @@
 import logging
 from io import BytesIO
 from pathlib import Path
-from typing import Union
+from typing import Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -10,7 +10,9 @@ from cloudfiles import CloudFiles
 HEADER_FILE_NAME = "header.txt"
 
 
-def interpret_path(path: Union[str, Path], **kwargs) -> Path:
+def interpret_path(
+    path: Union[str, Path], **kwargs
+) -> tuple[CloudFiles, Optional[str]]:
     if isinstance(path, str):
         path = Path(path)
 
@@ -67,7 +69,7 @@ def save_condensed_features(
     feature_dtype: type = np.float32,
     label_dtype: type = np.int32,
     check_header: bool = True,
-):
+) -> None:
     cf, file_name = interpret_path(path)
 
     columns: list = features.columns.tolist()
@@ -121,7 +123,7 @@ def read_condensed_features(path: Union[str, Path]) -> tuple[pd.DataFrame, np.nd
 
 def save_condensed_edges(
     path: Union[str, Path], edges: pd.DataFrame, check_header: bool = True
-):
+) -> None:
     cf, file_name = interpret_path(path)
 
     edge_list = edges[["source", "target"]].values.astype(np.int32)
@@ -168,10 +170,10 @@ def save_condensed_graph(
     path: Union[str, Path],
     nodes: pd.DataFrame,
     edges: pd.DataFrame,
-    nodes_dtype=np.float32,
-    edges_dtype=np.int32,
+    nodes_dtype: type = np.float32,
+    edges_dtype: type = np.int32,
     check_header: bool = True,
-):
+) -> None:
     cf, file_name = interpret_path(path)
 
     _check_header(
@@ -219,7 +221,7 @@ def read_condensed_graph(path: Union[str, Path]) -> tuple[pd.DataFrame, pd.DataF
     return nodes, edges
 
 
-def save_id_to_mesh_map(path: Union[str, Path], id_to_mesh_map: np.ndarray):
+def save_id_to_mesh_map(path: Union[str, Path], id_to_mesh_map: np.ndarray) -> None:
     assert id_to_mesh_map.shape[1] == 2
 
     cf, file_name = interpret_path(path)
@@ -245,7 +247,7 @@ def read_id_to_mesh_map(path: Union[str, Path]) -> np.ndarray:
     return id_to_mesh_map
 
 
-def save_array(path: Union[str, Path], array: np.ndarray):
+def save_array(path: Union[str, Path], array: np.ndarray) -> None:
     cf, file_name = interpret_path(path)
 
     with BytesIO() as bio:

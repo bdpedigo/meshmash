@@ -1,3 +1,5 @@
+from typing import Generator, Literal, Optional, Union, overload
+
 import numpy as np
 import pandas as pd
 import pyvista as pv
@@ -5,7 +7,7 @@ from scipy.sparse import csr_array
 from scipy.sparse.csgraph import connected_components
 from sklearn.neighbors import NearestNeighbors
 
-from .types import Mesh, interpret_mesh
+from .types import ArrayLike, Mesh, interpret_mesh
 
 
 def mesh_to_poly(mesh: Mesh) -> pv.PolyData:
@@ -58,7 +60,7 @@ def poly_to_mesh(poly: pv.PolyData) -> Mesh:
     return vertices, faces
 
 
-def fix_mesh(mesh, **kwargs):
+def fix_mesh(mesh: Mesh, **kwargs) -> Mesh:
     from pymeshfix import MeshFix
 
     poly = mesh_to_poly(mesh)
@@ -67,9 +69,31 @@ def fix_mesh(mesh, **kwargs):
     return poly_to_mesh(mesh_fix.mesh)
 
 
+@overload
 def project_points_to_mesh(
-    points, mesh, distance_threshold=None, return_distances=False
-):
+    points: ArrayLike,
+    mesh: Mesh,
+    distance_threshold: Optional[float] = None,
+    return_distances: Literal[False] = ...,
+) -> np.ndarray: ...
+
+
+@overload
+def project_points_to_mesh(
+    points: ArrayLike,
+    mesh: Mesh,
+    distance_threshold: Optional[float] = None,
+    *,
+    return_distances: Literal[True],
+) -> tuple[np.ndarray, np.ndarray]: ...
+
+
+def project_points_to_mesh(
+    points: ArrayLike,
+    mesh: Mesh,
+    distance_threshold: Optional[float] = None,
+    return_distances: bool = False,
+) -> Union[np.ndarray, tuple[np.ndarray, np.ndarray]]:
     if isinstance(mesh, tuple):
         vertices = mesh[0]
     else:
@@ -89,7 +113,9 @@ def project_points_to_mesh(
         return indices
 
 
-def component_size_transform(mesh, indices=None):
+def component_size_transform(
+    mesh: Mesh, indices: Optional[np.ndarray] = None
+) -> np.ndarray:
     """Returns the size of each connected component in a mesh."""
     mesh = interpret_mesh(mesh)
     if indices is None:
@@ -106,7 +132,7 @@ def component_size_transform(mesh, indices=None):
     return component_sizes
 
 
-def get_label_components(mesh, labels) -> np.ndarray:
+def get_label_components(mesh: Mesh, labels: ArrayLike) -> np.ndarray:
     """Returns the connected components of a mesh which share the same label."""
     if isinstance(labels, pd.Series):
         labels = labels.values
@@ -144,7 +170,9 @@ def subset_mesh_by_indices(mesh: Mesh, indices: np.ndarray) -> Mesh:
 
 
 # actually, let's just move to a separate function
-def rough_subset_mesh_by_indices(mesh: Mesh, indices: np.ndarray):
+def rough_subset_mesh_by_indices(
+    mesh: Mesh, indices: np.ndarray
+) -> tuple[Mesh, np.ndarray]:
     vertices, faces = interpret_mesh(mesh)
 
     face_mask = np.any(np.isin(faces, indices), axis=1)
@@ -165,7 +193,7 @@ def largest_mesh_component(mesh: Mesh) -> Mesh:
     return subset_mesh_by_indices(mesh, indices)
 
 
-def shuffle_label_mapping(x):
+def shuffle_label_mapping(x: ArrayLike) -> np.ndarray:
     uni_labels = np.unique(x)
     new_labels = np.random.permutation(uni_labels)
     label_map = dict(zip(uni_labels, new_labels))
@@ -173,7 +201,9 @@ def shuffle_label_mapping(x):
     return x
 
 
-def compute_distances_to_point(points, center_point):
+def compute_distances_to_point(
+    points: ArrayLike, center_point: ArrayLike
+) -> np.ndarray:
     """Computes the distance of each point in a mesh to a particular point."""
     return np.linalg.norm(points - center_point, axis=1)
 
@@ -183,7 +213,7 @@ def edges_to_lines(edges: np.ndarray) -> np.ndarray:
     return lines
 
 
-def combine_meshes(meshes):
+def combine_meshes(meshes: list[Mesh]) -> Mesh:
     meshes = [interpret_mesh(mesh) for mesh in meshes]
     n_vertices_per_mesh = [mesh[0].shape[0] for mesh in meshes]
     cumulative_n_vertices = list(np.cumsum(n_vertices_per_mesh))
@@ -198,7 +228,11 @@ def combine_meshes(meshes):
     return (vertices, faces)
 
 
-def mesh_connected_components(mesh, size_threshold=100, sort_by_size=False):
+def mesh_connected_components(
+    mesh: Mesh,
+    size_threshold: Optional[int] = 100,
+    sort_by_size: bool = False,
+) -> Generator[Mesh, None, None]:
     adj = mesh_to_adjacency(mesh)
     _, component_labels = connected_components(adj, directed=False)
     uni_labels, counts = np.unique(component_labels, return_counts=True)
@@ -215,13 +249,15 @@ def mesh_connected_components(mesh, size_threshold=100, sort_by_size=False):
         yield subset_mesh_by_indices(mesh, indices)
 
 
-def mesh_n_connected_components(mesh):
+def mesh_n_connected_components(mesh: Mesh) -> int:
     adj = mesh_to_adjacency(mesh)
     n_components, _ = connected_components(adj, directed=False)
     return n_components
 
 
-def threshold_mesh_by_component_size(mesh, size_threshold=100):
+def threshold_mesh_by_component_size(
+    mesh: Mesh, size_threshold: int = 100
+) -> tuple[Mesh, np.ndarray]:
     adj = mesh_to_adjacency(mesh)
 
     _, component_labels = connected_components(adj, directed=False)
@@ -249,7 +285,7 @@ def expand_labels(condensed_labels: np.ndarray, mapping: np.ndarray) -> np.ndarr
     return labels
 
 
-def graph_to_adjacency(graph: tuple) -> csr_array:
+def graph_to_adjacency(graph: tuple[np.ndarray, np.ndarray]) -> csr_array:
     """Convert a graph to an adjacency matrix."""
     vertices, edges = graph
     adj = csr_array(

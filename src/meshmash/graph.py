@@ -3,10 +3,11 @@ import pandas as pd
 from scipy.sparse import csr_array
 
 from .laplacian import compute_vertex_areas
+from .types import Mesh
 from .utils import connected_components, mesh_to_adjacency, mesh_to_edges
 
 
-def compute_edge_widths(mesh, mollify_factor: float = 0.0) -> csr_array:
+def compute_edge_widths(mesh: Mesh, mollify_factor: float = 0.0) -> csr_array:
     # ref https://en.wikipedia.org/wiki/Law_of_cotangents
 
     vertices, faces = mesh
@@ -46,7 +47,7 @@ def compute_edge_widths(mesh, mollify_factor: float = 0.0) -> csr_array:
 
 
 def condense_mesh_to_graph(
-    mesh, labels, add_component_features: bool = False
+    mesh: Mesh, labels: np.ndarray, add_component_features: bool = False
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     edges = mesh_to_edges(mesh)
     edges = np.unique(np.sort(edges, axis=1), axis=0)

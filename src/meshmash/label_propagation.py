@@ -1,9 +1,11 @@
+from typing import Union
+
 import numpy as np
 from scipy.sparse import csr_array, diags_array, eye_array
 from scipy.sparse.linalg import spsolve
 
 
-def to_laplacian(adj):
+def to_laplacian(adj: Union[csr_array, np.ndarray]) -> csr_array:
     adj = csr_array(adj)
     # adj[adj > 0] = 1
     # adj[np.arange(adj.shape[0]), np.arange(adj.shape[0])] = 0
@@ -17,7 +19,7 @@ def to_laplacian(adj):
     return lap
 
 
-def to_adjacency(vertices, edges):
+def to_adjacency(vertices: np.ndarray, edges: np.ndarray) -> csr_array:
     """
     Convert edges and vertices to a sparse adjacency matrix.
     """
@@ -34,7 +36,9 @@ def to_adjacency(vertices, edges):
     return adjacency
 
 
-def label_propagation(adjacency, labels, alpha=0.995):
+def label_propagation(
+    adjacency: csr_array, labels: np.ndarray, alpha: float = 0.995
+) -> np.ndarray:
     # run label propagation
     laplacian = to_laplacian(adjacency)
     identity = eye_array(laplacian.shape[0])
