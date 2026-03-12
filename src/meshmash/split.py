@@ -44,7 +44,7 @@ def graph_laplacian_split(adj: csr_array, dtype=np.float32):
         v0=np.full(n, 1 / np.sqrt(n), dtype=dtype),
         tol=eigen_tol,
         maxiter=20,
-        ncv=20, # TODO revisit this sensitivity to NCV for speed
+        ncv=20,  # TODO revisit this sensitivity to NCV for speed
     )
 
     index = np.argmax(eigenvalues)

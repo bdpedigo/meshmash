@@ -62,6 +62,6 @@ doc-build = "mkdocs build"
 doc-serve = "mkdocs serve"
 lint = ['lint-check', 'lint-format']
 lint-check = "uv run ruff check . --extend-select I"
-lint-fix = "uv run ruff format caveclient tests"
+lint-fix = "uv run ruff format"
 lint-format = "uv run ruff format . "
 test = "uv run pytest tests"

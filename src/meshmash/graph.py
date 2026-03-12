@@ -71,8 +71,8 @@ def condense_mesh_to_graph(
         "(source_group != -1) and (target_group != -1) and (source_group != target_group)",
         inplace=True,
     )
-    sources = edge_table[['source_group', 'target_group']].min(axis=1)
-    targets = edge_table[['source_group', 'target_group']].max(axis=1)
+    sources = edge_table[["source_group", "target_group"]].min(axis=1)
+    targets = edge_table[["source_group", "target_group"]].max(axis=1)
     edge_table["source_group"] = sources
     edge_table["target_group"] = targets
 

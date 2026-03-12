@@ -1270,6 +1270,7 @@ datasets = [
 dev = [
     { name = "meshmash", extra = ["datasets"] },
     { name = "pytest" },
+    { name = "ruff" },
 ]
 docs = [
     { name = "mkdocs" },
@@ -1318,6 +1319,7 @@ requires-dist = [
 dev = [
     { name = "meshmash", extras = ["datasets"] },
     { name = "pytest", specifier = ">=8.0" },
+    { name = "ruff" },
 ]
 docs = [
     { name = "mkdocs" },

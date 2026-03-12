@@ -8,18 +8,24 @@ runner = CliRunner()
 _cli = typer.main.get_command(app)
 
 _FAST_PARAMS = [
-    "--n-components", "4",
-    "--max-eigenvalue", "1e-8",
-    "--simplify-target-reduction", "0.7",
+    "--n-components",
+    "4",
+    "--max-eigenvalue",
+    "1e-8",
+    "--simplify-target-reduction",
+    "0.7",
     "--no-auxiliary-features",
-    "--n-jobs", "1",
+    "--n-jobs",
+    "1",
 ]
 
 
 def test_hks_cli_runs(mesh, tmp_path):
     vertices, faces = mesh
     mesh_path = tmp_path / "test_mesh.ply"
-    meshio.write(str(mesh_path), meshio.Mesh(points=vertices, cells=[("triangle", faces)]))
+    meshio.write(
+        str(mesh_path), meshio.Mesh(points=vertices, cells=[("triangle", faces)])
+    )
 
     output_path = tmp_path / "output.npz"
     result = runner.invoke(

@@ -262,4 +262,3 @@ def read_array(path: Union[str, Path]) -> np.ndarray:
         array = data["array"]
 
     return array
-
