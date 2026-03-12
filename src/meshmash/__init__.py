@@ -146,5 +146,4 @@ __all__ = [
     "label_propagation",
     "mesh_n_connected_components",
     "fetch_sample_mesh",
-    # "HeatSolver",
 ]

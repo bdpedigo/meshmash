@@ -56,12 +56,17 @@ meshmash = "meshmash.cli:app"
 build-backend = "hatchling.build"
 requires = ["hatchling"]
 
+[tool.ruff.lint]
+extend-select = ["I"]
+
 [tool.poe.tasks]
-checks = ['lint', 'test']
+checks = ['lint-check', 'test']
 doc-build = "mkdocs build"
 doc-serve = "mkdocs serve"
-lint = ['lint-check', 'lint-format']
-lint-check = "uv run ruff check . --extend-select I"
-lint-fix = "uv run ruff format"
-lint-format = "uv run ruff format . "
 test = "uv run pytest tests"
+
+[tool.poe.tasks.lint-check]
+shell = "uv run ruff check . && uv run ruff format . --check"
+
+[tool.poe.tasks.lint-fix]
+shell = "uv run ruff check . --fix && uv run ruff format ."

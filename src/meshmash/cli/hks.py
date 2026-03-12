@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 from typing import Annotated, Optional
 
-import tomllib
 import typer
 
 from meshmash.io import save_condensed_features

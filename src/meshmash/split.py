@@ -5,7 +5,7 @@ from typing import Union
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
-from scipy.sparse import csr_array
+from scipy.sparse import csr_array, diags_array
 from scipy.sparse.csgraph import connected_components, dijkstra, laplacian
 from scipy.sparse.linalg import eigsh
 from scipy.stats import rankdata
@@ -184,8 +184,6 @@ def fit_mesh_split(
 #     indices1 = np.nonzero(eigenvectors[:, 1] >= 0)[0]
 #     indices2 = np.nonzero(eigenvectors[:, 1] < 0)[0]
 #     return indices1, indices2
-
-from scipy.sparse import diags_array
 
 
 def subset_diags(matrix, indices):

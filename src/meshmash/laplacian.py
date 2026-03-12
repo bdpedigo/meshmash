@@ -33,7 +33,7 @@ def area_matrix(mesh: Mesh) -> sparse.dia_matrix:
     v3 = vertices[faces[:, 2]]  # (m,3)
     faces_areas = 0.5 * np.linalg.norm(np.cross(v2 - v1, v3 - v1), axis=1)  # (m,)
 
-    I = np.concatenate([faces[:, 0], faces[:, 1], faces[:, 2]])
+    I = np.concatenate([faces[:, 0], faces[:, 1], faces[:, 2]])  # noqa
     J = np.zeros_like(I)
     V = np.concatenate([faces_areas, faces_areas, faces_areas]) / 3
 
@@ -86,7 +86,7 @@ def _cotangent_laplacian(mesh: Mesh) -> sparse.csc_matrix:
     A3 = np.einsum("ij,ij->i", -u1, u2) / (L1 * L2)  # (m,)
 
     # Use cot(arccos(x)) = x/sqrt(1-x^2)
-    I = np.concatenate([faces[:, 0], faces[:, 1], faces[:, 2]])
+    I = np.concatenate([faces[:, 0], faces[:, 1], faces[:, 2]])  # noqa
     J = np.concatenate([faces[:, 1], faces[:, 2], faces[:, 0]])
     S = np.concatenate([A3, A1, A2])
     S = 0.5 * S / np.sqrt(1 - S**2)
