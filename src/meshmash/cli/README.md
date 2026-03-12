@@ -2,6 +2,44 @@
 
 ## Commands
 
+### `meshmash datasets`
+
+Download and cache sample mesh datasets for use with meshmash.
+
+> **Note:** This command requires the optional `datasets` extra.
+> Install it with `pip install meshmash[datasets]` (adds `pooch`).
+
+```
+meshmash datasets [NAME]
+```
+
+**Arguments**
+
+| Name | Description |
+|------|-------------|
+| `NAME` | Dataset name to fetch (without file extension), or `all` to fetch every available dataset. Defaults to `all`. Available datasets: `microns_dendrite_sample`, `microns_neuron_sample`. |
+
+Files are downloaded once and stored in the OS-appropriate user cache directory
+(e.g. `~/.cache/meshmash` on Linux/macOS). Subsequent calls reuse the cached copy.
+
+**Examples**
+
+Fetch all available sample datasets:
+
+```bash
+meshmash datasets
+# or equivalently:
+meshmash datasets all
+```
+
+Fetch a single dataset:
+
+```bash
+meshmash datasets microns_dendrite_sample
+```
+
+---
+
 ### `meshmash hks`
 
 Compute condensed Heat Kernel Signature (HKS) features on a triangular mesh and
