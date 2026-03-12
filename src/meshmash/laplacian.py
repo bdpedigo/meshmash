@@ -3,11 +3,12 @@
 # (MIT License)
 import numpy as np
 import scipy.sparse as sparse
+from scipy.sparse import csc_array, dia_array
 
 from .types import Mesh, interpret_mesh
 
 
-def area_matrix(mesh: Mesh) -> sparse.dia_matrix:
+def area_matrix(mesh: Mesh) -> dia_array:
     """
     Compute the diagonal matrix of lumped vertex area for mesh laplacian.
     Entry i on the diagonal is the area of vertex i, approximated as one third
@@ -42,11 +43,11 @@ def area_matrix(mesh: Mesh) -> sparse.dia_matrix:
         sparse.coo_matrix((V, (I, J)), shape=(N, 1)).todense()
     ).flatten()
 
-    A = sparse.dia_matrix((vertex_areas, 0), shape=(N, N))
+    A = sparse.dia_array((vertex_areas, 0), shape=(N, N))
     return A
 
 
-def _cotangent_laplacian(mesh: Mesh) -> sparse.csc_matrix:
+def _cotangent_laplacian(mesh: Mesh) -> csc_array:
     """
     Compute the cotangent weights matrix for mesh laplacian.
 
@@ -95,13 +96,13 @@ def _cotangent_laplacian(mesh: Mesh) -> sparse.csc_matrix:
     Jn = np.concatenate([J, I, I, J])
     Sn = np.concatenate([-S, -S, S, S])
 
-    L = sparse.csc_matrix((Sn, (In, Jn)), shape=(N, N))
+    L = sparse.csc_array((Sn, (In, Jn)), shape=(N, N))
     return L
 
 
 def cotangent_laplacian(
-    mesh: Mesh, robust=False, mollify_factor=1e-5
-) -> tuple[sparse.csc_array, sparse.dia_array]:
+    mesh: Mesh, robust: bool = False, mollify_factor: float = 1e-5
+) -> tuple[csc_array, dia_array]:
     if robust:
         try:
             from robust_laplacian import mesh_laplacian
@@ -126,7 +127,9 @@ def cotangent_laplacian(
         return L, M
 
 
-def compute_vertex_areas(mesh, robust=False, mollify_factor=1e-5):
+def compute_vertex_areas(
+    mesh: Mesh, robust: bool = False, mollify_factor: float = 1e-5
+) -> np.ndarray:
     if not robust:
         return area_matrix(mesh).diagonal()
     else:

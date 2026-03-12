@@ -1,5 +1,5 @@
 import time
-from typing import NamedTuple
+from typing import NamedTuple, Optional
 
 import numpy as np
 import pandas as pd
@@ -57,7 +57,7 @@ def chunked_hks_pipeline(
     nuc_point=None,
     distance_threshold=3.0,
     auxiliary_features=True,
-    n_jobs=-1,
+    n_jobs: Optional[int] = -1,
     verbose=False,
 ) -> Result:
     """
@@ -407,7 +407,7 @@ def condensed_hks_pipeline(
     nuc_point=None,
     distance_threshold=3.0,
     auxiliary_features=True,
-    n_jobs=-1,
+    n_jobs: Optional[int] = -1,
     verbose=False,
 ) -> CondensedHKSResult:
     """

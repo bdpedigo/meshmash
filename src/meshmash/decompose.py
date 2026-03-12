@@ -1,12 +1,12 @@
 import time
-from typing import Callable, Optional
+from typing import Callable, Optional, Union
 
 import numpy as np
 import scipy.sparse as sparse
 from robust_laplacian import point_cloud_laplacian
 from scipy.interpolate import BSpline
 from scipy.linalg import eigh
-from scipy.sparse import coo_array, csc_array, csr_array
+from scipy.sparse import coo_array, csc_array, csr_array, sparray
 from tqdm.auto import tqdm
 
 from .laplacian import cotangent_laplacian
@@ -14,15 +14,15 @@ from .types import Mesh
 
 
 def decompose_laplacian(
-    L,
-    M,
-    n_components=100,
-    op_inv=None,
-    sigma=-1e-10,
-    tol=1e-10,
-    ncv=None,
-    prefactor=None,
-):
+    L: sparray,
+    M: sparray,
+    n_components: int = 100,
+    op_inv: Optional[sparse.linalg.LinearOperator] = None,
+    sigma: float = -1e-10,
+    tol: float = 1e-10,
+    ncv: Optional[int] = None,
+    prefactor: Optional[str] = None,
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Solves the generalized eigenvalue problem.
     Change solver if necessary
@@ -73,14 +73,14 @@ def decompose_laplacian(
 
 def decompose_mesh(
     mesh: Mesh,
-    n_components=100,
-    op_inv=None,
-    sigma=-1e-10,
-    tol=1e-10,
-    robust=True,
-    mollify_factor=1e-5,
-    prefactor=None,
-):
+    n_components: int = 100,
+    op_inv: Optional[sparse.linalg.LinearOperator] = None,
+    sigma: float = -1e-10,
+    tol: float = 1e-10,
+    robust: bool = True,
+    mollify_factor: float = 1e-5,
+    prefactor: Optional[str] = None,
+) -> tuple[np.ndarray, np.ndarray]:
     L, M = cotangent_laplacian(mesh, robust=robust, mollify_factor=mollify_factor)
     return decompose_laplacian(
         L,
@@ -94,13 +94,13 @@ def decompose_mesh(
 
 
 def decompose_laplacian_by_bands(
-    L,
-    M,
-    max_eigenvalue=1e-9,
-    band_size=50,
-    truncate_extra=True,
-    verbose=False,
-):
+    L: sparray,
+    M: sparray,
+    max_eigenvalue: float = 1e-9,
+    band_size: int = 50,
+    truncate_extra: bool = True,
+    verbose: Union[bool, int] = False,
+) -> tuple[np.ndarray, np.ndarray]:
     # REF: section 4.1 of Spectral Mesh Processing, Levy & Zhang 2009
     # The idea is that because ARAPACK is good at solving for large eigenvalues, or,
     # eigenvalues near sigma for the shift-invert mode, we get a speedup from solving
@@ -176,7 +176,7 @@ def get_hks_filter(
     t_min: Optional[float] = None,
     n_scales: int = 32,
     dtype: np.dtype = np.float64,
-) -> Callable:
+) -> Callable[[np.ndarray], np.ndarray]:
     scales = np.geomspace(t_min, t_max, n_scales, dtype=dtype)
 
     def hks_filter(eigenvalues):
@@ -186,7 +186,7 @@ def get_hks_filter(
     return hks_filter
 
 
-def construct_bspline_basis(e_min: float, e_max: float, n_components: int):
+def construct_bspline_basis(e_min: float, e_max: float, n_components: int) -> list[BSpline]:
     extrapolate = False
     basis_degree = 3
     domain = np.array([e_min, e_max])
@@ -207,7 +207,9 @@ def construct_bspline_basis(e_min: float, e_max: float, n_components: int):
     return bases
 
 
-def construct_bspline_filter(e_min: float, e_max: float, n_components: int):
+def construct_bspline_filter(
+    e_min: float, e_max: float, n_components: int
+) -> Callable[[np.ndarray], np.ndarray]:
     bases = construct_bspline_basis(e_min, e_max, n_components)
 
     def bspline_filter(eigenvalues):
@@ -220,7 +222,7 @@ def construct_bspline_filter(e_min: float, e_max: float, n_components: int):
 
 def spectral_geometry_filter(
     mesh: Mesh,
-    filter: Optional[Callable] = None,
+    filter: Optional[Callable[[np.ndarray], np.ndarray]] = None,
     max_eigenvalue: float = 1e-8,
     band_size: int = 50,
     truncate_extra: bool = True,
@@ -230,8 +232,8 @@ def spectral_geometry_filter(
     mollify_factor: float = 1e-5,
     point_laplacian: bool = False,
     n_neighbors: int = 30,
-    verbose: int = False,
-):
+    verbose: Union[bool, int] = False,
+) -> Union[np.ndarray, tuple[np.ndarray, np.ndarray]]:
     """Apply a spectral filter to the geometry of a mesh.
 
     Parameters
@@ -451,8 +453,8 @@ def compute_hks(
     decomposition_dtype: Optional[np.dtype] = np.float64,
     point_laplacian: bool = False,
     n_neighbors: int = 30,
-    verbose: int = False,
-):
+    verbose: Union[bool, int] = False,
+) -> np.ndarray:
     filter_func = get_hks_filter(t_max, t_min, n_components, dtype=decomposition_dtype)
     out = spectral_geometry_filter(
         mesh,
@@ -481,8 +483,8 @@ def compute_geometry_vectors(
     robust: bool = True,
     mollify_factor: float = 1e-5,
     decomposition_dtype: Optional[np.dtype] = np.float64,
-    verbose: int = False,
-):
+    verbose: Union[bool, int] = False,
+) -> np.ndarray:
     filter_func = construct_bspline_filter(0.0, max_eigenvalue, n_components)
     out = spectral_geometry_filter(
         mesh,
