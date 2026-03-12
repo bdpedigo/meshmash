@@ -25,7 +25,29 @@ version = "0.1.0"
 datasets = ["pooch>=1.8"]
 
 [dependency-groups]
-dev = ["meshmash[datasets]", "pytest>=8.0"]
+dev = [
+    # { include-group = 'docs' },
+    { include-group = 'lint' },
+    { include-group = 'test' },
+]
+docs = [
+    "mkdocs",
+    "mkdocs-autorefs",
+    "mkdocs-git-authors-plugin",
+    "mkdocs-git-committers-plugin-2",
+    "mkdocs-git-revision-date-localized-plugin",
+    "mkdocs-include-markdown-plugin",
+    "mkdocs-jupyter",
+    "mkdocs-macros-plugin",
+    "mkdocs-material",
+    "mkdocs-material-extensions",
+    "mkdocs-section-index",
+    "mkdocstrings[crystal,python]",
+    "mknotebooks",
+    "pymdown-extensions",
+]
+lint = ["ruff"]
+test = ["meshmash[datasets]", "pytest>=8.0"]
 
 [project.scripts]
 meshmash = "meshmash.cli:app"
@@ -33,3 +55,13 @@ meshmash = "meshmash.cli:app"
 [build-system]
 build-backend = "hatchling.build"
 requires = ["hatchling"]
+
+[tool.poe.tasks]
+checks = ['lint', 'test']
+doc-build = "mkdocs build"
+doc-serve = "mkdocs serve"
+lint = ['lint-check', 'lint-format']
+lint-check = "uv run ruff check . --extend-select I"
+lint-fix = "uv run ruff format caveclient tests"
+lint-format = "uv run ruff format . "
+test = "uv run pytest tests"
