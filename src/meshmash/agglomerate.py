@@ -171,6 +171,7 @@ def fix_split_labels(agg_labels: np.ndarray, submesh_mapping: np.ndarray) -> np.
         Modified ``agg_labels`` with globally unique integers, same shape
         as the input.
     """
+    for label_column in range(agg_labels.shape[1]):
         valid_mask = agg_labels[:, label_column] != -1
 
         valid_labels = agg_labels[valid_mask, label_column]
