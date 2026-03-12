@@ -83,6 +83,31 @@ def graph_laplacian_split(
 def bisect_adjacency(
     adj: csr_array, n_retries: int = 7, check: bool = True
 ) -> tuple[tuple[csr_array, csr_array], tuple[np.ndarray, np.ndarray]]:
+    """Bisect a mesh graph into two parts using the graph-Laplacian Fiedler vector.
+
+    Calls :func:`graph_laplacian_split` and retries if the result is
+    degenerate (one empty partition or disconnected nodes).  Uses
+    recursion up to ``n_retries`` times.
+
+    Parameters
+    ----------
+    adj :
+        Sparse adjacency matrix of shape ``(V, V)``.
+    n_retries :
+        Maximum number of retry attempts when the split fails to produce
+        two non-empty, connected partitions.
+    check :
+        If ``True``, verify that no vertex becomes isolated (zero-degree)
+        after splitting and retry if so.
+
+    Returns
+    -------
+    sub_adjs :
+        Pair of sub-adjacency matrices ``(adj1, adj2)`` for each partition.
+    submesh_indices :
+        Pair of index arrays ``(indices1, indices2)`` mapping each
+        partition's rows back to the original ``adj``.
+    """
     if n_retries == 0:
         raise RuntimeError("Split failed to divide mesh.")
 
@@ -121,6 +146,39 @@ def fit_mesh_split(
     max_rounds: int = 100_000,
     verbose: Union[bool, int] = False,
 ) -> np.ndarray:
+    """Partition a mesh into non-overlapping chunks using recursive bisection.
+
+    Repeatedly bisects each chunk using the Fiedler vector of the graph
+    Laplacian until every chunk has at most ``max_vertex_threshold`` vertices.
+    Chunks belonging to connected components with fewer than
+    ``min_vertex_threshold`` vertices are dropped (their vertices receive
+    label ``-1``).  The returned labels are ordered so that the largest
+    chunk has label ``0``.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh, adjacency matrix, or vertex array accepted by
+        :func:`~meshmash.types.interpret_mesh` /
+        :func:`~meshmash.utils.mesh_to_adjacency`.
+    max_vertex_threshold :
+        Stop bisecting a chunk once it contains at most this many vertices.
+    min_vertex_threshold :
+        Discard connected components with fewer than this many vertices;
+        their vertices receive label ``-1``.
+    max_rounds :
+        Maximum number of bisection steps before the algorithm terminates
+        regardless of remaining chunk sizes.
+    verbose :
+        If truthy, print queue size every 50 rounds.
+
+    Returns
+    -------
+    :
+        Per-vertex integer label array of shape ``(V,)``.  Labels run
+        ``0, 1, …, K-1`` ordered from largest to smallest chunk; vertices
+        not assigned to any chunk have label ``-1``.
+    """
     if isinstance(mesh, (csr_array, np.ndarray)):
         whole_adj = mesh
     else:
@@ -219,9 +277,34 @@ def subset_diags(matrix: sparse.sparray, indices: np.ndarray) -> diags_array:
 def bisect_laplacian(
     L: sparse.sparray, M: sparse.sparray
 ) -> tuple[
-    tuple[tuple[sparse.sparray, diags_array], tuple[sparse.sparray, diags_array]],
+    tuple[tuple[sparse.sparray, diags_array], tuple[sparse.sparray, diags_array]],  # noqa: E501
     tuple[np.ndarray, np.ndarray],
 ]:
+    """Bisect a mesh into two parts using the cotangent-Laplacian Fiedler vector.
+
+    Computes the second eigenvector of the generalised eigenproblem
+    ``L v = λ M v`` via :func:`~meshmash.decompose.decompose_laplacian`
+    and partitions vertices by its sign.
+
+    Parameters
+    ----------
+    L :
+        Cotangent Laplacian matrix of shape ``(V, V)`` as returned by
+        :func:`~meshmash.laplacian.cotangent_laplacian`.
+    M :
+        Diagonal mass matrix of shape ``(V, V)`` as returned by
+        :func:`~meshmash.laplacian.cotangent_laplacian`.
+
+    Returns
+    -------
+    sub_laps :
+        Pair of ``(L_sub, M_sub)`` tuples for each partition, where
+        ``M_sub`` is a :class:`scipy.sparse.diags_array` of the diagonal
+        mass entries for that partition.
+    submesh_indices :
+        Pair of index arrays ``(indices1, indices2)`` mapping each
+        partition's rows back to the original ``L``.
+    """
     # get the split indices
     # indices1, indices2 = graph_laplacian_split(adj)
 
@@ -260,6 +343,40 @@ def fit_mesh_split_lap(
     mollify_factor: float = 1e-5,
     verbose: Union[bool, int] = False,
 ) -> np.ndarray:
+    """Partition a mesh into chunks using recursive cotangent-Laplacian bisection.
+
+    Like :func:`fit_mesh_split` but uses the Fiedler vector of the
+    cotangent Laplacian (instead of the graph Laplacian) for each
+    bisection step, which can produce more geometrically uniform
+    partitions on irregular meshes.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by :func:`~meshmash.types.interpret_mesh`.
+    max_vertex_threshold :
+        Stop bisecting a chunk once it contains at most this many vertices.
+    min_vertex_threshold :
+        Discard connected components with fewer than this many vertices;
+        their vertices receive label ``-1``.
+    max_rounds :
+        Maximum number of bisection steps before the algorithm terminates.
+    robust :
+        If ``True``, use the robust cotangent Laplacian variant; passed
+        to :func:`~meshmash.laplacian.cotangent_laplacian`.
+    mollify_factor :
+        Mollification factor passed to
+        :func:`~meshmash.laplacian.cotangent_laplacian`.
+    verbose :
+        If truthy, print queue information each round.
+
+    Returns
+    -------
+    :
+        Per-vertex integer label array of shape ``(V,)``.  Labels run
+        ``0, 1, …, K-1`` ordered from largest to smallest chunk; vertices
+        not assigned to any chunk have label ``-1``.
+    """
     if isinstance(mesh, (csr_array, np.ndarray)):
         whole_adj = mesh
     else:
@@ -522,6 +639,43 @@ class MeshStitcher:
         max_overlap_neighbors: Optional[int] = None,
         verify_connected: bool = True,
     ) -> list[Mesh]:
+        """Partition the mesh and build overlapping submesh chunks.
+
+        Calls :func:`fit_mesh_split` to produce non-overlapping core
+        chunks, then expands each chunk by including all vertices
+        reachable within ``overlap_distance`` along mesh edges.  The
+        resulting submeshes, their overlap vertex indices, and the
+        per-vertex submesh mapping are stored on ``self`` for use by
+        :meth:`apply`, :meth:`apply_on_features`, and
+        :meth:`stitch_features`.
+
+        Parameters
+        ----------
+        max_vertex_threshold :
+            Maximum vertices per non-overlapping core chunk; passed to
+            :func:`fit_mesh_split`.
+        min_vertex_threshold :
+            Minimum connected-component size; smaller components are
+            discarded.
+        overlap_distance :
+            Maximum geodesic edge distance used to expand each core chunk
+            into its overlapping neighbourhood.
+        max_rounds :
+            Maximum bisection rounds; passed to :func:`fit_mesh_split`.
+        max_overlap_neighbors :
+            If set, limits each chunk's overlap to at most this many
+            additional vertices (ranked by distance).  ``None`` keeps
+            all vertices within ``overlap_distance``.
+        verify_connected :
+            If ``True``, assert that every overlapping submesh forms a
+            single connected component.
+
+        Returns
+        -------
+        :
+            List of overlapping submeshes as ``(vertices, faces)``
+            tuples, one per chunk.
+        """
         if max_vertex_threshold is None:
             max_vertex_threshold = len(self.mesh[0])
         if min_vertex_threshold is None:

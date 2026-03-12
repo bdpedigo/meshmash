@@ -102,6 +102,39 @@ def _cotangent_laplacian(mesh: Mesh) -> csc_array:
 def cotangent_laplacian(
     mesh: Mesh, robust: bool = False, mollify_factor: float = 1e-5
 ) -> tuple[csc_array, dia_array]:
+    """Compute the cotangent Laplacian and lumped-area matrix for a triangle mesh.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh.
+    robust :
+        If ``True``, use the robust Laplacian from
+        :func:`robust_laplacian.mesh_laplacian` (requires the
+        ``robust-laplacian`` package).  This handles degenerate geometry
+        such as zero-area faces and near-duplicate vertices more reliably
+        than the standard cotangent formula.
+    mollify_factor :
+        Mollification parameter passed to
+        :func:`robust_laplacian.mesh_laplacian`.  Only used when
+        ``robust=True``.
+
+    Returns
+    -------
+    L :
+        Sparse cotangent-weight stiffness matrix of shape ``(V, V)`` in
+        CSC format.
+    M :
+        Sparse diagonal lumped-area matrix of shape ``(V, V)`` in DIA
+        format.
+
+    Notes
+    -----
+    The robust Laplacian is described in:
+
+    [1] N. Sharp and K. Crane, "A Laplacian for Nonmanifold Triangle Meshes",
+    Computer Graphics Forum (SGP), 39(5):69-80, 2020.
+    """
     if robust:
         try:
             from robust_laplacian import mesh_laplacian
@@ -129,6 +162,26 @@ def cotangent_laplacian(
 def compute_vertex_areas(
     mesh: Mesh, robust: bool = False, mollify_factor: float = 1e-5
 ) -> np.ndarray:
+    """Compute per-vertex areas for a triangle mesh.
+
+    A thin wrapper around :func:`cotangent_laplacian` that returns only
+    the diagonal of the lumped-area matrix ``M``.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh.
+    robust :
+        If ``True``, use the robust Laplacian to compute vertex areas.
+    mollify_factor :
+        Mollification parameter forwarded to
+        :func:`cotangent_laplacian` when ``robust=True``.
+
+    Returns
+    -------
+    :
+        Array of per-vertex areas of length ``V``.
+    """
     if not robust:
         return area_matrix(mesh).diagonal()
     else:
