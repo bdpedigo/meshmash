@@ -3,6 +3,7 @@ from typing import Callable, Optional
 
 import numpy as np
 import scipy.sparse as sparse
+from robust_laplacian import point_cloud_laplacian
 from scipy.interpolate import BSpline
 from scipy.linalg import eigh
 from scipy.sparse import coo_array, csc_array, csr_array
@@ -226,7 +227,9 @@ def spectral_geometry_filter(
     drop_first: bool = True,
     decomposition_dtype: Optional[np.dtype] = np.float64,
     robust: bool = True,
-    mollify_factor: bool = 1e-5,
+    mollify_factor: float = 1e-5,
+    point_laplacian: bool = False,
+    n_neighbors: int = 30,
     verbose: int = False,
 ):
     """Apply a spectral filter to the geometry of a mesh.
@@ -290,7 +293,20 @@ def spectral_geometry_filter(
     ):
         L, M = mesh
     else:
-        L, M = cotangent_laplacian(mesh, robust=robust, mollify_factor=mollify_factor)
+        if not point_laplacian:
+            L, M = cotangent_laplacian(
+                mesh, robust=robust, mollify_factor=mollify_factor
+            )
+        else:
+            vertices, _ = mesh
+            L, M = point_cloud_laplacian(
+                vertices,
+                n_neighbors=n_neighbors,
+                mollify_factor=mollify_factor,
+            )
+            # _, M = cotangent_laplacian(
+            #     mesh, robust=robust, mollify_factor=mollify_factor
+            # )
 
     if decomposition_dtype is not None:
         L = L.astype(decomposition_dtype)
@@ -433,6 +449,8 @@ def compute_hks(
     robust: bool = True,
     mollify_factor: float = 1e-5,
     decomposition_dtype: Optional[np.dtype] = np.float64,
+    point_laplacian: bool = False,
+    n_neighbors: int = 30,
     verbose: int = False,
 ):
     filter_func = get_hks_filter(t_max, t_min, n_components, dtype=decomposition_dtype)
@@ -446,6 +464,8 @@ def compute_hks(
         robust=robust,
         mollify_factor=mollify_factor,
         decomposition_dtype=decomposition_dtype,
+        point_laplacian=point_laplacian,
+        n_neighbors=n_neighbors,
         verbose=verbose,
     )
     return out

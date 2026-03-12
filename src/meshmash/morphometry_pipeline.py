@@ -232,6 +232,9 @@ def component_morphometry_pipeline(
             rows.append(row_data)
             pbar.update(1)
 
+    if len(rows) == 0:
+        return pd.DataFrame(), corrected_components
+
     results = (
         pd.DataFrame(rows)
         .set_index("select_component_id")

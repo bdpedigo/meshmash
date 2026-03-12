@@ -71,6 +71,7 @@ from .utils import (
     shuffle_label_mapping,
     subset_mesh_by_indices,
     threshold_mesh_by_component_size,
+    mesh_n_connected_components,
 )
 # from .implicit_solver import HeatSolver
 
@@ -141,5 +142,6 @@ __all__ = [
     "get_synapses",
     "get_synapses_at_oldest",
     "label_propagation",
+    "mesh_n_connected_components",
     # "HeatSolver",
 ]

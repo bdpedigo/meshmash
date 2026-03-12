@@ -198,16 +198,27 @@ def combine_meshes(meshes):
     return (vertices, faces)
 
 
-def mesh_connected_components(mesh, size_threshold=100):
+def mesh_connected_components(mesh, size_threshold=100, sort_by_size=False):
     adj = mesh_to_adjacency(mesh)
     _, component_labels = connected_components(adj, directed=False)
     uni_labels, counts = np.unique(component_labels, return_counts=True)
     if size_threshold is not None:
         uni_labels = uni_labels[counts >= size_threshold]
+        counts = counts[counts >= size_threshold]
+
+    if sort_by_size:
+        sorted_indices = np.argsort(counts)[::-1]
+        uni_labels = uni_labels[sorted_indices]
 
     for label in uni_labels:
         indices = np.where(component_labels == label)[0]
         yield subset_mesh_by_indices(mesh, indices)
+
+
+def mesh_n_connected_components(mesh):
+    adj = mesh_to_adjacency(mesh)
+    n_components, _ = connected_components(adj, directed=False)
+    return n_components
 
 
 def threshold_mesh_by_component_size(mesh, size_threshold=100):

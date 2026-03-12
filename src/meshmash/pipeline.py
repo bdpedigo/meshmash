@@ -610,8 +610,8 @@ def condensed_hks_pipeline(
                 condensed_node_table[["x", "y", "z"]].values, nuc_point
             ).astype(np.float32)
         else:
-            condensed_node_table["distance_to_nucleus"] = np.empty(
-                condensed_node_table.shape[0], dtype=np.float32
+            condensed_node_table["distance_to_nucleus"] = np.full(
+                condensed_node_table.shape[0], np.nan, dtype=np.float32
             )
 
     # for consistency with the rest of the pipeline, make sure null label is present
