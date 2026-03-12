@@ -12,6 +12,7 @@ from .cave import (
     get_synapses,
     get_synapses_at_oldest,
 )
+from .datasets import fetch_sample_mesh
 from .decompose import (
     compute_geometry_vectors,
     compute_hks,
@@ -61,6 +62,7 @@ from .utils import (
     graph_to_adjacency,
     largest_mesh_component,
     mesh_connected_components,
+    mesh_n_connected_components,
     mesh_to_adjacency,
     mesh_to_edges,
     mesh_to_poly,
@@ -71,8 +73,8 @@ from .utils import (
     shuffle_label_mapping,
     subset_mesh_by_indices,
     threshold_mesh_by_component_size,
-    mesh_n_connected_components,
 )
+
 # from .implicit_solver import HeatSolver
 
 __all__ = [
@@ -143,5 +145,6 @@ __all__ = [
     "get_synapses_at_oldest",
     "label_propagation",
     "mesh_n_connected_components",
+    "fetch_sample_mesh",
     # "HeatSolver",
 ]
