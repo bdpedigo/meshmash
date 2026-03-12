@@ -24,4 +24,4 @@ jobs:
       - name: Set up environment
         run: uv sync
       - name: Run format checks
-        run: uvx --from poethepoet poe lint
+        run: uvx --from poethepoet poe lint-check
