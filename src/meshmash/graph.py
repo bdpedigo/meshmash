@@ -8,6 +8,27 @@ from .utils import connected_components, mesh_to_adjacency, mesh_to_edges
 
 
 def compute_edge_widths(mesh: Mesh, mollify_factor: float = 0.0) -> csr_array:
+    """Compute per-edge width estimates from the incircle radii of adjacent faces.
+
+    For each face the incircle radius is computed from Heron's formula, then
+    that radius is accumulated onto the three edges of the face.  The
+    resulting value at each edge is a geometric proxy for the local "width"
+    of the surface at that boundary.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by [mesh_to_poly][meshmash.utils.mesh_to_poly].
+    mollify_factor :
+        Small additive offset applied to each edge length before computing
+        face radii.  Prevents division by zero on degenerate faces.
+
+    Returns
+    -------
+    :
+        Sparse CSR matrix of shape ``(V, V)`` containing accumulated
+        incircle-radius values on each edge.
+    """
     # ref https://en.wikipedia.org/wiki/Law_of_cotangents
 
     vertices, faces = mesh
@@ -49,6 +70,36 @@ def compute_edge_widths(mesh: Mesh, mollify_factor: float = 0.0) -> csr_array:
 def condense_mesh_to_graph(
     mesh: Mesh, labels: np.ndarray, add_component_features: bool = False
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Condense a vertex-labeled mesh into a node-edge graph representation.
+
+    Each unique label becomes a node; adjacent regions (labels that share at
+    least one mesh edge) become connected by an edge.  Edge weights reflect
+    the total boundary length between regions.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by [mesh_to_poly][meshmash.utils.mesh_to_poly].
+    labels :
+        Per-vertex integer label array of length ``V``.  Vertices with
+        label ``-1`` are excluded.
+    add_component_features :
+        If ``True``, add a ``component`` column to the node table indicating
+        which connected component (in the *original* mesh graph) each
+        label region belongs to.
+
+    Returns
+    -------
+    node_table :
+        DataFrame indexed by label with columns ``x``, ``y``, ``z``
+        (centroid), ``area`` (summed vertex areas), and ``n_vertices``.  If
+        ``add_component_features=True``, also includes ``component`` and
+        ``component_area``.
+    edge_table :
+        DataFrame with columns ``source_group``, ``target_group``,
+        ``boundary_length`` (sum of edge-width values), and ``count``
+        (number of mesh edges crossing the boundary).
+    """
     edges = mesh_to_edges(mesh)
     edges = np.unique(np.sort(edges, axis=1), axis=0)
 

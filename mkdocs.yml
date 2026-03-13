@@ -56,6 +56,9 @@ markdown_extensions:
       baselevel: 1
       permalink: true
   - meta
+watch:
+  - src/meshmash
+  - docs
 plugins:
   - include-markdown
   - section-index
@@ -70,6 +73,10 @@ plugins:
             - https://numpy.org/doc/stable/objects.inv
             - https://pandas.pydata.org/pandas-docs/stable/objects.inv
             - https://docs.scipy.org/doc/scipy/objects.inv
+            - https://scikit-learn.org/stable/objects.inv
+            - https://docs.pyvista.org/objects.inv
+            - https://joblib.readthedocs.io/en/latest/objects.inv
+            - https://pymeshfix.pyvista.org/objects.inv
           options:
             members_order: source
             show_source: false

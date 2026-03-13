@@ -60,71 +60,89 @@ def chunked_hks_pipeline(
     n_jobs: Optional[int] = -1,
     verbose=False,
 ) -> Result:
-    """
-    Compute the Heat Kernel Signature (HKS) on a mesh in a chunked fashion. Also
-    aggregates HKS features in local regions of the mesh.
+    """Compute HKS features and aggregate them across overlapping mesh chunks.
+
+    .. deprecated::
+        Prefer [condensed_hks_pipeline][meshmash.pipeline.condensed_hks_pipeline], which is more memory-efficient
+        because it aggregates features within each chunk before stitching.
+        This function performs aggregation *after* all chunk features are
+        stitched together, which requires holding the full-mesh feature
+        matrix in memory.
+
+    Runs the following pipeline:
+
+    1. Optional mesh simplification via ``fast-simplification``.
+    2. Spectral bisection of the mesh into overlapping chunks
+       ([MeshStitcher][meshmash.split.MeshStitcher]).
+    3. Computation of [compute_hks][meshmash.decompose.compute_hks] per chunk.
+    4. Connectivity-constrained Ward agglomeration of vertices into local
+       domains ([agglomerate_split_mesh][meshmash.agglomerate.agglomerate_split_mesh]).
+    5. Area-weighted aggregation of HKS features to each domain
+       ([aggregate_features][meshmash.agglomerate.aggregate_features]).
 
     Parameters
     ----------
     mesh :
-        The input mesh. Should be a tuple of (vertices, faces), or an object with
-        `vertices` and `faces` attributes.
+        Input mesh.  Either a ``(vertices, faces)`` tuple or an object
+        with ``vertices`` and ``faces`` attributes.
     query_indices :
-        The indices of the mesh of interest. If provided, will only compute the HKS for
-        chunks which contain these indices. Otherwise, will compute the HKS for all
-        chunks.
+        Vertex indices of interest.  If provided, only chunks containing
+        these vertices are processed.  ``None`` processes all chunks.
     simplify_agg :
-        Controls how aggressively to decimate the mesh. A value of 10 will result in a
-        fast decimation at the expense of mesh quality and shape. A value of 0 will
-        attempt to preserve the original mesh geometry at the expense of time. Setting
-        a low value may result in being unable to reach the `target_reduction`.
+        Decimation aggressiveness (0–10).  Higher values are faster but
+        reduce mesh quality.  Low values may prevent reaching
+        ``simplify_target_reduction``.
     simplify_target_reduction :
-        The target reduction for the mesh simplification. Fraction of the original mesh
-        to remove. If set to 0.9, this function will try to reduce the data set to 10%
-        of its original size and will remove 90% of the input triangles.
+        Fraction of triangles to remove during simplification.  ``None``
+        skips simplification.
     overlap_distance :
-        The geodesic distance to overlap mesh chunks. Larger values will result in less
-        distortion (especially for long timescales) but more computation time.
+        Geodesic radius used to grow each chunk into its overlap region.
+        Larger values reduce boundary artefacts for long timescales but
+        increase compute time.
     max_vertex_threshold :
-        The maximum number of vertices for a mesh chunk, before overlapping.
+        Maximum vertices per core chunk before overlapping.
     min_vertex_threshold :
-        The minimum number of vertices for a mesh chunk to be included in subsequent
-        computations. This can be used to filter out small disconnected pieces of the
-        mesh.
+        Minimum component size; smaller components are discarded.
     max_overlap_neighbors :
-        The maximum number of neighbors to consider when overlapping mesh chunks. This
-        overrules `overlap_distance`.
+        Cap on overlap region size (number of nearest neighbours);
+        overrides ``overlap_distance`` when set.
     n_components :
-        The number of timescales for the HKS computation. This determines the
-        number of HKS features. Timescales will be logarithmically spaced between
-        `t_min` and `t_max`.
+        Number of HKS timescales.  Timescales are log-spaced between
+        ``t_min`` and ``t_max`` and determine the number of HKS features
+        per vertex.
     t_min :
-        The minimum timescale for the HKS computation.
+        Minimum diffusion timescale.
     t_max :
-        The maximum timescale for the HKS computation.
-    max_eval :
-        The maximum eigenvalue for the HKS computation. Larger eigenvalues give a more
-        detailed HKS result at the expense of computation time.
+        Maximum diffusion timescale.
+    max_eigenvalue :
+        Maximum Laplacian eigenvalue used in the HKS computation.
     robust :
-        Whether to use the robust laplacian for the HKS computation. This is generally
-        recommended as it does a better job of handling degenerate meshes.
+        If ``True``, use the robust Laplacian for HKS (recommended).
     mollify_factor :
-        The mollification factor for the robust laplacian computation.
+        Mollification factor for the robust Laplacian.
     truncate_extra :
-        Whether to truncate extra eigenpairs that may be computed past `max_eigenvalue`.
+        If ``True``, discard eigenpairs that overshoot ``max_eigenvalue``.
     drop_first :
-        Whether to drop the first eigenpair from the computation, which will always be
-        proportional to the areas of each vertex.
-    nuc_point:
-        The coordinates of the nucleus point. If provided, will compute the distance
-        from each vertex to this point and include it as a feature.
-    distance_threshold:
-        The distance threshold for agglomerating the mesh. This is used to
-        determine which chunks to merge together based on their HKS features.
+        If ``True``, drop the first (area-proportional) eigenpair.
+    decomposition_dtype :
+        Floating-point dtype for the eigendecomposition.
+    compute_hks_kwargs :
+        Extra keyword arguments forwarded to
+        [compute_hks][meshmash.decompose.compute_hks].
+    nuc_point :
+        Coordinates of the nucleus/reference point.  If provided, a
+        ``distance_to_nucleus`` column is added to the condensed node table.
+    distance_threshold :
+        Ward linkage-distance threshold used to cut the agglomeration tree
+        into local domains.
+    auxiliary_features :
+        If ``True``, append condensed node-table columns (centroid, area,
+        etc.) to the aggregated feature DataFrame.
     n_jobs :
-        The number of jobs to use for the computation. See `joblib.Parallel`.
+        Number of parallel workers for [Parallel][joblib.Parallel].  ``-1``
+        uses all available cores.
     verbose :
-        Whether to print verbose output.
+        Verbosity level.
 
     Returns
     -------
@@ -352,6 +370,48 @@ def compute_condensed_hks(
     compute_hks_kwargs: dict = {},
     distance_threshold=3.0,
 ) -> tuple[pd.DataFrame, np.ndarray]:
+    """Compute HKS features and aggregate them on a single (unsplit) mesh.
+
+    This is a lightweight helper used internally by
+    [condensed_hks_pipeline][meshmash.pipeline.condensed_hks_pipeline] to process individual submeshes.  For
+    large meshes, use the pipeline functions instead.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
+    n_components :
+        Number of HKS timescales.
+    t_min :
+        Minimum diffusion timescale.
+    t_max :
+        Maximum diffusion timescale.
+    max_eigenvalue :
+        Maximum Laplacian eigenvalue for the HKS computation.
+    robust :
+        If ``True``, use the robust Laplacian.
+    mollify_factor :
+        Mollification factor for the robust Laplacian.
+    truncate_extra :
+        If ``True``, discard eigenpairs past ``max_eigenvalue``.
+    drop_first :
+        If ``True``, drop the first (area-proportional) eigenpair.
+    decomposition_dtype :
+        Floating-point dtype for the eigendecomposition.
+    compute_hks_kwargs :
+        Extra keyword arguments forwarded to
+        [compute_hks][meshmash.decompose.compute_hks].
+    distance_threshold :
+        Ward linkage-distance threshold for agglomeration.
+
+    Returns
+    -------
+    condensed_features :
+        Per-domain aggregated HKS feature DataFrame indexed by domain
+        label (including ``-1`` for unassigned vertices).
+    labels :
+        Per-vertex domain label array of length ``V``.
+    """
     X_hks = compute_hks(
         mesh,
         n_components=n_components,
@@ -410,109 +470,113 @@ def condensed_hks_pipeline(
     n_jobs: Optional[int] = -1,
     verbose=False,
 ) -> CondensedHKSResult:
-    """
-    Compute the Heat Kernel Signature (HKS) on a mesh in a chunked fashion. Also
-    aggregates HKS features in local regions of the mesh.
+    """Compute HKS features and produce a condensed node-edge graph of a mesh.
+
+    This is the primary entry point for the HKS pipeline.  It is more
+    memory-efficient than [chunked_hks_pipeline][meshmash.pipeline.chunked_hks_pipeline] because features are
+    aggregated *within* each submesh chunk before the results are combined,
+    rather than stitching the full per-vertex feature matrix first.
 
     Parameters
     ----------
     mesh :
-        The input mesh. Should be a tuple of (vertices, faces), or an object with
-        `vertices` and `faces` attributes.
-    query_indices :
-        The indices of the mesh of interest. If provided, will only compute the HKS for
-        chunks which contain these indices. Otherwise, will compute the HKS for all
-        chunks.
+        Input mesh.  Either a ``(vertices, faces)`` tuple or an object
+        with ``vertices`` and ``faces`` attributes.
     simplify_agg :
-        Controls how aggressively to decimate the mesh. A value of 10 will result in a
-        fast decimation at the expense of mesh quality and shape. A value of 0 will
-        attempt to preserve the original mesh geometry at the expense of time. Setting
-        a low value may result in being unable to reach the `target_reduction`.
+        Decimation aggressiveness (0–10).  Higher values are faster but
+        reduce mesh quality.  Low values may prevent reaching
+        ``simplify_target_reduction``.
     simplify_target_reduction :
-        The target reduction for the mesh simplification. Fraction of the original mesh
-        to remove. If set to 0.9, this function will try to reduce the data set to 10%
-        of its original size and will remove 90% of the input triangles.
+        Fraction of triangles to remove during simplification.  ``None``
+        skips simplification.
     overlap_distance :
-        The geodesic distance to overlap mesh chunks. Larger values will result in less
-        distortion (especially for long timescales) but more computation time.
+        Geodesic radius used to grow each chunk into its overlap region.
     max_vertex_threshold :
-        The maximum number of vertices for a mesh chunk, before overlapping.
+        Maximum vertices per core chunk before overlapping.
     min_vertex_threshold :
-        The minimum number of vertices for a mesh chunk to be included in subsequent
-        computations. This can be used to filter out small disconnected pieces of the
-        mesh.
+        Minimum component size; smaller components are discarded.
     max_overlap_neighbors :
-        The maximum number of neighbors to consider when overlapping mesh chunks. This
-        overrules `overlap_distance`.
+        Cap on overlap region size (number of nearest neighbours);
+        overrides ``overlap_distance`` when set.
     n_components :
-        The number of timescales for the HKS computation. This determines the
-        number of HKS features. Timescales will be logarithmically spaced between
-        `t_min` and `t_max`.
+        Number of HKS timescales.  Timescales are log-spaced between
+        ``t_min`` and ``t_max`` and determine the number of HKS features
+        per vertex.
     t_min :
-        The minimum timescale for the HKS computation.
+        Minimum diffusion timescale.
     t_max :
-        The maximum timescale for the HKS computation.
-    max_eval :
-        The maximum eigenvalue for the HKS computation. Larger eigenvalues give a more
-        detailed HKS result at the expense of computation time.
+        Maximum diffusion timescale.
+    max_eigenvalue :
+        Maximum Laplacian eigenvalue used in the HKS computation.
     robust :
-        Whether to use the robust laplacian for the HKS computation. This is generally
-        recommended as it does a better job of handling degenerate meshes.
+        If ``True``, use the robust Laplacian for HKS (recommended).
     mollify_factor :
-        The mollification factor for the robust laplacian computation.
+        Mollification factor for the robust Laplacian.
     truncate_extra :
-        Whether to truncate extra eigenpairs that may be computed past `max_eigenvalue`.
+        If ``True``, discard eigenpairs that overshoot ``max_eigenvalue``.
     drop_first :
-        Whether to drop the first eigenpair from the computation, which will always be
-        proportional to the areas of each vertex.
-    nuc_point:
-        The coordinates of the nucleus point. If provided, will compute the distance
-        from each vertex to this point and include it as a feature.
-    distance_threshold:
-        The distance threshold for agglomerating the mesh. This is used to
-        determine which chunks to merge together based on their HKS features.
+        If ``True``, drop the first (area-proportional) eigenpair.
+    decomposition_dtype :
+        Floating-point dtype for the eigendecomposition.
+    compute_hks_kwargs :
+        Extra keyword arguments forwarded to
+        [compute_hks][meshmash.decompose.compute_hks].
+    nuc_point :
+        Coordinates of the nucleus/reference point.  If provided, a
+        ``distance_to_nucleus`` column is added to the condensed node table.
+    distance_threshold :
+        Ward linkage-distance threshold used to cut the agglomeration tree
+        into local domains.
+    auxiliary_features :
+        If ``True``, append condensed node-table columns (centroid, area,
+        etc.) to the aggregated feature DataFrame.
     n_jobs :
-        The number of jobs to use for the computation. See `joblib.Parallel`.
+        Number of parallel workers for [Parallel][joblib.Parallel].  ``-1``
+        uses all available cores.
     verbose :
-        Whether to print verbose output.
+        Verbosity level.
 
     Returns
     -------
-    :
-        The mesh after simplification.
-    :
-        The mapping from the original mesh to the simplified mesh. Has length of the
-        number of vertices in the original mesh; each element contains the index that
-        the vertex maps to in the simplified mesh.
-    :
-        The mesh stitcher object. Contains information about the mesh chunks and their
-        overlaps.
-    :
-        The HKS features for each vertex in the simplified mesh.
-    :
-        The aggregated HKS features for each domain in the mesh.
-    :
-        The labels for each vertex in the simplified mesh, indicating which domain it
-        belongs to.
-    :
-        Timing information for each step of the pipeline.
+    simple_mesh :
+        The simplified mesh as a ``(vertices, faces)`` tuple.
+    mapping :
+        Array of length ``V_original`` mapping each original vertex to its
+        index in the simplified mesh.  ``-1`` for discarded vertices.
+    stitcher :
+        Fitted [MeshStitcher][meshmash.split.MeshStitcher] for the simplified
+        mesh.
+    simple_labels :
+        Per-vertex domain label array for the simplified mesh.
+    labels :
+        Per-vertex domain label array for the *original* mesh.
+    condensed_features :
+        Per-domain aggregated feature DataFrame (log-HKS + optional
+        auxiliary features), indexed by domain label.
+    condensed_nodes :
+        Node table of the condensed mesh graph; see
+        [condense_mesh_to_graph][meshmash.graph.condense_mesh_to_graph].
+    condensed_edges :
+        Edge table of the condensed mesh graph.
+    timing_info :
+        Dictionary with wall-clock times (seconds) for each pipeline step.
 
     Notes
     -----
     This pipeline consists of the following steps:
 
-        1. Mesh simplification, using https://github.com/pyvista/fast-simplification.
-        2. Mesh splitting, using a routine which iteratively does spectral bisection of
-           the mesh until all chunks are below the `max_vertex_threshold`. These chunks
-           are then grown to overlap using the `overlap_distance` parameter.
-        3. Computation of the heat kernel signature of Sun et al (2008). This routine
-           uses the robust laplacian of Crane et al. (2020) for more stable results. It
-           also leverages the band-by-band eigensolver method of Vallet and Levy (2008).
-        4. Agglomeration of the mesh into local domains which are bounded in the
-           variance of the HKS features. This uses the implementation of Ward's method
-           in scikit-learn which allows for a connectivity constraint.
-        5. Aggregation of the computed features to the local domains. This takes the
-           area-weighted mean of the features for each domain.
+    1. Mesh simplification via ``fast-simplification``.
+    2. Spectral bisection into overlapping chunks
+       ([MeshStitcher][meshmash.split.MeshStitcher]).
+    3. Per-chunk: [compute_hks][meshmash.decompose.compute_hks], Ward
+       agglomeration, and area-weighted aggregation
+       ([compute_condensed_hks][meshmash.pipeline.compute_condensed_hks]).  Aggregating *before* stitching
+       keeps memory use proportional to the chunk size rather than the
+       full mesh.
+    4. Global label reconciliation across chunks
+       ([fix_split_labels][meshmash.agglomerate.fix_split_labels]).
+    5. Assembly of the condensed node-edge graph
+       ([condense_mesh_to_graph][meshmash.graph.condense_mesh_to_graph]).
     """
     timing_info = {}
     starttime = time.time()

@@ -27,6 +27,54 @@ def component_morphometry_pipeline(
     bound_volume_threshold=None,  # um^3
     verbose=False,
 ):
+    """Measure morphometric properties of labeled mesh components.
+
+    For each connected component whose vertices carry ``select_label``,
+    estimates volume, surface area, sphericity, PCA principal values, and
+    medoid position.  Components may be recursively split by spectral
+    bisection if their Fiedler eigenvalue exceeds ``split_threshold``.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
+        Vertex coordinates are expected to be in nanometres.
+    labels :
+        Per-vertex integer label array of length ``V``.
+    select_label :
+        The label value whose components are to be measured.
+    post_synapse_mappings :
+        Array of vertex indices (length = number of known post-synapses).
+        If provided, a ``n_post_synapses`` column is added to the results
+        table counting how many synapses map to each component.
+    vertex_features :
+        Reserved for future use; currently unused.
+    split_laplacian :
+        Laplacian variant used for spectral bisection when
+        ``split_threshold`` is set.  Only ``'graph'`` is currently
+        supported.
+    split_threshold :
+        Fiedler eigenvalue threshold for recursive splitting.  A component
+        is split into two sub-components when its Fiedler eigenvalue is
+        *below* this value (smaller Fiedler eigenvalue indicates a more
+        elongated / weakly connected component).  ``None`` disables
+        splitting.
+    split_min_size :
+        Minimum number of vertices each split sub-component must have for\n        the split to be accepted.
+    bound_volume_threshold :
+        If set, skip components whose axis-aligned bounding-box volume\n        exceeds this value (in μm³).
+    verbose :
+        If ``True``, display a progress bar.
+
+    Returns
+    -------
+    results :
+        DataFrame indexed by ``component_id`` with morphometric columns:
+        ``size_nm3``, ``area_nm2``, ``sphericity``, ``x``, ``y``, ``z``\n        (medoid), ``pca_val_1/2/3``, ``max_dt_nm``, ``mean_dt_nm``,
+        ``n_vertices``, ``n_faces``, and optionally ``n_post_synapses``.
+    corrected_components :
+        Per-vertex component label array (same length as ``labels``),\n        updated to reflect any splits.  Vertices not in a valid measured\n        component receive label ``-1``.
+    """
     # TODO would like to generalize this
 
     components = get_label_components(mesh, labels)

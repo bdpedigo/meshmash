@@ -11,6 +11,20 @@ from .types import ArrayLike, Mesh, interpret_mesh
 
 
 def mesh_to_poly(mesh: Mesh) -> pv.PolyData:
+    """Convert a mesh to a [PolyData][pyvista.PolyData] object.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh.  Accepts a ``(vertices, faces)`` tuple, a
+        [PolyData][pyvista.PolyData], or any object with ``vertices`` and
+        ``faces`` attributes.
+
+    Returns
+    -------
+    :
+        Triangle mesh as a [PolyData][pyvista.PolyData].
+    """
     if isinstance(mesh, pv.PolyData):
         return mesh
     elif isinstance(mesh, tuple):
@@ -24,6 +38,18 @@ def mesh_to_poly(mesh: Mesh) -> pv.PolyData:
 
 
 def mesh_to_edges(mesh: Mesh) -> np.ndarray:
+    """Extract all edges from a mesh as vertex index pairs.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by [mesh_to_poly][meshmash.utils.mesh_to_poly].
+
+    Returns
+    -------
+    :
+        Array of edge vertex index pairs, shape ``(E, 2)``.
+    """
     poly = mesh_to_poly(mesh)
     edge_data = poly.extract_all_edges(use_all_points=True, clear_data=True)
     lines = edge_data.lines
@@ -32,6 +58,22 @@ def mesh_to_edges(mesh: Mesh) -> np.ndarray:
 
 
 def mesh_to_adjacency(mesh: Mesh) -> csr_array:
+    """Build a sparse weighted adjacency matrix from a mesh.
+
+    Edge weights are Euclidean edge lengths.  The returned matrix is upper
+    triangular (each undirected edge appears once).
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by [mesh_to_poly][meshmash.utils.mesh_to_poly].
+
+    Returns
+    -------
+    :
+        Sparse CSR adjacency matrix of shape ``(V, V)`` with edge-length
+        weights.
+    """
     # TODO only use here because this is faster than numpy unique for unique extracting
     # edges, should be some other way to do this
     poly = mesh_to_poly(mesh)
@@ -55,12 +97,46 @@ def mesh_to_adjacency(mesh: Mesh) -> csr_array:
 
 
 def poly_to_mesh(poly: pv.PolyData) -> Mesh:
+    """Convert a [PolyData][pyvista.PolyData] to a ``(vertices, faces)`` tuple.
+
+    Parameters
+    ----------
+    poly :
+        Triangle surface mesh as a [PolyData][pyvista.PolyData].
+
+    Returns
+    -------
+    vertices :
+        Array of vertex positions, shape ``(V, 3)``.
+    faces :
+        Array of triangle face indices, shape ``(F, 3)``.
+    """
     vertices = np.asarray(poly.points)
     faces = poly.faces.reshape(-1, 4)[:, 1:]
     return vertices, faces
 
 
 def fix_mesh(mesh: Mesh, **kwargs) -> Mesh:
+    """Repair a mesh using :mod:`pymeshfix`.
+
+    Attempts to close holes and remove self-intersections so that the
+    result is a manifold surface.  Additional keyword arguments are
+    forwarded to [MeshFix.repair][pymeshfix.MeshFix.repair].
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by [mesh_to_poly][meshmash.utils.mesh_to_poly].
+    **kwargs :
+        Keyword arguments forwarded to [MeshFix.repair][pymeshfix.MeshFix.repair].
+
+    Returns
+    -------
+    vertices :
+        Array of repaired vertex positions, shape ``(V', 3)``.
+    faces :
+        Array of repaired triangle face indices, shape ``(F', 3)``.
+    """
     from pymeshfix import MeshFix
 
     poly = mesh_to_poly(mesh)
@@ -94,6 +170,31 @@ def project_points_to_mesh(
     distance_threshold: Optional[float] = None,
     return_distances: bool = False,
 ) -> Union[np.ndarray, tuple[np.ndarray, np.ndarray]]:
+    """Find the nearest mesh vertex for each query point.
+
+    Parameters
+    ----------
+    points :
+        Query point coordinates, shape ``(N, 3)``.
+    mesh :
+        Target mesh accepted by [mesh_to_poly][meshmash.utils.mesh_to_poly].
+    distance_threshold :
+        If provided, query points whose nearest vertex is farther than this
+        distance are assigned an index of ``-1``.
+    return_distances :
+        If ``True``, also return the distance to the nearest vertex for each
+        query point.
+
+    Returns
+    -------
+    indices :
+        Indices of the nearest vertex in the mesh for each query point,
+        shape ``(N,)``.  Entries are ``-1`` where the nearest vertex
+        exceeds ``distance_threshold``.
+    distances :
+        Only returned when ``return_distances=True``.  Euclidean distances
+        to the nearest vertex, shape ``(N,)``.
+    """
     if isinstance(mesh, tuple):
         vertices = mesh[0]
     else:
@@ -116,7 +217,23 @@ def project_points_to_mesh(
 def component_size_transform(
     mesh: Mesh, indices: Optional[np.ndarray] = None
 ) -> np.ndarray:
-    """Returns the size of each connected component in a mesh."""
+    """Return the connected-component size for each vertex.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by [mesh_to_poly][meshmash.utils.mesh_to_poly].
+    indices :
+        Subset of vertex indices to return sizes for.  If ``None``, sizes
+        are returned for all vertices.
+
+    Returns
+    -------
+    :
+        Array of component sizes (number of vertices in the same connected
+        component), one value per entry in ``indices`` (or per vertex if
+        ``indices`` is ``None``).
+    """
     mesh = interpret_mesh(mesh)
     if indices is None:
         indices = np.arange(len(mesh[0]))
@@ -133,7 +250,24 @@ def component_size_transform(
 
 
 def get_label_components(mesh: Mesh, labels: ArrayLike) -> np.ndarray:
-    """Returns the connected components of a mesh which share the same label."""
+    """Label connected components of a mesh that share the same vertex label.
+
+    Two vertices belong to the same component only if they are connected by
+    an edge *and* carry the same label value.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by [mesh_to_poly][meshmash.utils.mesh_to_poly].
+    labels :
+        Per-vertex label array of length ``V``.
+
+    Returns
+    -------
+    :
+        Per-vertex component label array of length ``V``.  Vertices with
+        different vertex labels will never share a component label.
+    """
     if isinstance(labels, pd.Series):
         labels = labels.values
 
@@ -155,6 +289,25 @@ def get_label_components(mesh: Mesh, labels: ArrayLike) -> np.ndarray:
 
 
 def subset_mesh_by_indices(mesh: Mesh, indices: np.ndarray) -> Mesh:
+    """Extract a submesh containing only the specified vertices.
+
+    Only faces whose *all three* vertices are in ``indices`` are kept.
+    Face indices are remapped to the new, compact vertex numbering.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
+    indices :
+        Vertex indices to keep, or a boolean mask of length ``V``.
+
+    Returns
+    -------
+    vertices :
+        Subset of vertex positions, shape ``(len(indices), 3)``.
+    faces :
+        Remapped face index array containing only retained faces.
+    """
     if indices.dtype == bool:
         indices = np.where(indices)[0]
 
@@ -169,10 +322,30 @@ def subset_mesh_by_indices(mesh: Mesh, indices: np.ndarray) -> Mesh:
     return new_vertices, new_faces
 
 
-# actually, let's just move to a separate function
 def rough_subset_mesh_by_indices(
     mesh: Mesh, indices: np.ndarray
 ) -> tuple[Mesh, np.ndarray]:
+    """Extract a submesh keeping faces where *any* vertex is in ``indices``.
+
+    Unlike [subset_mesh_by_indices][meshmash.utils.subset_mesh_by_indices], a face is retained whenever at
+    least one of its vertices is in ``indices``.  This can introduce
+    additional vertices beyond those in ``indices``.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
+    indices :
+        Seed vertex indices.
+
+    Returns
+    -------
+    submesh :
+        ``(vertices, faces)`` tuple for the extracted submesh.
+    vertex_indices :
+        Final set of vertex indices (in the original mesh) that were
+        included, which may be a superset of ``indices``.
+    """
     vertices, faces = interpret_mesh(mesh)
 
     face_mask = np.any(np.isin(faces, indices), axis=1)
@@ -186,6 +359,20 @@ def rough_subset_mesh_by_indices(
 
 
 def largest_mesh_component(mesh: Mesh) -> Mesh:
+    """Return the largest connected component of a mesh.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh.
+
+    Returns
+    -------
+    vertices :
+        Vertices of the largest component.
+    faces :
+        Faces of the largest component, with remapped indices.
+    """
     adj = mesh_to_adjacency(mesh)
     _, component_labels = connected_components(adj, directed=False)
     largest_component = np.argmax(np.bincount(component_labels))
@@ -194,6 +381,21 @@ def largest_mesh_component(mesh: Mesh) -> Mesh:
 
 
 def shuffle_label_mapping(x: ArrayLike) -> np.ndarray:
+    """Randomly permute integer labels while preserving the set of label values.
+
+    Useful for randomising colours when visualising label arrays.
+
+    Parameters
+    ----------
+    x :
+        Array of integer labels.
+
+    Returns
+    -------
+    :
+        Array of the same shape as ``x`` with label integers randomly
+        permuted.
+    """
     uni_labels = np.unique(x)
     new_labels = np.random.permutation(uni_labels)
     label_map = dict(zip(uni_labels, new_labels))
@@ -204,16 +406,64 @@ def shuffle_label_mapping(x: ArrayLike) -> np.ndarray:
 def compute_distances_to_point(
     points: ArrayLike, center_point: ArrayLike
 ) -> np.ndarray:
-    """Computes the distance of each point in a mesh to a particular point."""
+    """Compute the Euclidean distance from each point to a reference point.
+
+    Parameters
+    ----------
+    points :
+        Query point coordinates, shape ``(N, d)``.
+    center_point :
+        Reference point, shape ``(d,)``.
+
+    Returns
+    -------
+    :
+        Array of distances, shape ``(N,)``.
+    """
     return np.linalg.norm(points - center_point, axis=1)
 
 
 def edges_to_lines(edges: np.ndarray) -> np.ndarray:
+    """Convert an edge array to a :mod:`pyvista` lines connectivity array.
+
+    :mod:`pyvista` encodes lines as a flat array where each cell is
+    prefixed by its vertex count.  This function prepends ``2`` to each
+    edge so the result can be passed directly to
+    [PolyData][pyvista.PolyData].
+
+    Parameters
+    ----------
+    edges :
+        Edge vertex index pairs, shape ``(E, 2)``.
+
+    Returns
+    -------
+    :
+        Flat connectivity array of length ``3 * E``, alternating between
+        the cell size ``2`` and the two vertex indices.
+    """
     lines = np.column_stack((np.full((len(edges), 1), 2), edges))
     return lines
 
 
 def combine_meshes(meshes: list[Mesh]) -> Mesh:
+    """Concatenate a list of meshes into a single mesh.
+
+    Vertex arrays are stacked and face index arrays are shifted so that
+    each submesh's faces still point to the correct vertices.
+
+    Parameters
+    ----------
+    meshes :
+        List of meshes accepted by [interpret_mesh][meshmash.types.interpret_mesh].
+
+    Returns
+    -------
+    vertices :
+        Combined vertex array.
+    faces :
+        Combined face index array with adjusted indices.
+    """
     meshes = [interpret_mesh(mesh) for mesh in meshes]
     n_vertices_per_mesh = [mesh[0].shape[0] for mesh in meshes]
     cumulative_n_vertices = list(np.cumsum(n_vertices_per_mesh))
@@ -233,6 +483,23 @@ def mesh_connected_components(
     size_threshold: Optional[int] = 100,
     sort_by_size: bool = False,
 ) -> Generator[Mesh, None, None]:
+    """Yield each connected component of a mesh as a separate mesh.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh.
+    size_threshold :
+        Minimum number of vertices a component must have to be yielded.
+        Set to ``None`` to yield all components.
+    sort_by_size :
+        If ``True``, yield components in descending order of vertex count.
+
+    Yields
+    ------
+    :
+        ``(vertices, faces)`` tuple for each retained component.
+    """
     adj = mesh_to_adjacency(mesh)
     _, component_labels = connected_components(adj, directed=False)
     uni_labels, counts = np.unique(component_labels, return_counts=True)
@@ -250,6 +517,18 @@ def mesh_connected_components(
 
 
 def mesh_n_connected_components(mesh: Mesh) -> int:
+    """Return the number of connected components in a mesh.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh.
+
+    Returns
+    -------
+    :
+        Number of connected components.
+    """
     adj = mesh_to_adjacency(mesh)
     n_components, _ = connected_components(adj, directed=False)
     return n_components
@@ -258,6 +537,24 @@ def mesh_n_connected_components(mesh: Mesh) -> int:
 def threshold_mesh_by_component_size(
     mesh: Mesh, size_threshold: int = 100
 ) -> tuple[Mesh, np.ndarray]:
+    """Remove connected components smaller than a vertex-count threshold.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh.
+    size_threshold :
+        Minimum number of vertices a component must have to be retained.
+
+    Returns
+    -------
+    mesh :
+        Filtered ``(vertices, faces)`` tuple containing only vertices and
+        faces belonging to components that meet the threshold.
+    indices :
+        Indices of the retained vertices in the original mesh, shape
+        ``(V',)``.
+    """
     adj = mesh_to_adjacency(mesh)
 
     _, component_labels = connected_components(adj, directed=False)
@@ -279,14 +576,45 @@ def threshold_mesh_by_component_size(
 
 
 def expand_labels(condensed_labels: np.ndarray, mapping: np.ndarray) -> np.ndarray:
-    """Take a condensed set of labels for a reduced mesh and expand them to the full mesh."""
+    """Expand per-vertex labels from a reduced mesh back to the original mesh.
+
+    Parameters
+    ----------
+    condensed_labels :
+        Per-vertex label array for the simplified/reduced mesh, shape
+        ``(V_simple,)``.
+    mapping :
+        Array of length ``V_original`` mapping each original vertex to its
+        index in the reduced mesh.  Entries of ``-1`` indicate vertices
+        that have no corresponding reduced-mesh vertex.
+
+    Returns
+    -------
+    :
+        Per-vertex label array for the original mesh, shape
+        ``(V_original,)``.  Vertices with ``mapping == -1`` receive label
+        ``-1``.
+    """
     labels = condensed_labels[mapping]
     labels[mapping == -1] = -1
     return labels
 
 
 def graph_to_adjacency(graph: tuple[np.ndarray, np.ndarray]) -> csr_array:
-    """Convert a graph to an adjacency matrix."""
+    """Convert a ``(vertices, edges)`` graph tuple to an unweighted adjacency matrix.
+
+    Parameters
+    ----------
+    graph :
+        Tuple of ``(vertices, edges)`` where ``vertices`` has shape
+        ``(V, d)`` and ``edges`` has shape ``(E, 2)``.
+
+    Returns
+    -------
+    :
+        Sparse CSR adjacency matrix of shape ``(V, V)`` with entries of
+        ``1`` for each edge.
+    """
     vertices, edges = graph
     adj = csr_array(
         (np.ones(len(edges)), (edges[:, 0], edges[:, 1])),
@@ -296,7 +624,22 @@ def graph_to_adjacency(graph: tuple[np.ndarray, np.ndarray]) -> csr_array:
 
 
 def scale_mesh(mesh: Mesh, scale: float) -> Mesh:
-    """Scale a mesh by a given factor."""
+    """Return a new mesh with all vertex positions scaled by ``scale``.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
+    scale :
+        Scalar factor to multiply all vertex coordinates by.
+
+    Returns
+    -------
+    vertices :
+        Scaled vertex positions.
+    faces :
+        Unchanged face index array.
+    """
     vertices, faces = interpret_mesh(mesh)
     scaled_vertices = vertices * scale
     return scaled_vertices, faces

@@ -13,6 +13,29 @@ HEADER_FILE_NAME = "header.txt"
 def interpret_path(
     path: Union[str, Path], **kwargs
 ) -> tuple[CloudFiles, Optional[str]]:
+    """Parse a path into a ``cloudfiles.CloudFiles`` handle and filename.
+
+    Supports local paths as well as cloud storage URIs such as ``gs://``
+    and ``file://``.
+
+    Parameters
+    ----------
+    path :
+        Path to a file or directory.  If the path has no file extension, it
+        is treated as a directory and the returned filename is ``None``.
+        ``gs:/`` prefixes are normalised to ``gs://``.
+    **kwargs :
+        Additional keyword arguments forwarded to
+        ``cloudfiles.CloudFiles``.
+
+    Returns
+    -------
+    cf :
+        ``cloudfiles.CloudFiles`` instance pointing at the parent
+        directory.
+    file_name :
+        The base filename, or ``None`` if ``path`` is a directory.
+    """
     if isinstance(path, str):
         path = Path(path)
 
@@ -70,6 +93,31 @@ def save_condensed_features(
     label_dtype: type = np.int32,
     check_header: bool = True,
 ) -> None:
+    """Save per-label features and per-vertex labels to a compressed ``.npz`` file.
+
+    A ``header.txt`` file containing tab-separated column names is written
+    alongside the data file (or validated against an existing one when
+    ``check_header=True``).
+
+    Parameters
+    ----------
+    path :
+        Destination file path (local or ``gs://`` URI).  Parsed by
+        [interpret_path][meshmash.io.interpret_path].
+    features :
+        DataFrame of per-label features.  Rows should be indexed
+        ``-1, 0, 1, …``.
+    labels :
+        Per-vertex label array mapping each vertex to a row index in
+        ``features``.
+    feature_dtype :
+        Numeric dtype used to store the feature values.
+    label_dtype :
+        Numeric dtype used to store the label array.
+    check_header :
+        If ``True``, validate (or write) a ``header.txt`` file recording
+        the column names of ``features``.
+    """
     cf, file_name = interpret_path(path)
 
     columns: list = features.columns.tolist()
@@ -107,6 +155,21 @@ def save_condensed_features(
 
 
 def read_condensed_features(path: Union[str, Path]) -> tuple[pd.DataFrame, np.ndarray]:
+    """Load per-label features and per-vertex labels from a file written by
+    [save_condensed_features][meshmash.io.save_condensed_features].
+
+    Parameters
+    ----------
+    path :
+        Path to the ``.npz`` file (local or ``gs://`` URI).
+
+    Returns
+    -------
+    features :
+        DataFrame of per-label features indexed ``-1, 0, 1, …``.
+    labels :
+        Per-vertex label array.
+    """
     cf, file_name = interpret_path(path)
 
     with BytesIO(cf.get(file_name)) as bio:
@@ -124,6 +187,22 @@ def read_condensed_features(path: Union[str, Path]) -> tuple[pd.DataFrame, np.nd
 def save_condensed_edges(
     path: Union[str, Path], edges: pd.DataFrame, check_header: bool = True
 ) -> None:
+    """Save a condensed edge table to a compressed ``.npz`` file.
+
+    The ``source`` and ``target`` columns are stored as ``int32``; all
+    remaining columns are stored as ``float32``.
+
+    Parameters
+    ----------
+    path :
+        Destination file path (local or ``gs://`` URI).
+    edges :
+        DataFrame with at least ``source`` and ``target`` integer columns
+        plus any number of numeric edge-feature columns.
+    check_header :
+        If ``True``, validate (or write) a ``header.txt`` recording the
+        names of the edge-feature columns.
+    """
     cf, file_name = interpret_path(path)
 
     edge_list = edges[["source", "target"]].values.astype(np.int32)
@@ -154,6 +233,18 @@ def save_condensed_edges(
 
 
 def read_condensed_edges(path: Union[str, Path]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Load an edge table from a file written by [save_condensed_edges][meshmash.io.save_condensed_edges].
+
+    Parameters
+    ----------
+    path :
+        Path to the ``.npz`` file (local or ``gs://`` URI).
+
+    Returns
+    -------
+    :
+        DataFrame with ``source``, ``target``, and edge-feature columns.
+    """
     cf, file_name = interpret_path(path)
 
     with BytesIO(cf.get(file_name)) as bio:
@@ -174,6 +265,26 @@ def save_condensed_graph(
     edges_dtype: type = np.int32,
     check_header: bool = True,
 ) -> None:
+    """Save both the condensed node and edge tables to a single ``.npz`` file.
+
+    Column names for each table are written to separate header files
+    (``nodes_header.txt`` and ``edges_header.txt``) in the same directory.
+
+    Parameters
+    ----------
+    path :
+        Destination file path (local or ``gs://`` URI).
+    nodes :
+        DataFrame of per-label node features indexed ``0, 1, …``.
+    edges :
+        DataFrame of inter-label edge features.
+    nodes_dtype :
+        Numeric dtype used for the node feature values.
+    edges_dtype :
+        Numeric dtype used for the edge values.
+    check_header :
+        If ``True``, validate (or write) the column-name header files.
+    """
     cf, file_name = interpret_path(path)
 
     _check_header(
@@ -204,6 +315,20 @@ def save_condensed_graph(
 
 
 def read_condensed_graph(path: Union[str, Path]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Load node and edge tables from a file written by [save_condensed_graph][meshmash.io.save_condensed_graph].
+
+    Parameters
+    ----------
+    path :
+        Path to the ``.npz`` file (local or ``gs://`` URI).
+
+    Returns
+    -------
+    nodes :
+        DataFrame of per-label node features.
+    edges :
+        DataFrame of inter-label edge features.
+    """
     cf, file_name = interpret_path(path)
 
     with BytesIO(cf.get(file_name)) as bio:
@@ -222,6 +347,16 @@ def read_condensed_graph(path: Union[str, Path]) -> tuple[pd.DataFrame, pd.DataF
 
 
 def save_id_to_mesh_map(path: Union[str, Path], id_to_mesh_map: np.ndarray) -> None:
+    """Save an ID-to-mesh-index mapping array to a compressed ``.npz`` file.
+
+    Parameters
+    ----------
+    path :
+        Destination file path (local or ``gs://`` URI).
+    id_to_mesh_map :
+        Integer array of shape ``(N, 2)`` where each row is
+        ``[object_id, mesh_vertex_index]``.
+    """
     assert id_to_mesh_map.shape[1] == 2
 
     cf, file_name = interpret_path(path)
@@ -233,6 +368,18 @@ def save_id_to_mesh_map(path: Union[str, Path], id_to_mesh_map: np.ndarray) -> N
 
 
 def read_id_to_mesh_map(path: Union[str, Path]) -> np.ndarray:
+    """Load a mapping array from a file written by [save_id_to_mesh_map][meshmash.io.save_id_to_mesh_map].
+
+    Parameters
+    ----------
+    path :
+        Path to the ``.npz`` file (local or ``gs://`` URI).
+
+    Returns
+    -------
+    :
+        Integer array of shape ``(N, 2)``.
+    """
     cf, file_name = interpret_path(path)
 
     with BytesIO(cf.get(file_name)) as bio:
@@ -248,6 +395,15 @@ def read_id_to_mesh_map(path: Union[str, Path]) -> np.ndarray:
 
 
 def save_array(path: Union[str, Path], array: np.ndarray) -> None:
+    """Save a numpy array to a compressed ``.npz`` file.
+
+    Parameters
+    ----------
+    path :
+        Destination file path (local or ``gs://`` URI).
+    array :
+        Array to save.
+    """
     cf, file_name = interpret_path(path)
 
     with BytesIO() as bio:
@@ -257,6 +413,18 @@ def save_array(path: Union[str, Path], array: np.ndarray) -> None:
 
 
 def read_array(path: Union[str, Path]) -> np.ndarray:
+    """Load a numpy array from a file written by [save_array][meshmash.io.save_array].
+
+    Parameters
+    ----------
+    path :
+        Path to the ``.npz`` file (local or ``gs://`` URI).
+
+    Returns
+    -------
+    :
+        The stored array.
+    """
     cf, file_name = interpret_path(path)
 
     with BytesIO(cf.get(file_name)) as bio:

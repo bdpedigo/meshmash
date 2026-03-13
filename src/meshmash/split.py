@@ -27,7 +27,28 @@ from .utils import (
 def graph_laplacian_split(
     adj: csr_array, dtype: type = np.float32
 ) -> tuple[np.ndarray, np.ndarray]:
-    # TODO didn't understand why this took longer when float32 for some meshes
+    """Bisect a mesh using the Fiedler vector of the graph Laplacian.
+
+    Computes the second smallest eigenvector (Fiedler vector) of the
+    unnormalised graph Laplacian and partitions vertices by the sign of
+    their Fiedler coefficient.
+
+    Parameters
+    ----------
+    adj :
+        Sparse adjacency matrix of the mesh graph, shape ``(V, V)``.
+    dtype :
+        Floating-point dtype used for the eigensolver.
+
+    Returns
+    -------
+    indices1 :
+        Indices of vertices in the first partition
+        (Fiedler coefficient >= 0).
+    indices2 :
+        Indices of vertices in the second partition
+        (Fiedler coefficient < 0).
+    """
     # probably some issue with tolerance/sigma?
     # TODO normed didn't seem to make much of a difference here; perhaps just because
     # degrees are fairly homogeneous?
@@ -62,6 +83,31 @@ def graph_laplacian_split(
 def bisect_adjacency(
     adj: csr_array, n_retries: int = 7, check: bool = True
 ) -> tuple[tuple[csr_array, csr_array], tuple[np.ndarray, np.ndarray]]:
+    """Bisect a mesh graph into two parts using the graph-Laplacian Fiedler vector.
+
+    Calls [graph_laplacian_split][meshmash.split.graph_laplacian_split] and retries if the result is
+    degenerate (one empty partition or disconnected nodes).  Uses
+    recursion up to ``n_retries`` times.
+
+    Parameters
+    ----------
+    adj :
+        Sparse adjacency matrix of shape ``(V, V)``.
+    n_retries :
+        Maximum number of retry attempts when the split fails to produce
+        two non-empty, connected partitions.
+    check :
+        If ``True``, verify that no vertex becomes isolated (zero-degree)
+        after splitting and retry if so.
+
+    Returns
+    -------
+    sub_adjs :
+        Pair of sub-adjacency matrices ``(adj1, adj2)`` for each partition.
+    submesh_indices :
+        Pair of index arrays ``(indices1, indices2)`` mapping each
+        partition's rows back to the original ``adj``.
+    """
     if n_retries == 0:
         raise RuntimeError("Split failed to divide mesh.")
 
@@ -100,6 +146,39 @@ def fit_mesh_split(
     max_rounds: int = 100_000,
     verbose: Union[bool, int] = False,
 ) -> np.ndarray:
+    """Partition a mesh into non-overlapping chunks using recursive bisection.
+
+    Repeatedly bisects each chunk using the Fiedler vector of the graph
+    Laplacian until every chunk has at most ``max_vertex_threshold`` vertices.
+    Chunks belonging to connected components with fewer than
+    ``min_vertex_threshold`` vertices are dropped (their vertices receive
+    label ``-1``).  The returned labels are ordered so that the largest
+    chunk has label ``0``.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh, adjacency matrix, or vertex array accepted by
+        [interpret_mesh][meshmash.types.interpret_mesh] /
+        [mesh_to_adjacency][meshmash.utils.mesh_to_adjacency].
+    max_vertex_threshold :
+        Stop bisecting a chunk once it contains at most this many vertices.
+    min_vertex_threshold :
+        Discard connected components with fewer than this many vertices;
+        their vertices receive label ``-1``.
+    max_rounds :
+        Maximum number of bisection steps before the algorithm terminates
+        regardless of remaining chunk sizes.
+    verbose :
+        If truthy, print queue size every 50 rounds.
+
+    Returns
+    -------
+    :
+        Per-vertex integer label array of shape ``(V,)``.  Labels run
+        ``0, 1, …, K-1`` ordered from largest to smallest chunk; vertices
+        not assigned to any chunk have label ``-1``.
+    """
     if isinstance(mesh, (csr_array, np.ndarray)):
         whole_adj = mesh
     else:
@@ -198,9 +277,34 @@ def subset_diags(matrix: sparse.sparray, indices: np.ndarray) -> diags_array:
 def bisect_laplacian(
     L: sparse.sparray, M: sparse.sparray
 ) -> tuple[
-    tuple[tuple[sparse.sparray, diags_array], tuple[sparse.sparray, diags_array]],
+    tuple[tuple[sparse.sparray, diags_array], tuple[sparse.sparray, diags_array]],  # noqa: E501
     tuple[np.ndarray, np.ndarray],
 ]:
+    """Bisect a mesh into two parts using the cotangent-Laplacian Fiedler vector.
+
+    Computes the second eigenvector of the generalised eigenproblem
+    ``L v = λ M v`` via [decompose_laplacian][meshmash.decompose.decompose_laplacian]
+    and partitions vertices by its sign.
+
+    Parameters
+    ----------
+    L :
+        Cotangent Laplacian matrix of shape ``(V, V)`` as returned by
+        [cotangent_laplacian][meshmash.laplacian.cotangent_laplacian].
+    M :
+        Diagonal mass matrix of shape ``(V, V)`` as returned by
+        [cotangent_laplacian][meshmash.laplacian.cotangent_laplacian].
+
+    Returns
+    -------
+    sub_laps :
+        Pair of ``(L_sub, M_sub)`` tuples for each partition, where
+        ``M_sub`` is a [diags_array][scipy.sparse.diags_array] of the diagonal
+        mass entries for that partition.
+    submesh_indices :
+        Pair of index arrays ``(indices1, indices2)`` mapping each
+        partition's rows back to the original ``L``.
+    """
     # get the split indices
     # indices1, indices2 = graph_laplacian_split(adj)
 
@@ -239,6 +343,40 @@ def fit_mesh_split_lap(
     mollify_factor: float = 1e-5,
     verbose: Union[bool, int] = False,
 ) -> np.ndarray:
+    """Partition a mesh into chunks using recursive cotangent-Laplacian bisection.
+
+    Like [fit_mesh_split][meshmash.split.fit_mesh_split] but uses the Fiedler vector of the
+    cotangent Laplacian (instead of the graph Laplacian) for each
+    bisection step, which can produce more geometrically uniform
+    partitions on irregular meshes.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
+    max_vertex_threshold :
+        Stop bisecting a chunk once it contains at most this many vertices.
+    min_vertex_threshold :
+        Discard connected components with fewer than this many vertices;
+        their vertices receive label ``-1``.
+    max_rounds :
+        Maximum number of bisection steps before the algorithm terminates.
+    robust :
+        If ``True``, use the robust cotangent Laplacian variant; passed
+        to [cotangent_laplacian][meshmash.laplacian.cotangent_laplacian].
+    mollify_factor :
+        Mollification factor passed to
+        [cotangent_laplacian][meshmash.laplacian.cotangent_laplacian].
+    verbose :
+        If truthy, print queue information each round.
+
+    Returns
+    -------
+    :
+        Per-vertex integer label array of shape ``(V,)``.  Labels run
+        ``0, 1, …, K-1`` ordered from largest to smallest chunk; vertices
+        not assigned to any chunk have label ``-1``.
+    """
     if isinstance(mesh, (csr_array, np.ndarray)):
         whole_adj = mesh
     else:
@@ -315,6 +453,25 @@ def fit_mesh_split_lap(
 
 
 def apply_mesh_split(mesh: Mesh, split_mapping: np.ndarray) -> list[Mesh]:
+    """Separate a mesh into submeshes according to a per-vertex split mapping.
+
+    Only faces whose *all three* vertices share the same label are retained
+    in that submesh.  Faces that span label boundaries are dropped.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
+    split_mapping :
+        Per-vertex integer label array of length ``V`` as produced by
+        [fit_mesh_split][meshmash.split.fit_mesh_split].  Vertices with label ``-1`` are excluded.
+
+    Returns
+    -------
+    :
+        List of ``(vertices, faces)`` tuples, one per unique non-negative
+        label, with remapped face indices.
+    """
     vertices, faces = interpret_mesh(mesh)
     faces = pd.DataFrame(faces)
     faces["label0"] = split_mapping[faces[0]]
@@ -335,6 +492,22 @@ def apply_mesh_split(mesh: Mesh, split_mapping: np.ndarray) -> list[Mesh]:
 
 
 def get_submesh_borders(submesh: Mesh) -> np.ndarray:
+    """Return the vertex indices that lie on boundary edges of a submesh.
+
+    Uses :mod:`pyvista` boundary-edge extraction to find edges shared by
+    fewer than two faces.
+
+    Parameters
+    ----------
+    submesh :
+        A manifold triangular mesh accepted by
+        [mesh_to_poly][meshmash.utils.mesh_to_poly].
+
+    Returns
+    -------
+    :
+        Sorted array of vertex indices located on boundary edges.
+    """
     # TODO currently this only works if input mesh is manifold, should relax this
     # and actually look at what edges are being broken maybe
     poly = mesh_to_poly(submesh)
@@ -355,6 +528,31 @@ def fit_overlapping_mesh_split(
     vertex_threshold: int = 20_000,
     max_rounds: int = 1_000,
 ) -> list[np.ndarray]:
+    """Split a mesh and grow each chunk geodesically to create overlapping regions.
+
+    First calls [fit_mesh_split][meshmash.split.fit_mesh_split] to partition the mesh, then expands
+    each chunk by including all vertices reachable within ``overlap_distance``
+    along mesh edges (using shortest-path distances).
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
+    overlap_distance :
+        Maximum geodesic distance from the core chunk within which
+        additional vertices are included in the overlap region.
+    vertex_threshold :
+        Maximum number of vertices per non-overlapping core chunk passed
+        to [fit_mesh_split][meshmash.split.fit_mesh_split].
+    max_rounds :
+        Maximum bisection rounds; see [fit_mesh_split][meshmash.split.fit_mesh_split].
+
+    Returns
+    -------
+    :
+        List of vertex index arrays (one per chunk), each containing the
+        core vertices plus their overlap neighbourhood.
+    """
     mesh = interpret_mesh(mesh)
     submesh_mapping = fit_mesh_split(
         mesh, vertex_threshold=vertex_threshold, max_rounds=max_rounds
@@ -401,6 +599,30 @@ def fit_overlapping_mesh_split(
 
 
 class MeshStitcher:
+    """Split a mesh into overlapping chunks and apply functions across them.
+
+    Coordinates the full split-compute-stitch workflow:
+
+    1. Call [split_mesh][meshmash.split.MeshStitcher.split_mesh] to partition the mesh into overlapping
+       submeshes.
+    2. Call [apply][meshmash.split.MeshStitcher.apply] (or [apply_on_features][meshmash.split.MeshStitcher.apply_on_features] /
+       [subset_apply][meshmash.split.MeshStitcher.subset_apply]) to run a function on each submesh in
+       parallel.
+    3. Results are stitched back to the full mesh using
+       [stitch_features][meshmash.split.MeshStitcher.stitch_features].
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
+    verbose :
+        Verbosity level.  ``0`` / ``False`` is silent; ``>=1`` prints
+        progress; ``>=2`` prints extra diagnostics.
+    n_jobs :
+        Number of parallel workers for [Parallel][joblib.Parallel].  ``-1``
+        uses all available CPU cores.
+    """
+
     def __init__(
         self, mesh: Mesh, verbose: Union[bool, int] = False, n_jobs: Optional[int] = -1
     ) -> None:
@@ -417,6 +639,43 @@ class MeshStitcher:
         max_overlap_neighbors: Optional[int] = None,
         verify_connected: bool = True,
     ) -> list[Mesh]:
+        """Partition the mesh and build overlapping submesh chunks.
+
+        Calls [fit_mesh_split][meshmash.split.fit_mesh_split] to produce non-overlapping core
+        chunks, then expands each chunk by including all vertices
+        reachable within ``overlap_distance`` along mesh edges.  The
+        resulting submeshes, their overlap vertex indices, and the
+        per-vertex submesh mapping are stored on ``self`` for use by
+        [apply][meshmash.split.MeshStitcher.apply], [apply_on_features][meshmash.split.MeshStitcher.apply_on_features], and
+        [stitch_features][meshmash.split.MeshStitcher.stitch_features].
+
+        Parameters
+        ----------
+        max_vertex_threshold :
+            Maximum vertices per non-overlapping core chunk; passed to
+            [fit_mesh_split][meshmash.split.fit_mesh_split].
+        min_vertex_threshold :
+            Minimum connected-component size; smaller components are
+            discarded.
+        overlap_distance :
+            Maximum geodesic edge distance used to expand each core chunk
+            into its overlapping neighbourhood.
+        max_rounds :
+            Maximum bisection rounds; passed to [fit_mesh_split][meshmash.split.fit_mesh_split].
+        max_overlap_neighbors :
+            If set, limits each chunk's overlap to at most this many
+            additional vertices (ranked by distance).  ``None`` keeps
+            all vertices within ``overlap_distance``.
+        verify_connected :
+            If ``True``, assert that every overlapping submesh forms a
+            single connected component.
+
+        Returns
+        -------
+        :
+            List of overlapping submeshes as ``(vertices, faces)``
+            tuples, one per chunk.
+        """
         if max_vertex_threshold is None:
             max_vertex_threshold = len(self.mesh[0])
         if min_vertex_threshold is None:
@@ -519,6 +778,27 @@ class MeshStitcher:
         features_by_submesh: list[np.ndarray],
         fill_value: float = np.nan,
     ) -> np.ndarray:
+        """Combine per-submesh feature arrays into a single full-mesh array.
+
+        Each vertex in the overlap region is covered by multiple submeshes.
+        This method assigns each vertex the value computed by the submesh
+        that "owns" it (i.e. ``submesh_mapping[vertex] == submesh_index``).
+
+        Parameters
+        ----------
+        features_by_submesh :
+            List of 2-D feature arrays, one per submesh, aligned to the
+            submesh vertex ordering.  ``None`` entries are skipped.
+        fill_value :
+            Value used to pre-fill the output array before writing submesh
+            results.  Vertices in chunks where the function returned
+            ``None`` retain this value.
+
+        Returns
+        -------
+        :
+            Full-mesh feature array of shape ``(V, n_features)``.
+        """
         valid_features = [feat for feat in features_by_submesh if feat is not None]
         if len(valid_features) == 0:
             raise ValueError("All features are None")
@@ -562,6 +842,34 @@ class MeshStitcher:
         stitch: bool = True,
         **kwargs,
     ) -> Union[np.ndarray, list]:
+        """Apply a function to each submesh and (optionally) stitch results.
+
+        ``func`` must have signature ``func(submesh, *args, **kwargs)``
+        and return a 2-D array aligned to the submesh vertices, or
+        ``None`` to indicate failure.
+
+        Parameters
+        ----------
+        func :
+            Callable to apply to each submesh.
+        *args :
+            Positional arguments forwarded to ``func`` after ``submesh``.
+        fill_value :
+            Fill value for uncomputed vertices; see [stitch_features][meshmash.split.MeshStitcher.stitch_features].
+        stitch :
+            If ``True`` (default), stitch results into a full-mesh array
+            via [stitch_features][meshmash.split.MeshStitcher.stitch_features].  If ``False``, return the raw
+            list of per-submesh results.
+        **kwargs :
+            Keyword arguments forwarded to ``func``.
+
+        Returns
+        -------
+        :
+            Stitched full-mesh feature array of shape ``(V, n_features)``
+            when ``stitch=True``, or the raw list of per-submesh results
+            when ``stitch=False``.
+        """
         func_name = func.__name__
         submeshes = self.submeshes
         if self.n_jobs == 1:
@@ -596,6 +904,35 @@ class MeshStitcher:
         fill_value: float = np.nan,
         **kwargs,
     ) -> np.ndarray:
+        """Apply a function only to submeshes that contain ``indices``.
+
+        Useful when features are only needed for a subset of vertices;
+        submeshes that do not overlap with ``indices`` are skipped.
+
+        Parameters
+        ----------
+        func :
+            Callable with signature ``func(submesh, *args, **kwargs)``.
+        indices :
+            Vertex indices of interest.  Only submeshes that contain at
+            least one of these vertices are processed.
+        *args :
+            Positional arguments forwarded to ``func``.
+        reindex :
+            If ``True``, return only the rows of the stitched result
+            corresponding to ``indices``.  If ``False`` (default), return
+            the full-mesh array.
+        fill_value :
+            Fill value for vertices whose submesh was not processed.
+        **kwargs :
+            Keyword arguments forwarded to ``func``.
+
+        Returns
+        -------
+        :
+            Full-mesh feature array of shape ``(V, n_features)`` or, when
+            ``reindex=True``, shape ``(len(indices), n_features)``.
+        """
         func_name = func.__name__
         index_submesh_mappings = self.submesh_mapping[indices]
         relevant_submesh_indices = np.unique(index_submesh_mappings)
@@ -649,6 +986,32 @@ class MeshStitcher:
         fill_value: float = np.nan,
         **kwargs,
     ) -> np.ndarray:
+        """Apply a function that takes both a submesh and a feature slice.
+
+        Like [apply][meshmash.split.MeshStitcher.apply], but also passes the slice of ``X`` corresponding
+        to each submesh as the second argument to ``func``.  The expected
+        signature is ``func(submesh, submesh_features, *args, **kwargs)``.
+
+        Parameters
+        ----------
+        func :
+            Callable with signature
+            ``func(submesh, submesh_features, *args, **kwargs)``.
+        X :
+            Full-mesh feature array of shape ``(V, F)``.  Each submesh
+            receives the rows indexed by its overlap vertex indices.
+        *args :
+            Additional positional arguments forwarded to ``func``.
+        fill_value :
+            Fill value for uncomputed vertices.
+        **kwargs :
+            Keyword arguments forwarded to ``func``.
+
+        Returns
+        -------
+        :
+            Stitched full-mesh result array of shape ``(V, n_out_features)``.
+        """
         func_name = func.__name__
         submeshes = self.submeshes
         if self.n_jobs == 1:

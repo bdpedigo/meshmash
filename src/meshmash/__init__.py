@@ -41,7 +41,11 @@ from .io import (
 from .label_propagation import label_propagation
 from .laplacian import area_matrix, compute_vertex_areas, cotangent_laplacian
 from .morphometry_pipeline import component_morphometry_pipeline
-from .pipeline import chunked_hks_pipeline, condensed_hks_pipeline
+from .pipeline import (
+    chunked_hks_pipeline,
+    compute_condensed_hks,
+    condensed_hks_pipeline,
+)
 from .split import (
     MeshStitcher,
     apply_mesh_split,
@@ -146,4 +150,6 @@ __all__ = [
     "label_propagation",
     "mesh_n_connected_components",
     "fetch_sample_mesh",
+    "condensed_hks_pipeline",
+    "compute_condensed_hks",
 ]

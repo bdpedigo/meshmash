@@ -20,8 +20,20 @@ def to_laplacian(adj: Union[csr_array, np.ndarray]) -> csr_array:
 
 
 def to_adjacency(vertices: np.ndarray, edges: np.ndarray) -> csr_array:
-    """
-    Convert edges and vertices to a sparse adjacency matrix.
+    """Convert an edge list to a sparse CSR adjacency matrix.
+
+    Parameters
+    ----------
+    vertices :
+        Array of vertex positions used only to determine the matrix size,
+        shape ``(V, d)``.
+    edges :
+        Array of directed edge pairs, shape ``(E, 2)``.
+
+    Returns
+    -------
+    :
+        Unweighted sparse adjacency matrix of shape ``(V, V)``.
     """
     # edges = edges[edges[:, 0] != edges[:, 1]]  # remove self-loops
     row_ind = edges[:, 0].astype(np.intc)
@@ -39,6 +51,30 @@ def to_adjacency(vertices: np.ndarray, edges: np.ndarray) -> csr_array:
 def label_propagation(
     adjacency: csr_array, labels: np.ndarray, alpha: float = 0.995
 ) -> np.ndarray:
+    """Propagate labels across a graph using a closed-form diffusion solution.
+
+    Solves the linear system
+    :math:`F = (1 - \\alpha)(I - \\alpha \\hat{L})^{-1} Y`
+    where :math:`\\hat{L}` is the symmetric normalised graph Laplacian and
+    :math:`Y` contains the initial label scores.
+
+    Parameters
+    ----------
+    adjacency :
+        Sparse adjacency matrix of the graph, shape ``(V, V)``.
+    labels :
+        Initial label score array of shape ``(V,)`` or ``(V, K)`` for
+        ``K`` label classes.  Use 0 for unlabelled vertices.
+    alpha :
+        Damping factor in ``[0, 1)``.  Values close to 1 allow labels to
+        diffuse far from their source; values close to 0 keep label scores
+        near the initialisation.
+
+    Returns
+    -------
+    :
+        Smoothed label score array with the same shape as ``labels``.
+    """
     # run label propagation
     laplacian = to_laplacian(adjacency)
     identity = eye_array(laplacian.shape[0])
