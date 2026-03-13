@@ -56,6 +56,7 @@ markdown_extensions:
       baselevel: 1
       permalink: true
   - meta
+  - mkdocs-typer
 watch:
   - src/meshmash
   - docs

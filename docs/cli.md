@@ -1,21 +1,9 @@
 ---
-title: CLI
+title: CLI Reference
 ---
 
-`meshmash` provides a command-line interface for common tasks.
-
-## hks
-
-Compute condensed Heat Kernel Signature features on a mesh file.
-
-::: meshmash.cli.hks.hks
-    options:
-      show_root_heading: false
-
-## datasets
-
-Fetch and cache sample datasets.
-
-::: meshmash.cli.datasets.datasets
-    options:
-      show_root_heading: false
+::: mkdocs-typer
+    :module: meshmash.cli
+    :command: app
+    :depth: 0
+    :prog_name: meshmash

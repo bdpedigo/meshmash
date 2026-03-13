@@ -43,6 +43,7 @@ docs = [
     "mkdocs-material",
     "mkdocs-material-extensions",
     "mkdocs-section-index",
+    "mkdocs-typer>=0.0.3",
     "mkdocstrings[crystal,python]",
     "mknotebooks",
     "pymdown-extensions",
