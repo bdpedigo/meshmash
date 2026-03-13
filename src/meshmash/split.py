@@ -85,7 +85,7 @@ def bisect_adjacency(
 ) -> tuple[tuple[csr_array, csr_array], tuple[np.ndarray, np.ndarray]]:
     """Bisect a mesh graph into two parts using the graph-Laplacian Fiedler vector.
 
-    Calls :func:`graph_laplacian_split` and retries if the result is
+    Calls [graph_laplacian_split][meshmash.split.graph_laplacian_split] and retries if the result is
     degenerate (one empty partition or disconnected nodes).  Uses
     recursion up to ``n_retries`` times.
 
@@ -159,8 +159,8 @@ def fit_mesh_split(
     ----------
     mesh :
         Input mesh, adjacency matrix, or vertex array accepted by
-        :func:`~meshmash.types.interpret_mesh` /
-        :func:`~meshmash.utils.mesh_to_adjacency`.
+        [interpret_mesh][meshmash.types.interpret_mesh] /
+        [mesh_to_adjacency][meshmash.utils.mesh_to_adjacency].
     max_vertex_threshold :
         Stop bisecting a chunk once it contains at most this many vertices.
     min_vertex_threshold :
@@ -283,23 +283,23 @@ def bisect_laplacian(
     """Bisect a mesh into two parts using the cotangent-Laplacian Fiedler vector.
 
     Computes the second eigenvector of the generalised eigenproblem
-    ``L v = λ M v`` via :func:`~meshmash.decompose.decompose_laplacian`
+    ``L v = λ M v`` via [decompose_laplacian][meshmash.decompose.decompose_laplacian]
     and partitions vertices by its sign.
 
     Parameters
     ----------
     L :
         Cotangent Laplacian matrix of shape ``(V, V)`` as returned by
-        :func:`~meshmash.laplacian.cotangent_laplacian`.
+        [cotangent_laplacian][meshmash.laplacian.cotangent_laplacian].
     M :
         Diagonal mass matrix of shape ``(V, V)`` as returned by
-        :func:`~meshmash.laplacian.cotangent_laplacian`.
+        [cotangent_laplacian][meshmash.laplacian.cotangent_laplacian].
 
     Returns
     -------
     sub_laps :
         Pair of ``(L_sub, M_sub)`` tuples for each partition, where
-        ``M_sub`` is a :class:`scipy.sparse.diags_array` of the diagonal
+        ``M_sub`` is a [diags_array][scipy.sparse.diags_array] of the diagonal
         mass entries for that partition.
     submesh_indices :
         Pair of index arrays ``(indices1, indices2)`` mapping each
@@ -345,7 +345,7 @@ def fit_mesh_split_lap(
 ) -> np.ndarray:
     """Partition a mesh into chunks using recursive cotangent-Laplacian bisection.
 
-    Like :func:`fit_mesh_split` but uses the Fiedler vector of the
+    Like [fit_mesh_split][meshmash.split.fit_mesh_split] but uses the Fiedler vector of the
     cotangent Laplacian (instead of the graph Laplacian) for each
     bisection step, which can produce more geometrically uniform
     partitions on irregular meshes.
@@ -353,7 +353,7 @@ def fit_mesh_split_lap(
     Parameters
     ----------
     mesh :
-        Input mesh accepted by :func:`~meshmash.types.interpret_mesh`.
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
     max_vertex_threshold :
         Stop bisecting a chunk once it contains at most this many vertices.
     min_vertex_threshold :
@@ -363,10 +363,10 @@ def fit_mesh_split_lap(
         Maximum number of bisection steps before the algorithm terminates.
     robust :
         If ``True``, use the robust cotangent Laplacian variant; passed
-        to :func:`~meshmash.laplacian.cotangent_laplacian`.
+        to [cotangent_laplacian][meshmash.laplacian.cotangent_laplacian].
     mollify_factor :
         Mollification factor passed to
-        :func:`~meshmash.laplacian.cotangent_laplacian`.
+        [cotangent_laplacian][meshmash.laplacian.cotangent_laplacian].
     verbose :
         If truthy, print queue information each round.
 
@@ -461,10 +461,10 @@ def apply_mesh_split(mesh: Mesh, split_mapping: np.ndarray) -> list[Mesh]:
     Parameters
     ----------
     mesh :
-        Input mesh accepted by :func:`~meshmash.types.interpret_mesh`.
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
     split_mapping :
         Per-vertex integer label array of length ``V`` as produced by
-        :func:`fit_mesh_split`.  Vertices with label ``-1`` are excluded.
+        [fit_mesh_split][meshmash.split.fit_mesh_split].  Vertices with label ``-1`` are excluded.
 
     Returns
     -------
@@ -501,7 +501,7 @@ def get_submesh_borders(submesh: Mesh) -> np.ndarray:
     ----------
     submesh :
         A manifold triangular mesh accepted by
-        :func:`~meshmash.utils.mesh_to_poly`.
+        [mesh_to_poly][meshmash.utils.mesh_to_poly].
 
     Returns
     -------
@@ -530,22 +530,22 @@ def fit_overlapping_mesh_split(
 ) -> list[np.ndarray]:
     """Split a mesh and grow each chunk geodesically to create overlapping regions.
 
-    First calls :func:`fit_mesh_split` to partition the mesh, then expands
+    First calls [fit_mesh_split][meshmash.split.fit_mesh_split] to partition the mesh, then expands
     each chunk by including all vertices reachable within ``overlap_distance``
     along mesh edges (using shortest-path distances).
 
     Parameters
     ----------
     mesh :
-        Input mesh accepted by :func:`~meshmash.types.interpret_mesh`.
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
     overlap_distance :
         Maximum geodesic distance from the core chunk within which
         additional vertices are included in the overlap region.
     vertex_threshold :
         Maximum number of vertices per non-overlapping core chunk passed
-        to :func:`fit_mesh_split`.
+        to [fit_mesh_split][meshmash.split.fit_mesh_split].
     max_rounds :
-        Maximum bisection rounds; see :func:`fit_mesh_split`.
+        Maximum bisection rounds; see [fit_mesh_split][meshmash.split.fit_mesh_split].
 
     Returns
     -------
@@ -603,23 +603,23 @@ class MeshStitcher:
 
     Coordinates the full split-compute-stitch workflow:
 
-    1. Call :meth:`split_mesh` to partition the mesh into overlapping
+    1. Call [split_mesh][meshmash.split.MeshStitcher.split_mesh] to partition the mesh into overlapping
        submeshes.
-    2. Call :meth:`apply` (or :meth:`apply_on_features` /
-       :meth:`subset_apply`) to run a function on each submesh in
+    2. Call [apply][meshmash.split.MeshStitcher.apply] (or [apply_on_features][meshmash.split.MeshStitcher.apply_on_features] /
+       [subset_apply][meshmash.split.MeshStitcher.subset_apply]) to run a function on each submesh in
        parallel.
     3. Results are stitched back to the full mesh using
-       :meth:`stitch_features`.
+       [stitch_features][meshmash.split.MeshStitcher.stitch_features].
 
     Parameters
     ----------
     mesh :
-        Input mesh accepted by :func:`~meshmash.types.interpret_mesh`.
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
     verbose :
         Verbosity level.  ``0`` / ``False`` is silent; ``>=1`` prints
         progress; ``>=2`` prints extra diagnostics.
     n_jobs :
-        Number of parallel workers for :class:`joblib.Parallel`.  ``-1``
+        Number of parallel workers for [Parallel][joblib.Parallel].  ``-1``
         uses all available CPU cores.
     """
 
@@ -641,19 +641,19 @@ class MeshStitcher:
     ) -> list[Mesh]:
         """Partition the mesh and build overlapping submesh chunks.
 
-        Calls :func:`fit_mesh_split` to produce non-overlapping core
+        Calls [fit_mesh_split][meshmash.split.fit_mesh_split] to produce non-overlapping core
         chunks, then expands each chunk by including all vertices
         reachable within ``overlap_distance`` along mesh edges.  The
         resulting submeshes, their overlap vertex indices, and the
         per-vertex submesh mapping are stored on ``self`` for use by
-        :meth:`apply`, :meth:`apply_on_features`, and
-        :meth:`stitch_features`.
+        [apply][meshmash.split.MeshStitcher.apply], [apply_on_features][meshmash.split.MeshStitcher.apply_on_features], and
+        [stitch_features][meshmash.split.MeshStitcher.stitch_features].
 
         Parameters
         ----------
         max_vertex_threshold :
             Maximum vertices per non-overlapping core chunk; passed to
-            :func:`fit_mesh_split`.
+            [fit_mesh_split][meshmash.split.fit_mesh_split].
         min_vertex_threshold :
             Minimum connected-component size; smaller components are
             discarded.
@@ -661,7 +661,7 @@ class MeshStitcher:
             Maximum geodesic edge distance used to expand each core chunk
             into its overlapping neighbourhood.
         max_rounds :
-            Maximum bisection rounds; passed to :func:`fit_mesh_split`.
+            Maximum bisection rounds; passed to [fit_mesh_split][meshmash.split.fit_mesh_split].
         max_overlap_neighbors :
             If set, limits each chunk's overlap to at most this many
             additional vertices (ranked by distance).  ``None`` keeps
@@ -855,10 +855,10 @@ class MeshStitcher:
         *args :
             Positional arguments forwarded to ``func`` after ``submesh``.
         fill_value :
-            Fill value for uncomputed vertices; see :meth:`stitch_features`.
+            Fill value for uncomputed vertices; see [stitch_features][meshmash.split.MeshStitcher.stitch_features].
         stitch :
             If ``True`` (default), stitch results into a full-mesh array
-            via :meth:`stitch_features`.  If ``False``, return the raw
+            via [stitch_features][meshmash.split.MeshStitcher.stitch_features].  If ``False``, return the raw
             list of per-submesh results.
         **kwargs :
             Keyword arguments forwarded to ``func``.
@@ -988,7 +988,7 @@ class MeshStitcher:
     ) -> np.ndarray:
         """Apply a function that takes both a submesh and a feature slice.
 
-        Like :meth:`apply`, but also passes the slice of ``X`` corresponding
+        Like [apply][meshmash.split.MeshStitcher.apply], but also passes the slice of ``X`` corresponding
         to each submesh as the second argument to ``func``.  The expected
         signature is ``func(submesh, submesh_features, *args, **kwargs)``.
 

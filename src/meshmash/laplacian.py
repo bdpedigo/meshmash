@@ -110,13 +110,13 @@ def cotangent_laplacian(
         Input mesh.
     robust :
         If ``True``, use the robust Laplacian from
-        :func:`robust_laplacian.mesh_laplacian` (requires the
+        ``robust_laplacian.mesh_laplacian`` (requires the
         ``robust-laplacian`` package).  This handles degenerate geometry
         such as zero-area faces and near-duplicate vertices more reliably
         than the standard cotangent formula.
     mollify_factor :
         Mollification parameter passed to
-        :func:`robust_laplacian.mesh_laplacian`.  Only used when
+        ``robust_laplacian.mesh_laplacian``.  Only used when
         ``robust=True``.
 
     Returns
@@ -164,7 +164,7 @@ def compute_vertex_areas(
 ) -> np.ndarray:
     """Compute per-vertex areas for a triangle mesh.
 
-    A thin wrapper around :func:`cotangent_laplacian` that returns only
+    A thin wrapper around [cotangent_laplacian][meshmash.laplacian.cotangent_laplacian] that returns only
     the diagonal of the lumped-area matrix ``M``.
 
     Parameters
@@ -175,7 +175,7 @@ def compute_vertex_areas(
         If ``True``, use the robust Laplacian to compute vertex areas.
     mollify_factor :
         Mollification parameter forwarded to
-        :func:`cotangent_laplacian` when ``robust=True``.
+        [cotangent_laplacian][meshmash.laplacian.cotangent_laplacian] when ``robust=True``.
 
     Returns
     -------

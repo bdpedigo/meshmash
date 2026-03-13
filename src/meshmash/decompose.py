@@ -27,7 +27,7 @@ def decompose_laplacian(
 
     Computes the ``n_components`` smallest-magnitude eigenpairs of
     :math:`L \\phi = \\lambda M \\phi` using ARPACK shift-invert mode.
-    For small matrices the dense solver :func:`scipy.linalg.eigh` is used
+    For small matrices the dense solver [eigh][scipy.linalg.eigh] is used
     instead.
 
     Parameters
@@ -46,12 +46,12 @@ def decompose_laplacian(
         Shift applied in shift-invert mode.  A small negative value
         ensures the solver targets the smallest non-negative eigenvalues.
     tol :
-        Convergence tolerance passed to :func:`scipy.sparse.linalg.eigsh`.
+        Convergence tolerance passed to [eigsh][scipy.sparse.linalg.eigsh].
     ncv :
         Number of Lanczos vectors.  ``None`` lets ARPACK choose.
     prefactor :
         Pre-factorisation strategy.  Currently only ``'lu'`` (sparse LU
-        via :func:`scipy.sparse.linalg.splu`) is supported.
+        via [splu][scipy.sparse.linalg.splu]) is supported.
 
     Returns
     -------
@@ -102,28 +102,28 @@ def decompose_mesh(
     """Compute the Laplacian eigendecomposition of a mesh.
 
     Builds the cotangent Laplacian and mass matrix with
-    :func:`~meshmash.laplacian.cotangent_laplacian`, then delegates to
-    :func:`decompose_laplacian`.
+    [cotangent_laplacian][meshmash.laplacian.cotangent_laplacian], then delegates to
+    [decompose_laplacian][meshmash.decompose.decompose_laplacian].
 
     Parameters
     ----------
     mesh :
-        Input mesh accepted by :func:`~meshmash.types.interpret_mesh`.
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
     n_components :
         Number of smallest eigenpairs to compute.
     op_inv :
-        Pre-factored inverse operator; see :func:`decompose_laplacian`.
+        Pre-factored inverse operator; see [decompose_laplacian][meshmash.decompose.decompose_laplacian].
     sigma :
         Shift for ARPACK shift-invert mode.
     tol :
         Convergence tolerance.
     robust :
         If ``True``, use the robust Laplacian (see
-        :func:`~meshmash.laplacian.cotangent_laplacian`).
+        [cotangent_laplacian][meshmash.laplacian.cotangent_laplacian]).
     mollify_factor :
         Mollification factor for the robust Laplacian.
     prefactor :
-        Pre-factorisation strategy; see :func:`decompose_laplacian`.
+        Pre-factorisation strategy; see [decompose_laplacian][meshmash.decompose.decompose_laplacian].
 
     Returns
     -------
@@ -159,7 +159,7 @@ def decompose_laplacian_by_bands(
     meshes), this routine incrementally solves bands of ``band_size``
     eigenpairs, advancing the ARPACK shift to stay near the frontier of
     already-computed eigenvalues.  The result is equivalent to calling
-    :func:`decompose_laplacian` with a sufficiently large ``n_components``
+    [decompose_laplacian][meshmash.decompose.decompose_laplacian] with a sufficiently large ``n_components``
     but uses less memory and is faster in practice.
 
     Parameters
@@ -274,7 +274,7 @@ def get_hks_filter(
     n_scales: int = 32,
     dtype: np.dtype = np.float64,
 ) -> Callable[[np.ndarray], np.ndarray]:
-    """Build a heat-kernel spectral filter for use with :func:`spectral_geometry_filter`.
+    """Build a heat-kernel spectral filter for use with [spectral_geometry_filter][meshmash.decompose.spectral_geometry_filter].
 
     Returns a callable that converts an array of Laplacian eigenvalues into
     a 2-D array of HKS filter coefficients.
@@ -306,7 +306,9 @@ def get_hks_filter(
     return hks_filter
 
 
-def construct_bspline_basis(e_min: float, e_max: float, n_components: int) -> list[BSpline]:
+def construct_bspline_basis(
+    e_min: float, e_max: float, n_components: int
+) -> list[BSpline]:
     """Construct a set of B-spline basis functions spanning an eigenvalue range.
 
     Parameters
@@ -322,7 +324,7 @@ def construct_bspline_basis(e_min: float, e_max: float, n_components: int) -> li
     Returns
     -------
     :
-        List of ``n_components`` cubic :class:`scipy.interpolate.BSpline`
+        List of ``n_components`` cubic [BSpline][scipy.interpolate.BSpline]
         basis elements, each non-zero over a compact sub-interval of
         ``[e_min, e_max]``.
     """
@@ -349,10 +351,10 @@ def construct_bspline_basis(e_min: float, e_max: float, n_components: int) -> li
 def construct_bspline_filter(
     e_min: float, e_max: float, n_components: int
 ) -> Callable[[np.ndarray], np.ndarray]:
-    """Build a B-spline spectral filter for use with :func:`spectral_geometry_filter`.
+    """Build a B-spline spectral filter for use with [spectral_geometry_filter][meshmash.decompose.spectral_geometry_filter].
 
     Creates a bank of ``n_components`` cubic B-spline basis functions
-    covering ``[e_min, e_max]`` via :func:`construct_bspline_basis` and
+    covering ``[e_min, e_max]`` via [construct_bspline_basis][meshmash.decompose.construct_bspline_basis] and
     wraps them in a callable that converts eigenvalues to filter
     coefficients.
 
@@ -627,7 +629,7 @@ def compute_hks(
     Parameters
     ----------
     mesh :
-        Input mesh accepted by :func:`~meshmash.types.interpret_mesh`.
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
     max_eigenvalue :
         Maximum Laplacian eigenvalue to include in the computation.
         Larger values capture finer geometric detail at increased cost.
@@ -641,7 +643,7 @@ def compute_hks(
         feature per vertex.
     band_size :
         Number of eigenpairs per ARPACK band; see
-        :func:`spectral_geometry_filter`.
+        [spectral_geometry_filter][meshmash.decompose.spectral_geometry_filter].
     truncate_extra :
         Whether to discard eigenpairs that overshoot ``max_eigenvalue``.
     drop_first :
@@ -650,7 +652,7 @@ def compute_hks(
         and is typically uninformative.
     robust :
         If ``True``, use the robust Laplacian (see
-        :func:`~meshmash.laplacian.cotangent_laplacian`).
+        [cotangent_laplacian][meshmash.laplacian.cotangent_laplacian]).
     mollify_factor :
         Mollification factor for the robust Laplacian.
     decomposition_dtype :
@@ -661,7 +663,7 @@ def compute_hks(
     n_neighbors :
         Number of neighbours used when ``point_laplacian=True``.
     verbose :
-        Verbosity level passed to :func:`spectral_geometry_filter`.
+        Verbosity level passed to [spectral_geometry_filter][meshmash.decompose.spectral_geometry_filter].
 
     Returns
     -------
@@ -713,7 +715,7 @@ def compute_geometry_vectors(
 ) -> np.ndarray:
     """Compute spectral geometry descriptors using a B-spline spectral filter.
 
-    Similar in spirit to :func:`compute_hks`, but instead of heat-kernel
+    Similar in spirit to [compute_hks][meshmash.decompose.compute_hks], but instead of heat-kernel
     exponentials the spectrum is partitioned by a bank of cubic B-spline
     basis functions.  Each basis function acts as a band-pass filter,
     yielding one feature per vertex per band.
@@ -721,7 +723,7 @@ def compute_geometry_vectors(
     Parameters
     ----------
     mesh :
-        Input mesh accepted by :func:`~meshmash.types.interpret_mesh`.
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
     max_eigenvalue :
         Maximum Laplacian eigenvalue to include.  Determines the upper
         boundary of the B-spline domain.
@@ -730,20 +732,20 @@ def compute_geometry_vectors(
         per vertex).
     band_size :
         Number of eigenpairs per ARPACK band; see
-        :func:`spectral_geometry_filter`.
+        [spectral_geometry_filter][meshmash.decompose.spectral_geometry_filter].
     truncate_extra :
         Whether to discard eigenpairs that overshoot ``max_eigenvalue``.
     drop_first :
         If ``True``, drop the first (near-zero) eigenpair.
     robust :
         If ``True``, use the robust Laplacian (see
-        :func:`~meshmash.laplacian.cotangent_laplacian`).
+        [cotangent_laplacian][meshmash.laplacian.cotangent_laplacian]).
     mollify_factor :
         Mollification factor for the robust Laplacian.
     decomposition_dtype :
         Floating-point dtype for the eigendecomposition.
     verbose :
-        Verbosity level passed to :func:`spectral_geometry_filter`.
+        Verbosity level passed to [spectral_geometry_filter][meshmash.decompose.spectral_geometry_filter].
 
     Returns
     -------

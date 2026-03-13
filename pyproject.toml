@@ -1,6 +1,7 @@
 [project]
 dependencies = [
     "caveclient[cv]>=8.0.1",
+    "click==8.2.1",
     "fast-simplification>=0.1.7",
     "fastremap>=1.16.1",
     "gpytoolbox>=0.3.3",

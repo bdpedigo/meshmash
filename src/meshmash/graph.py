@@ -18,7 +18,7 @@ def compute_edge_widths(mesh: Mesh, mollify_factor: float = 0.0) -> csr_array:
     Parameters
     ----------
     mesh :
-        Input mesh accepted by :func:`~meshmash.utils.mesh_to_poly`.
+        Input mesh accepted by [mesh_to_poly][meshmash.utils.mesh_to_poly].
     mollify_factor :
         Small additive offset applied to each edge length before computing
         face radii.  Prevents division by zero on degenerate faces.
@@ -79,7 +79,7 @@ def condense_mesh_to_graph(
     Parameters
     ----------
     mesh :
-        Input mesh accepted by :func:`~meshmash.utils.mesh_to_poly`.
+        Input mesh accepted by [mesh_to_poly][meshmash.utils.mesh_to_poly].
     labels :
         Per-vertex integer label array of length ``V``.  Vertices with
         label ``-1`` are excluded.

@@ -13,7 +13,7 @@ HEADER_FILE_NAME = "header.txt"
 def interpret_path(
     path: Union[str, Path], **kwargs
 ) -> tuple[CloudFiles, Optional[str]]:
-    """Parse a path into a :class:`cloudfiles.CloudFiles` handle and filename.
+    """Parse a path into a ``cloudfiles.CloudFiles`` handle and filename.
 
     Supports local paths as well as cloud storage URIs such as ``gs://``
     and ``file://``.
@@ -26,12 +26,12 @@ def interpret_path(
         ``gs:/`` prefixes are normalised to ``gs://``.
     **kwargs :
         Additional keyword arguments forwarded to
-        :class:`cloudfiles.CloudFiles`.
+        ``cloudfiles.CloudFiles``.
 
     Returns
     -------
     cf :
-        :class:`cloudfiles.CloudFiles` instance pointing at the parent
+        ``cloudfiles.CloudFiles`` instance pointing at the parent
         directory.
     file_name :
         The base filename, or ``None`` if ``path`` is a directory.
@@ -103,7 +103,7 @@ def save_condensed_features(
     ----------
     path :
         Destination file path (local or ``gs://`` URI).  Parsed by
-        :func:`interpret_path`.
+        [interpret_path][meshmash.io.interpret_path].
     features :
         DataFrame of per-label features.  Rows should be indexed
         ``-1, 0, 1, …``.
@@ -156,7 +156,7 @@ def save_condensed_features(
 
 def read_condensed_features(path: Union[str, Path]) -> tuple[pd.DataFrame, np.ndarray]:
     """Load per-label features and per-vertex labels from a file written by
-    :func:`save_condensed_features`.
+    [save_condensed_features][meshmash.io.save_condensed_features].
 
     Parameters
     ----------
@@ -233,7 +233,7 @@ def save_condensed_edges(
 
 
 def read_condensed_edges(path: Union[str, Path]) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Load an edge table from a file written by :func:`save_condensed_edges`.
+    """Load an edge table from a file written by [save_condensed_edges][meshmash.io.save_condensed_edges].
 
     Parameters
     ----------
@@ -315,7 +315,7 @@ def save_condensed_graph(
 
 
 def read_condensed_graph(path: Union[str, Path]) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Load node and edge tables from a file written by :func:`save_condensed_graph`.
+    """Load node and edge tables from a file written by [save_condensed_graph][meshmash.io.save_condensed_graph].
 
     Parameters
     ----------
@@ -368,7 +368,7 @@ def save_id_to_mesh_map(path: Union[str, Path], id_to_mesh_map: np.ndarray) -> N
 
 
 def read_id_to_mesh_map(path: Union[str, Path]) -> np.ndarray:
-    """Load a mapping array from a file written by :func:`save_id_to_mesh_map`.
+    """Load a mapping array from a file written by [save_id_to_mesh_map][meshmash.io.save_id_to_mesh_map].
 
     Parameters
     ----------
@@ -413,7 +413,7 @@ def save_array(path: Union[str, Path], array: np.ndarray) -> None:
 
 
 def read_array(path: Union[str, Path]) -> np.ndarray:
-    """Load a numpy array from a file written by :func:`save_array`.
+    """Load a numpy array from a file written by [save_array][meshmash.io.save_array].
 
     Parameters
     ----------

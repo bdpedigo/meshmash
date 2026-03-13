@@ -23,9 +23,9 @@ def multicut_ward(
     """Compute Ward cluster labels at multiple distance thresholds.
 
     Builds the Ward linkage tree once with
-    :func:`sklearn.cluster.ward_tree`, then cuts it at each threshold in
+    [ward_tree][sklearn.cluster.ward_tree], then cuts it at each threshold in
     ``distance_thresholds`` without rebuilding.  This is more efficient
-    than fitting a separate :class:`sklearn.cluster.AgglomerativeClustering`
+    than fitting a separate [AgglomerativeClustering][sklearn.cluster.AgglomerativeClustering]
     for each threshold.
 
     Parameters
@@ -35,7 +35,7 @@ def multicut_ward(
     connectivity :
         Optional sparse connectivity matrix of shape ``(N, N)``
         constraining which samples may be merged (passed to
-        :func:`sklearn.cluster.ward_tree`).
+        [ward_tree][sklearn.cluster.ward_tree]).
     distance_thresholds :
         List of linkage-distance thresholds at which to cut the tree.
         Each threshold yields one column in the output.
@@ -72,12 +72,12 @@ def agglomerate_mesh(mesh, features, distance_thresholds=None) -> np.ndarray:
     Parameters
     ----------
     mesh :
-        Input mesh accepted by :func:`~meshmash.types.interpret_mesh`.
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
     features :
         Per-vertex feature matrix of shape ``(V, F)``.
     distance_thresholds :
         Single threshold or list of thresholds passed to
-        :func:`multicut_ward`.  ``None`` assigns each vertex a unique
+        [multicut_ward][meshmash.agglomerate.multicut_ward].  ``None`` assigns each vertex a unique
         label (i.e. no clustering).
 
     Returns
@@ -196,7 +196,7 @@ def fix_split_labels_and_features(
 ) -> tuple[np.ndarray, pd.DataFrame]:
     """Remap per-submesh labels to globally unique integers and align feature DataFrames.
 
-    Like :func:`fix_split_labels`, but also re-indexes the per-submesh
+    Like [fix_split_labels][meshmash.agglomerate.fix_split_labels], but also re-indexes the per-submesh
     feature DataFrames so that their row indices match the new global label
     integers and concatenates them into a single DataFrame.
 
@@ -264,20 +264,20 @@ def agglomerate_split_mesh(
 ) -> np.ndarray:
     """Apply Ward clustering across submeshes and return globally unique labels.
 
-    Applies :func:`agglomerate_mesh` to each submesh via
-    :meth:`~meshmash.split.MeshStitcher.apply_on_features`, then calls
-    :func:`fix_split_labels` to make the cluster labels globally unique
+    Applies [agglomerate_mesh][meshmash.agglomerate.agglomerate_mesh] to each submesh via
+    [MeshStitcher.apply_on_features][meshmash.split.MeshStitcher.apply_on_features], then calls
+    [fix_split_labels][meshmash.agglomerate.fix_split_labels] to make the cluster labels globally unique
     across all submeshes.
 
     Parameters
     ----------
     splitter :
-        A fitted :class:`~meshmash.split.MeshStitcher`.
+        A fitted [MeshStitcher][meshmash.split.MeshStitcher].
     features :
         Per-vertex feature matrix of shape ``(V, F)`` for the full mesh.
     distance_thresholds :
         Single threshold or list of thresholds passed to
-        :func:`multicut_ward`.
+        [multicut_ward][meshmash.agglomerate.multicut_ward].
 
     Returns
     -------
@@ -307,6 +307,8 @@ def agglomerate_split_mesh(
     return agg_labels
 
 
+# TODO there's a working but probably fragile ref to dataframegroupby here
+# i think pandas docs are messed up at time of writing
 def aggregate_features(
     features: Union[np.ndarray, pd.DataFrame],
     labels: Optional[np.ndarray] = None,
@@ -335,7 +337,7 @@ def aggregate_features(
         unweighted mean.
     func :
         Aggregation function name recognised by
-        :meth:`pandas.DataFrameGroupBy.agg` (e.g. ``"mean"``,
+        [DataFrameGroupBy.agg][pandas.api.typing.DataFrameGroupBy.agg] (e.g. ``"mean"``,
         ``"median"``).  Ignored when ``weights`` is provided.
 
     Returns
@@ -390,14 +392,14 @@ def aggregate_features(
 def blow_up_features(agg_features_df: pd.DataFrame, labels: np.ndarray) -> pd.DataFrame:
     """Expand per-label aggregated features back to per-vertex features.
 
-    Inverse of :func:`aggregate_features`.  Looks up each vertex's label
+    Inverse of [aggregate_features][meshmash.agglomerate.aggregate_features]. Looks up each vertex's label
     in ``agg_features_df`` to produce a per-vertex DataFrame.
 
     Parameters
     ----------
     agg_features_df :
         Per-label feature DataFrame indexed by label integer, as returned
-        by :func:`aggregate_features`.
+        by [aggregate_features][meshmash.agglomerate.aggregate_features].
     labels :
         Per-vertex label array of length ``V``.
 

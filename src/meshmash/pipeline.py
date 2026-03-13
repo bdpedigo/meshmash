@@ -63,7 +63,7 @@ def chunked_hks_pipeline(
     """Compute HKS features and aggregate them across overlapping mesh chunks.
 
     .. deprecated::
-        Prefer :func:`condensed_hks_pipeline`, which is more memory-efficient
+        Prefer [condensed_hks_pipeline][meshmash.pipeline.condensed_hks_pipeline], which is more memory-efficient
         because it aggregates features within each chunk before stitching.
         This function performs aggregation *after* all chunk features are
         stitched together, which requires holding the full-mesh feature
@@ -73,12 +73,12 @@ def chunked_hks_pipeline(
 
     1. Optional mesh simplification via ``fast-simplification``.
     2. Spectral bisection of the mesh into overlapping chunks
-       (:class:`~meshmash.split.MeshStitcher`).
-    3. Computation of :func:`~meshmash.decompose.compute_hks` per chunk.
+       ([MeshStitcher][meshmash.split.MeshStitcher]).
+    3. Computation of [compute_hks][meshmash.decompose.compute_hks] per chunk.
     4. Connectivity-constrained Ward agglomeration of vertices into local
-       domains (:func:`~meshmash.agglomerate.agglomerate_split_mesh`).
+       domains ([agglomerate_split_mesh][meshmash.agglomerate.agglomerate_split_mesh]).
     5. Area-weighted aggregation of HKS features to each domain
-       (:func:`~meshmash.agglomerate.aggregate_features`).
+       ([aggregate_features][meshmash.agglomerate.aggregate_features]).
 
     Parameters
     ----------
@@ -128,7 +128,7 @@ def chunked_hks_pipeline(
         Floating-point dtype for the eigendecomposition.
     compute_hks_kwargs :
         Extra keyword arguments forwarded to
-        :func:`~meshmash.decompose.compute_hks`.
+        [compute_hks][meshmash.decompose.compute_hks].
     nuc_point :
         Coordinates of the nucleus/reference point.  If provided, a
         ``distance_to_nucleus`` column is added to the condensed node table.
@@ -139,7 +139,7 @@ def chunked_hks_pipeline(
         If ``True``, append condensed node-table columns (centroid, area,
         etc.) to the aggregated feature DataFrame.
     n_jobs :
-        Number of parallel workers for :class:`joblib.Parallel`.  ``-1``
+        Number of parallel workers for [Parallel][joblib.Parallel].  ``-1``
         uses all available cores.
     verbose :
         Verbosity level.
@@ -373,13 +373,13 @@ def compute_condensed_hks(
     """Compute HKS features and aggregate them on a single (unsplit) mesh.
 
     This is a lightweight helper used internally by
-    :func:`condensed_hks_pipeline` to process individual submeshes.  For
+    [condensed_hks_pipeline][meshmash.pipeline.condensed_hks_pipeline] to process individual submeshes.  For
     large meshes, use the pipeline functions instead.
 
     Parameters
     ----------
     mesh :
-        Input mesh accepted by :func:`~meshmash.types.interpret_mesh`.
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
     n_components :
         Number of HKS timescales.
     t_min :
@@ -400,7 +400,7 @@ def compute_condensed_hks(
         Floating-point dtype for the eigendecomposition.
     compute_hks_kwargs :
         Extra keyword arguments forwarded to
-        :func:`~meshmash.decompose.compute_hks`.
+        [compute_hks][meshmash.decompose.compute_hks].
     distance_threshold :
         Ward linkage-distance threshold for agglomeration.
 
@@ -473,7 +473,7 @@ def condensed_hks_pipeline(
     """Compute HKS features and produce a condensed node-edge graph of a mesh.
 
     This is the primary entry point for the HKS pipeline.  It is more
-    memory-efficient than :func:`chunked_hks_pipeline` because features are
+    memory-efficient than [chunked_hks_pipeline][meshmash.pipeline.chunked_hks_pipeline] because features are
     aggregated *within* each submesh chunk before the results are combined,
     rather than stitching the full per-vertex feature matrix first.
 
@@ -520,7 +520,7 @@ def condensed_hks_pipeline(
         Floating-point dtype for the eigendecomposition.
     compute_hks_kwargs :
         Extra keyword arguments forwarded to
-        :func:`~meshmash.decompose.compute_hks`.
+        [compute_hks][meshmash.decompose.compute_hks].
     nuc_point :
         Coordinates of the nucleus/reference point.  If provided, a
         ``distance_to_nucleus`` column is added to the condensed node table.
@@ -531,7 +531,7 @@ def condensed_hks_pipeline(
         If ``True``, append condensed node-table columns (centroid, area,
         etc.) to the aggregated feature DataFrame.
     n_jobs :
-        Number of parallel workers for :class:`joblib.Parallel`.  ``-1``
+        Number of parallel workers for [Parallel][joblib.Parallel].  ``-1``
         uses all available cores.
     verbose :
         Verbosity level.
@@ -544,7 +544,7 @@ def condensed_hks_pipeline(
         Array of length ``V_original`` mapping each original vertex to its
         index in the simplified mesh.  ``-1`` for discarded vertices.
     stitcher :
-        Fitted :class:`~meshmash.split.MeshStitcher` for the simplified
+        Fitted [MeshStitcher][meshmash.split.MeshStitcher] for the simplified
         mesh.
     simple_labels :
         Per-vertex domain label array for the simplified mesh.
@@ -555,7 +555,7 @@ def condensed_hks_pipeline(
         auxiliary features), indexed by domain label.
     condensed_nodes :
         Node table of the condensed mesh graph; see
-        :func:`~meshmash.graph.condense_mesh_to_graph`.
+        [condense_mesh_to_graph][meshmash.graph.condense_mesh_to_graph].
     condensed_edges :
         Edge table of the condensed mesh graph.
     timing_info :
@@ -567,16 +567,16 @@ def condensed_hks_pipeline(
 
     1. Mesh simplification via ``fast-simplification``.
     2. Spectral bisection into overlapping chunks
-       (:class:`~meshmash.split.MeshStitcher`).
-    3. Per-chunk: :func:`~meshmash.decompose.compute_hks`, Ward
+       ([MeshStitcher][meshmash.split.MeshStitcher]).
+    3. Per-chunk: [compute_hks][meshmash.decompose.compute_hks], Ward
        agglomeration, and area-weighted aggregation
-       (:func:`compute_condensed_hks`).  Aggregating *before* stitching
+       ([compute_condensed_hks][meshmash.pipeline.compute_condensed_hks]).  Aggregating *before* stitching
        keeps memory use proportional to the chunk size rather than the
        full mesh.
     4. Global label reconciliation across chunks
-       (:func:`~meshmash.agglomerate.fix_split_labels`).
+       ([fix_split_labels][meshmash.agglomerate.fix_split_labels]).
     5. Assembly of the condensed node-edge graph
-       (:func:`~meshmash.graph.condense_mesh_to_graph`).
+       ([condense_mesh_to_graph][meshmash.graph.condense_mesh_to_graph]).
     """
     timing_info = {}
     starttime = time.time()

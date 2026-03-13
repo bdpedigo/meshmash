@@ -37,7 +37,7 @@ def component_morphometry_pipeline(
     Parameters
     ----------
     mesh :
-        Input mesh accepted by :func:`~meshmash.types.interpret_mesh`.
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
         Vertex coordinates are expected to be in nanometres.
     labels :
         Per-vertex integer label array of length ``V``.

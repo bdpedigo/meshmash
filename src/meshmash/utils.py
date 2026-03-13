@@ -11,19 +11,19 @@ from .types import ArrayLike, Mesh, interpret_mesh
 
 
 def mesh_to_poly(mesh: Mesh) -> pv.PolyData:
-    """Convert a mesh to a :class:`pyvista.PolyData` object.
+    """Convert a mesh to a [PolyData][pyvista.PolyData] object.
 
     Parameters
     ----------
     mesh :
         Input mesh.  Accepts a ``(vertices, faces)`` tuple, a
-        :class:`pyvista.PolyData`, or any object with ``vertices`` and
+        [PolyData][pyvista.PolyData], or any object with ``vertices`` and
         ``faces`` attributes.
 
     Returns
     -------
     :
-        Triangle mesh as a :class:`pyvista.PolyData`.
+        Triangle mesh as a [PolyData][pyvista.PolyData].
     """
     if isinstance(mesh, pv.PolyData):
         return mesh
@@ -43,7 +43,7 @@ def mesh_to_edges(mesh: Mesh) -> np.ndarray:
     Parameters
     ----------
     mesh :
-        Input mesh accepted by :func:`mesh_to_poly`.
+        Input mesh accepted by [mesh_to_poly][meshmash.utils.mesh_to_poly].
 
     Returns
     -------
@@ -66,7 +66,7 @@ def mesh_to_adjacency(mesh: Mesh) -> csr_array:
     Parameters
     ----------
     mesh :
-        Input mesh accepted by :func:`mesh_to_poly`.
+        Input mesh accepted by [mesh_to_poly][meshmash.utils.mesh_to_poly].
 
     Returns
     -------
@@ -97,12 +97,12 @@ def mesh_to_adjacency(mesh: Mesh) -> csr_array:
 
 
 def poly_to_mesh(poly: pv.PolyData) -> Mesh:
-    """Convert a :class:`pyvista.PolyData` to a ``(vertices, faces)`` tuple.
+    """Convert a [PolyData][pyvista.PolyData] to a ``(vertices, faces)`` tuple.
 
     Parameters
     ----------
     poly :
-        Triangle surface mesh as a :class:`pyvista.PolyData`.
+        Triangle surface mesh as a [PolyData][pyvista.PolyData].
 
     Returns
     -------
@@ -121,14 +121,14 @@ def fix_mesh(mesh: Mesh, **kwargs) -> Mesh:
 
     Attempts to close holes and remove self-intersections so that the
     result is a manifold surface.  Additional keyword arguments are
-    forwarded to :meth:`pymeshfix.MeshFix.repair`.
+    forwarded to [MeshFix.repair][pymeshfix.MeshFix.repair].
 
     Parameters
     ----------
     mesh :
-        Input mesh accepted by :func:`mesh_to_poly`.
+        Input mesh accepted by [mesh_to_poly][meshmash.utils.mesh_to_poly].
     **kwargs :
-        Keyword arguments forwarded to :meth:`pymeshfix.MeshFix.repair`.
+        Keyword arguments forwarded to [MeshFix.repair][pymeshfix.MeshFix.repair].
 
     Returns
     -------
@@ -177,7 +177,7 @@ def project_points_to_mesh(
     points :
         Query point coordinates, shape ``(N, 3)``.
     mesh :
-        Target mesh accepted by :func:`mesh_to_poly`.
+        Target mesh accepted by [mesh_to_poly][meshmash.utils.mesh_to_poly].
     distance_threshold :
         If provided, query points whose nearest vertex is farther than this
         distance are assigned an index of ``-1``.
@@ -222,7 +222,7 @@ def component_size_transform(
     Parameters
     ----------
     mesh :
-        Input mesh accepted by :func:`mesh_to_poly`.
+        Input mesh accepted by [mesh_to_poly][meshmash.utils.mesh_to_poly].
     indices :
         Subset of vertex indices to return sizes for.  If ``None``, sizes
         are returned for all vertices.
@@ -258,7 +258,7 @@ def get_label_components(mesh: Mesh, labels: ArrayLike) -> np.ndarray:
     Parameters
     ----------
     mesh :
-        Input mesh accepted by :func:`mesh_to_poly`.
+        Input mesh accepted by [mesh_to_poly][meshmash.utils.mesh_to_poly].
     labels :
         Per-vertex label array of length ``V``.
 
@@ -297,7 +297,7 @@ def subset_mesh_by_indices(mesh: Mesh, indices: np.ndarray) -> Mesh:
     Parameters
     ----------
     mesh :
-        Input mesh accepted by :func:`interpret_mesh`.
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
     indices :
         Vertex indices to keep, or a boolean mask of length ``V``.
 
@@ -327,14 +327,14 @@ def rough_subset_mesh_by_indices(
 ) -> tuple[Mesh, np.ndarray]:
     """Extract a submesh keeping faces where *any* vertex is in ``indices``.
 
-    Unlike :func:`subset_mesh_by_indices`, a face is retained whenever at
+    Unlike [subset_mesh_by_indices][meshmash.utils.subset_mesh_by_indices], a face is retained whenever at
     least one of its vertices is in ``indices``.  This can introduce
     additional vertices beyond those in ``indices``.
 
     Parameters
     ----------
     mesh :
-        Input mesh accepted by :func:`interpret_mesh`.
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
     indices :
         Seed vertex indices.
 
@@ -429,7 +429,7 @@ def edges_to_lines(edges: np.ndarray) -> np.ndarray:
     :mod:`pyvista` encodes lines as a flat array where each cell is
     prefixed by its vertex count.  This function prepends ``2`` to each
     edge so the result can be passed directly to
-    :class:`pyvista.PolyData`.
+    [PolyData][pyvista.PolyData].
 
     Parameters
     ----------
@@ -455,7 +455,7 @@ def combine_meshes(meshes: list[Mesh]) -> Mesh:
     Parameters
     ----------
     meshes :
-        List of meshes accepted by :func:`interpret_mesh`.
+        List of meshes accepted by [interpret_mesh][meshmash.types.interpret_mesh].
 
     Returns
     -------
@@ -629,7 +629,7 @@ def scale_mesh(mesh: Mesh, scale: float) -> Mesh:
     Parameters
     ----------
     mesh :
-        Input mesh accepted by :func:`interpret_mesh`.
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
     scale :
         Scalar factor to multiply all vertex coordinates by.
 
