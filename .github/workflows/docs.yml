@@ -41,7 +41,8 @@ jobs:
         uses: astral-sh/setup-uv@v7
         with:
           version: "0.10.9"
+      - name: Set up Python
+        run: uv python install
       - name: Install the project
         run: uv sync
-      - name: Build and push the documentation to GitHub Pages
-        run: uv run mkdocs gh-deploy --force
+      - run: uv run mkdocs gh-deploy --force
