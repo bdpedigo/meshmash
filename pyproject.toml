@@ -27,7 +27,7 @@ datasets = ["pooch>=1.8"]
 
 [dependency-groups]
 dev = [
-    # { include-group = 'docs' },
+    { include-group = 'docs' },
     { include-group = 'lint' },
     { include-group = 'test' },
 ]
