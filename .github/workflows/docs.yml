@@ -41,26 +41,7 @@ jobs:
         uses: astral-sh/setup-uv@v7
         with:
           version: "0.10.9"
-      - name: Set up Python
-        run: uv python install
       - name: Install the project
         run: uv sync
-      # - run: uv pip install mkdocs-material
-      # - run: echo "cache_id=$(date --utc '+%V')" >> $GITHUB_ENV
-      # - uses: actions/cache@v4
-      #   with:
-      #     key: mkdocs-material-${{ env.cache_id }}
-      #     path: .cache
-      #     restore-keys: |
-      #       mkdocs-material-
-      - run: uv run mkdocs gh-deploy --force
-      # - name: Build the project
-      #   run: mkdocs
-      # - name: Upload artifact
-      #   uses: actions/upload-pages-artifact@v3
-      #   with:
-      #     # Upload entire repository
-      #     path: "."
-      # - name: Deploy to GitHub Pages
-      #   id: deployment
-      #   uses: actions/deploy-pages@v4
+      - name: Build and push the documentation to GitHub Pages
+        run: uv run mkdocs gh-deploy --force
