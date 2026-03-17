@@ -174,7 +174,7 @@ wheels = [
 
 [[package]]
 name = "caveclient"
-version = "8.0.1"
+version = "7.11.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "attrs" },
@@ -189,9 +189,9 @@ dependencies = [
     { name = "requests" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b4/63/0ffc395040b9c4ea4f544e3a03350045fb595354db1506a8e19a6bc77806/caveclient-8.0.1.tar.gz", hash = "sha256:cca8ca3209de599248ea386f431565fb4192d88b84811a6880d131d2bd6c0181", size = 3297506 }
+sdist = { url = "https://files.pythonhosted.org/packages/99/f9/7291084eac665c4373a7edc8954fc13c18fd8ed3cc9827c49f6ca8ed698c/caveclient-7.11.1.tar.gz", hash = "sha256:1db285f675ea6e0f6fc5e6723fbe326dcd93977466bd74060571c511e5f5a09f", size = 3296462 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/65/a3/ba1b923dbd5a860682266bfacc3d3e57052d2cd9e799d5e8c29446cc9a65/caveclient-8.0.1-py3-none-any.whl", hash = "sha256:8282c0eca83b9c7c8a4516026d8e4c9175ba376532fea9a3df0f6407f8dd6bff", size = 91032 },
+    { url = "https://files.pythonhosted.org/packages/73/8f/f7b640028719a18fbcc609b998e7713266b695a20c6a30e5798e6bfbc35d/caveclient-7.11.1-py3-none-any.whl", hash = "sha256:5ad7ff115238b0c76e72b2dbdaa37ce316574faeeef9da09a4002611d2dc5c4c", size = 90650 },
 ]
 
 [package.optional-dependencies]
@@ -1254,6 +1254,7 @@ dependencies = [
     { name = "numpy" },
     { name = "pandas" },
     { name = "point-cloud-utils" },
+    { name = "pymeshlab" },
     { name = "pyvista" },
     { name = "robust-laplacian" },
     { name = "scikit-learn" },
@@ -1315,7 +1316,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "caveclient", extras = ["cv"], specifier = ">=8.0.1" },
+    { name = "caveclient", extras = ["cv"], specifier = ">=7.0.0,<8.0.0" },
     { name = "click", specifier = "==8.2.1" },
     { name = "fast-simplification", specifier = ">=0.1.7" },
     { name = "fastremap", specifier = ">=1.16.1" },
@@ -1325,9 +1326,10 @@ requires-dist = [
     { name = "pandas", specifier = ">=2.2.3" },
     { name = "point-cloud-utils", specifier = ">=0.34.0" },
     { name = "pooch", marker = "extra == 'datasets'", specifier = ">=1.8" },
+    { name = "pymeshlab", specifier = "==2023.12.post3" },
     { name = "pyvista", specifier = ">=0.44.1" },
     { name = "robust-laplacian", specifier = ">=1.0.0" },
-    { name = "scikit-learn", specifier = ">=1.8.0" },
+    { name = "scikit-learn", specifier = ">=1.6.1" },
     { name = "scipy", specifier = ">=1.15.0" },
     { name = "tqdm-joblib", specifier = ">=0.0.4" },
     { name = "typer", specifier = ">=0.12" },
@@ -2157,6 +2159,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/ba/63/06673d1eb6d8f83c0ea1f677d770e12565fb516928b4109c9e2055656a9e/pymdown_extensions-10.21.tar.gz", hash = "sha256:39f4a020f40773f6b2ff31d2cd2546c2c04d0a6498c31d9c688d2be07e1767d5", size = 853363 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/6f/2c/5b079febdc65e1c3fb2729bf958d18b45be7113828528e8a0b5850dd819a/pymdown_extensions-10.21-py3-none-any.whl", hash = "sha256:91b879f9f864d49794c2d9534372b10150e6141096c3908a455e45ca72ad9d3f", size = 268877 },
+]
+
+[[package]]
+name = "pymeshlab"
+version = "2023.12.post3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/28/5d/d2dd826bf8b5e5d1b36a06eefd138c3cd05144488390035f1e73903683bc/pymeshlab-2023.12.post3-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:01cc614be9d2c29300cd39ae3147f9b2c611db03425c4ec52c193f64d7871dc3", size = 70570362 },
+    { url = "https://files.pythonhosted.org/packages/70/1d/dc7aa2260278a04290ae78c9641906338d77370a8d8898b1efdbc1008b3e/pymeshlab-2023.12.post3-cp312-cp312-macosx_11_0_x86_64.whl", hash = "sha256:b2c8a90164f68f79170aabcddbe467d6392b217b482e68b3c7c35950beed335d", size = 49697158 },
+    { url = "https://files.pythonhosted.org/packages/51/11/40b9a8a318820eec9ff05a98c1b8678eedae6c97e8e7dccaba4ed538439f/pymeshlab-2023.12.post3-cp312-cp312-manylinux_2_31_x86_64.whl", hash = "sha256:f2bb4c25d4df434908677d77a66f61b1bed036f49656c8425c3a2496468c3167", size = 98741567 },
+    { url = "https://files.pythonhosted.org/packages/c5/52/dfa6096c620cf7d5ec2037dacbbd0787974d188f783c9d9dbcb9b7d0fd96/pymeshlab-2023.12.post3-cp312-cp312-win_amd64.whl", hash = "sha256:346b53c00241693feca2c9843d72fb750c0cfc78bd5aa44d905ec0570de3997f", size = 52895966 },
 ]
 
 [[package]]

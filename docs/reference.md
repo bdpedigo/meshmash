@@ -23,3 +23,5 @@ title: API Reference
 ::: meshmash.datasets
 
 ::: meshmash.types
+
+::: meshmash.wrap

@@ -78,6 +78,7 @@ from .utils import (
     subset_mesh_by_indices,
     threshold_mesh_by_component_size,
 )
+from .wrap import wrap_mesh
 
 # from .implicit_solver import HeatSolver
 
@@ -152,4 +153,5 @@ __all__ = [
     "fetch_sample_mesh",
     "condensed_hks_pipeline",
     "compute_condensed_hks",
+    "wrap_mesh",
 ]
