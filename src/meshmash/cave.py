@@ -53,6 +53,13 @@ def find_nucleus_point(
             split_positions=True,
             desired_resolution=[1, 1, 1],
         )
+    elif "h01_c3_flat" in client.datastack_name:
+        nuc_table = client.materialize.query_table(
+            "nucleus_detection",
+            filter_equal_dict={"pt_root_id": current_root_id},
+            split_positions=True,
+            desired_resolution=[1, 1, 1],
+        )
 
     nuc_coords = nuc_table[["pt_position_x", "pt_position_y", "pt_position_z"]].values
 
