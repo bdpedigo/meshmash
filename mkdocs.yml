@@ -6,6 +6,8 @@ edit_uri: edit/main/docs/
 nav:
   - index.md
   - install.md
+  - Examples:
+    - HKS Pipeline: examples/tutorial.py
   - API Reference: reference.md
   - CLI: cli.md
 theme:
@@ -63,6 +65,10 @@ watch:
 plugins:
   - include-markdown
   - section-index
+  - mkdocs-jupyter:
+      execute: true
+      kernel_name: python3
+      allow_errors: false
   - search:
       lang: en
   - mkdocstrings:

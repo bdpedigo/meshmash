@@ -1,6 +1,7 @@
 [project]
 dependencies = [
     "caveclient[cv]>=7.0.0,<8.0.0",
+    "chardet>=3.0.4,<6",
     "click==8.2.1",
     "fast-simplification>=0.1.7",
     "fastremap>=1.16.1",
@@ -10,7 +11,7 @@ dependencies = [
     "pandas>=2.2.3",
     "point-cloud-utils>=0.34.0",
     "pymeshlab==2023.12.post3",
-    "pyvista>=0.44.1",
+    "pyvista[all]>=0.44.1",
     "robust-laplacian>=1.0.0",
     "scikit-learn>=1.6.1",
     "scipy>=1.15.0",
@@ -33,6 +34,7 @@ dev = [
     { include-group = 'test' },
 ]
 docs = [
+    "jupytext",
     "mkdocs",
     "mkdocs-autorefs",
     "mkdocs-git-authors-plugin",

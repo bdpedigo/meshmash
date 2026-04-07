@@ -61,11 +61,12 @@ def graph_laplacian_split(
 
     # TODO cannot figure out why this isn't deterministic
     # or if the random errors are from some other part of the pipeline
+    # v0 = np.full(n, 1 / np.sqrt(n), dtype=dtype)
     eigenvalues, eigenvectors = eigsh(
         lap,
         k=2,
         sigma=-1e-10,
-        v0=np.full(n, 1 / np.sqrt(n), dtype=dtype),
+        # v0=v0, # dropped this to see if it fixes the issue with failing splits
         tol=eigen_tol,
         maxiter=20,
         ncv=20,  # TODO revisit this sensitivity to NCV for speed
@@ -109,6 +110,8 @@ def bisect_adjacency(
         partition's rows back to the original ``adj``.
     """
     if n_retries == 0:
+        logging.info("Adjacency shape: %s", adj.shape)
+        logging.info("Adjacency nnz: %s", adj.nnz)
         raise RuntimeError("Split failed to divide mesh.")
 
     # get the split indices
