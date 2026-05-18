@@ -40,6 +40,22 @@ from .io import (
 )
 from .label_propagation import label_propagation
 from .laplacian import area_matrix, compute_vertex_areas, cotangent_laplacian
+from .mesh_cleaning import (
+    cap_mesh_at_chunk_boundaries,
+    classify_vertex_to_chunk_plane,
+    classify_vertices_by_chunk_boundary,
+    classify_vertices_to_chunk_planes,
+    clean_chunkedgraph_mesh,
+    clean_mesh,
+    deduplicate_chunk_boundaries,
+    fill_holes,
+    fix_mesh,
+    get_chunk_grid_params,
+    is_valid_mesh,
+    is_watertight,
+    node_bbox,
+    remove_degenerate_faces,
+)
 from .morphometry_pipeline import component_morphometry_pipeline
 from .pipeline import (
     chunked_hks_pipeline,
@@ -154,4 +170,6 @@ __all__ = [
     "condensed_hks_pipeline",
     "compute_condensed_hks",
     "wrap_mesh",
+    "clean_chunkedgraph_mesh",
+    "classify_vertices_by_chunk_boundary",
 ]
