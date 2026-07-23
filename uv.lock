@@ -7,7 +7,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-03-24T19:19:40.110925Z"
+exclude-newer = "2026-07-09T00:09:02.401386Z"
 exclude-newer-span = "P14D"
 
 [[package]]
@@ -1586,6 +1586,9 @@ dependencies = [
 datasets = [
     { name = "pooch" },
 ]
+graphcut = [
+    { name = "pymaxflow" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -1648,6 +1651,7 @@ requires-dist = [
     { name = "pandas", specifier = ">=2.2.3" },
     { name = "point-cloud-utils", specifier = ">=0.34.0" },
     { name = "pooch", marker = "extra == 'datasets'", specifier = ">=1.8" },
+    { name = "pymaxflow", marker = "extra == 'graphcut'", specifier = ">=1.3" },
     { name = "pymeshlab", specifier = "==2023.12.post3" },
     { name = "pyvista", extras = ["all"], specifier = ">=0.44.1" },
     { name = "robust-laplacian", specifier = ">=1.0.0" },
@@ -1656,7 +1660,7 @@ requires-dist = [
     { name = "tqdm-joblib", specifier = ">=0.0.4" },
     { name = "typer", specifier = ">=0.12" },
 ]
-provides-extras = ["datasets"]
+provides-extras = ["datasets", "graphcut"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -2557,6 +2561,21 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/b0/77/a5b8c569bf593b0140bde72ea885a803b82086995367bf2037de0159d924/pygments-2.19.2.tar.gz", hash = "sha256:636cb2477cec7f8952536970bc533bc43743542f70392ae026374600add5b887", size = 4968631, upload-time = "2025-06-21T13:39:12.283Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c7/21/705964c7812476f378728bdf590ca4b771ec72385c533964653c68e86bdc/pygments-2.19.2-py3-none-any.whl", hash = "sha256:86540386c03d588bb81d44bc3928634ff26449851e99741617ecb9037ee5ec0b", size = 1225217, upload-time = "2025-06-21T13:39:07.939Z" },
+]
+
+[[package]]
+name = "pymaxflow"
+version = "1.3.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f4/d8/a719512ee03084541fc8e6f1fa06be366fb97f9c39f0b3b3bba7364769e8/pymaxflow-1.3.2.tar.gz", hash = "sha256:19f1668dd718d1451a1ad18902ac674b1b380cda1150c855b5e817f1b0de3095", size = 1342765, upload-time = "2024-11-25T11:08:36.105Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6d/37/e0ea14f87718f161e12b8f8b3271b6757db3caa03deea2eb85434a1c0143/PyMaxflow-1.3.2-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:5098692e804682a1a4129e52c4a3b6f33b3269af467cf48a1a7fd453728a053d", size = 132941, upload-time = "2024-11-25T11:12:33.797Z" },
+    { url = "https://files.pythonhosted.org/packages/f2/ac/50e6685e98ab7735f3178d2f6df395222a3455eacbd471287fdd8f074897/PyMaxflow-1.3.2-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:0f9e26ea0cbd8c28771e8244b2de55ac146e77048452054b4dda7fcabd24f557", size = 123463, upload-time = "2024-11-25T11:09:35.54Z" },
+    { url = "https://files.pythonhosted.org/packages/8b/aa/90df81ac75f0a12961c04b339394510e8f526bb251f61f750787b5cbcc90/PyMaxflow-1.3.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:5fb2116d3949f2ae8a4897c7e54ffa9892c866b17c48bdf6bd182d730aae6581", size = 939222, upload-time = "2024-11-25T11:10:39.423Z" },
+    { url = "https://files.pythonhosted.org/packages/47/1c/b384d2cd6f9cbbf4a2c80dff70d5cecb74320061d68bc33e5bce18b16dc1/PyMaxflow-1.3.2-cp312-cp312-win_amd64.whl", hash = "sha256:95072906a5df055b656e1aa4e1b010d7b883d9cfb2ca990d915f79663bdd72aa", size = 104954, upload-time = "2024-11-25T11:13:08.776Z" },
 ]
 
 [[package]]

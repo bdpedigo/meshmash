@@ -12,6 +12,17 @@ from .cave import (
     get_synapses,
     get_synapses_at_oldest,
 )
+from .clean import (
+    clean_mesh,
+    compute_face_winding_numbers,
+    graphcut_face_mask,
+    orient_faces_by_adjacency,
+    orient_faces_by_winding,
+    orient_mesh,
+    remove_degenerate_faces,
+    remove_fins,
+    remove_interior_faces,
+)
 from .datasets import fetch_sample_mesh
 from .decompose import (
     compute_geometry_vectors,
@@ -65,6 +76,7 @@ from .utils import (
     get_label_components,
     graph_to_adjacency,
     largest_mesh_component,
+    mask_mesh_by_faces,
     mesh_connected_components,
     mesh_n_connected_components,
     mesh_to_adjacency,
@@ -154,4 +166,14 @@ __all__ = [
     "condensed_hks_pipeline",
     "compute_condensed_hks",
     "wrap_mesh",
+    "orient_mesh",
+    "remove_degenerate_faces",
+    "clean_mesh",
+    "remove_fins",
+    "mask_mesh_by_faces",
+    "orient_faces_by_adjacency",
+    "orient_faces_by_winding",
+    "compute_face_winding_numbers",
+    "graphcut_face_mask",
+    "remove_interior_faces",
 ]

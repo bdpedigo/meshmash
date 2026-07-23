@@ -1,5 +1,6 @@
 from typing import Generator, Literal, Optional, Union, overload
 
+import fastremap
 import numpy as np
 import pandas as pd
 import pyvista as pv
@@ -286,6 +287,46 @@ def get_label_components(mesh: Mesh, labels: ArrayLike) -> np.ndarray:
     _, component_labels = connected_components(clipped_graph, directed=False)
 
     return component_labels
+
+
+def mask_mesh_by_faces(mesh: Mesh, face_mask: np.ndarray) -> Mesh:
+    """Extract a submesh containing only the selected faces.
+
+    Faces not selected by ``face_mask`` are dropped.  Any vertices left
+    unreferenced by the remaining faces are removed, and the face indices are
+    renumbered to a compact ``0..V'-1`` range using [fastremap.renumber][].
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
+    face_mask :
+        Faces to keep, given either as a boolean mask of length ``F`` or as an
+        array of face indices.
+
+    Returns
+    -------
+    vertices :
+        Subset of vertex positions with unreferenced vertices removed.
+    faces :
+        Renumbered face index array containing only the retained faces.
+    """
+    vertices, faces = interpret_mesh(mesh)
+    kept_faces = faces[face_mask]
+
+    new_faces, mapping = fastremap.renumber(
+        kept_faces, start=0, preserve_zero=False, in_place=False
+    )
+
+    # invert the old->new vertex mapping to gather the retained vertices in
+    # their new, compact order
+    old_ids = np.fromiter(mapping.keys(), dtype=np.int64, count=len(mapping))
+    new_ids = np.fromiter(mapping.values(), dtype=np.int64, count=len(mapping))
+    inverse = np.empty(len(mapping), dtype=np.int64)
+    inverse[new_ids] = old_ids
+    new_vertices = vertices[inverse]
+
+    return new_vertices, new_faces
 
 
 def subset_mesh_by_indices(mesh: Mesh, indices: np.ndarray) -> Mesh:

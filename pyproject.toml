@@ -26,6 +26,7 @@ version = "0.1.0"
 
 [project.optional-dependencies]
 datasets = ["pooch>=1.8"]
+graphcut = ["PyMaxflow>=1.3"]
 
 [dependency-groups]
 dev = [
