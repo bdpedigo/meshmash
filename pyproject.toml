@@ -1,6 +1,6 @@
 [project]
 dependencies = [
-    "caveclient[cv]>=7.0.0,<8.0.0",
+    "caveclient[cv]>=8.2.0",
     "chardet>=3.0.4,<6",
     "click==8.2.1",
     "fast-simplification>=0.1.7",
@@ -10,7 +10,7 @@ dependencies = [
     "numpy>=1.26.0",
     "pandas>=2.2.3",
     "point-cloud-utils>=0.34.0",
-    "pymeshlab==2023.12.post3",
+    "pymeshlab==2025.7.post1",
     "pyvista[all]>=0.44.1",
     "robust-laplacian>=1.0.0",
     "scikit-learn>=1.6.1",
@@ -21,7 +21,7 @@ dependencies = [
 description = "Random mesh and related utilities in Python."
 name = "meshmash"
 readme = "README.md"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.12"
 version = "0.1.0"
 
 [project.optional-dependencies]

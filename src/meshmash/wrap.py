@@ -1,6 +1,6 @@
 import numpy as np
 from pymeshlab import Mesh as PyMesh
-from pymeshlab import MeshSet
+from pymeshlab import MeshSet, PercentageValue
 
 from .types import Mesh
 
@@ -38,9 +38,10 @@ def wrap_mesh(
     mesh = PyMesh(*input_mesh)
     ms.add_mesh(mesh)
 
-    # TODO update to use the more modern PyMeshLab parameters
+    # PyMeshLab expects alpha/offset as PercentageValue of the bbox diagonal
     _ = ms.generate_alpha_wrap(
-        alpha_fraction=alpha_fraction, offset_fraction=offset_fraction
+        alpha=PercentageValue(alpha_fraction * 100.0),
+        offset=PercentageValue(offset_fraction * 100.0),
     )
 
     back = ms.current_mesh()
