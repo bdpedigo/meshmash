@@ -103,7 +103,8 @@ def poly_to_mesh(poly: pv.PolyData) -> Mesh:
     Parameters
     ----------
     poly :
-        Triangle surface mesh as a [PolyData][pyvista.PolyData].
+        Surface mesh as a [PolyData][pyvista.PolyData]. If it is not already
+        all triangles, it is triangulated first.
 
     Returns
     -------
@@ -112,6 +113,8 @@ def poly_to_mesh(poly: pv.PolyData) -> Mesh:
     faces :
         Array of triangle face indices, shape ``(F, 3)``.
     """
+    if not poly.is_all_triangles:
+        poly = poly.triangulate()
     vertices = np.asarray(poly.points)
     faces = poly.faces.reshape(-1, 4)[:, 1:]
     return vertices, faces
