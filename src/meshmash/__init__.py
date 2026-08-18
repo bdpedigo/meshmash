@@ -75,8 +75,11 @@ from .utils import (
     rough_subset_mesh_by_indices,
     scale_mesh,
     shuffle_label_mapping,
+    simplify_to_density,
     subset_mesh_by_indices,
+    surface_area,
     threshold_mesh_by_component_size,
+    vertex_density,
 )
 from .wrap import wrap_mesh
 
@@ -154,4 +157,7 @@ __all__ = [
     "condensed_hks_pipeline",
     "compute_condensed_hks",
     "wrap_mesh",
+    "surface_area",
+    "vertex_density",
+    "simplify_to_density",
 ]

@@ -3,6 +3,7 @@ from typing import Generator, Literal, Optional, Union, overload
 import numpy as np
 import pandas as pd
 import pyvista as pv
+from fast_simplification import replay_simplification, simplify
 from scipy.sparse import csr_array
 from scipy.sparse.csgraph import connected_components
 from sklearn.neighbors import NearestNeighbors
@@ -643,3 +644,134 @@ def scale_mesh(mesh: Mesh, scale: float) -> Mesh:
     vertices, faces = interpret_mesh(mesh)
     scaled_vertices = vertices * scale
     return scaled_vertices, faces
+
+
+def surface_area(mesh: Mesh) -> float:
+    """Total surface area of a triangle mesh.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
+
+    Returns
+    -------
+    :
+        Sum of triangle areas in the squared units of the vertex coordinates.
+    """
+    vertices, faces = interpret_mesh(mesh)
+    v0 = vertices[faces[:, 0]]
+    v1 = vertices[faces[:, 1]]
+    v2 = vertices[faces[:, 2]]
+    cross = np.cross(v1 - v0, v2 - v0)
+    return float(0.5 * np.sum(np.linalg.norm(cross, axis=1)))
+
+
+def vertex_density(mesh: Mesh) -> float:
+    """Vertices per unit surface area of a triangle mesh.
+
+    This is a scale-aware measure of mesh resolution: unlike a relative
+    reduction fraction, a target vertex density means the same physical
+    sampling regardless of the dataset's units or absolute size.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
+
+    Returns
+    -------
+    :
+        ``n_vertices / surface_area`` in inverse squared vertex units.
+        Degenerate meshes with zero total area return ``inf`` (or ``0.0`` when
+        the mesh is empty) instead of raising a division error.
+    """
+    vertices, faces = interpret_mesh(mesh)
+    area = surface_area((vertices, faces))
+    if area == 0:
+        return 0.0 if len(vertices) == 0 else float("inf")
+    return len(vertices) / area
+
+
+def simplify_to_density(
+    mesh: Mesh,
+    target_density: float,
+    simplify_agg: int = 7,
+    tolerance: float = 0.05,
+    max_iter: int = 5,
+    verbose: bool = False,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Iteratively simplify a mesh toward a target vertex density.
+
+    Repeatedly decimates the mesh with ``fast-simplification``, estimating
+    the reduction needed each pass from the assumption that vertex density
+    scales roughly linearly with face count.  Stops once the density is
+    within ``tolerance`` of ``target_density`` or ``max_iter`` is reached.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
+    target_density :
+        Desired [vertex_density][meshmash.utils.vertex_density] (vertices per
+        unit surface area).  If the mesh is already at or below this density,
+        it is returned unchanged.
+    simplify_agg :
+        Decimation aggressiveness (0-10) passed to ``fast-simplification``.
+    tolerance :
+        Acceptable relative overshoot of the density above the target before
+        stopping (default 5%).
+    max_iter :
+        Maximum number of simplification passes.
+    verbose :
+        If ``True``, print per-iteration density and reduction estimates.
+
+    Returns
+    -------
+    vertices :
+        Simplified vertex positions.
+    faces :
+        Simplified triangle face indices.
+    mapping :
+        Array of length ``V_input`` mapping each input vertex to its index in
+        the simplified mesh, composed across all iterations.  Mirrors the
+        ``replay_simplification`` mapping of the single-pass reduction path.
+    """
+    vertices, faces = interpret_mesh(mesh)
+    mapping = np.arange(len(vertices))
+    if len(faces) == 0 or surface_area((vertices, faces)) == 0:
+        # Degenerate mesh (empty or zero total area): nothing to simplify.
+        if verbose:
+            print("[simplify_to_density] degenerate mesh, returning unchanged")
+        return vertices, faces, mapping
+    for i in range(max_iter):
+        current_density = vertex_density((vertices, faces))
+        if current_density <= target_density * (1 + tolerance):
+            break
+        target_reduction = float(
+            np.clip(1 - target_density / current_density, 0.05, 0.99)
+        )
+        if verbose:
+            print(
+                f"[simplify_to_density] iter {i}: density {current_density:.3e} "
+                f"-> target {target_density:.3e}, reduction {target_reduction:.2%}"
+            )
+        _, _, collapses = simplify(
+            vertices,
+            faces,
+            agg=simplify_agg,
+            target_reduction=target_reduction,
+            return_collapses=True,
+        )
+        vertices, faces, step_mapping = replay_simplification(
+            points=vertices,
+            triangles=faces,
+            collapses=collapses,
+        )
+        mapping = step_mapping[mapping]
+    if verbose:
+        print(
+            f"[simplify_to_density] final density "
+            f"{vertex_density((vertices, faces)):.3e} (target {target_density:.3e})"
+        )
+    return vertices, faces, mapping
