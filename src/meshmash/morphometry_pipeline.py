@@ -1,10 +1,17 @@
 import time
+import warnings
 
 import fastremap
 import numpy as np
 import pandas as pd
 from gpytoolbox import fast_winding_number
-from point_cloud_utils import closest_points_on_mesh
+
+# point_cloud_utils 0.34.0 has invalid escape sequences in its
+# docstrings, which emit a SyntaxWarning when the module is first compiled on
+# import. Suppress it only for this import so downstream `import meshmash` is quiet.
+with warnings.catch_warnings():
+    warnings.filterwarnings("ignore", category=SyntaxWarning)
+    from point_cloud_utils import closest_points_on_mesh
 from scipy.sparse.csgraph import connected_components, laplacian
 from scipy.sparse.linalg import eigsh
 from sklearn.decomposition import PCA
