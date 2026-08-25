@@ -1,4 +1,4 @@
-from typing import Literal, Optional, Tuple, Union
+from typing import Literal
 
 import numpy as np
 import point_cloud_utils as pcu
@@ -39,8 +39,8 @@ def orient_faces_by_adjacency(mesh: Mesh) -> Mesh:
 def orient_faces_by_winding(
     mesh: Mesh,
     flip_eps: float = 25.0,
-    max_component_faces: Optional[int] = None,
-    verbose: Union[bool, int] = False,
+    max_component_faces: int | None = None,
+    verbose: bool | int = False,
 ) -> Mesh:
     """Flip each connected component's overall face sign to point outward.
 
@@ -134,11 +134,11 @@ def orient_faces_by_winding(
 def orient_faces_by_raycast(
     mesh: Mesh,
     flip_eps: float = 25.0,
-    max_component_faces: Optional[int] = None,
+    max_component_faces: int | None = None,
     n_samples: int = 64,
     max_hits: int = 100,
     seed: int = 0,
-    verbose: Union[bool, int] = False,
+    verbose: bool | int = False,
 ) -> Mesh:
     """Flip each connected component's overall face sign to point outward.
 
@@ -220,10 +220,7 @@ def orient_faces_by_raycast(
     ray_comp_parts = []
     for component_id in component_ids:
         face_index = np.flatnonzero(face_components == component_id)
-        if (
-            max_component_faces is not None
-            and len(face_index) > max_component_faces
-        ):
+        if max_component_faces is not None and len(face_index) > max_component_faces:
             continue
         if len(face_index) > n_samples:
             face_index = rng.choice(face_index, size=n_samples, replace=False)
@@ -262,9 +259,9 @@ def orient_faces_by_raycast(
         margin = float(inside_plus[vote].mean()) - 0.5
         if margin > 0:  # majority point inward -> flip the whole component
             component_face_mask = face_components == component_id
-            oriented_faces[component_face_mask] = oriented_faces[
-                component_face_mask
-            ][:, ::-1]
+            oriented_faces[component_face_mask] = oriented_faces[component_face_mask][
+                :, ::-1
+            ]
             flipped_info.append(
                 (int(component_id), int(component_face_mask.sum()), margin)
             )
@@ -286,9 +283,9 @@ def orient_faces_by_raycast(
 def orient_mesh(
     mesh: Mesh,
     flip_eps: float = 25.0,
-    max_component_faces: Optional[int] = None,
+    max_component_faces: int | None = None,
     method: Literal["winding", "raycast"] = "winding",
-    verbose: Union[bool, int] = False,
+    verbose: bool | int = False,
 ) -> Mesh:
     """Orient all faces to a consistent, outward-pointing winding.
 
@@ -442,7 +439,7 @@ def compute_face_winding_numbers(
     sampling: Literal["constant", "edge_adaptive"] = "edge_adaptive",
     epsilon: float = 25.0,
     edge_scale: float = 0.5,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Sample the winding number just outside and just inside each face.
 
     For every face, two probe points are placed a small distance off the face
@@ -619,7 +616,7 @@ def remove_interior_faces(
     data_weight: float = 0.1,
     pairwise_weight: float = 1.0,
     return_mask: bool = False,
-) -> Union[Mesh, np.ndarray]:
+) -> Mesh | np.ndarray:
     """Remove buried/interior faces using winding numbers.
 
     Convenience wrapper that runs
