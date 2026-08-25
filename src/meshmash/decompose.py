@@ -617,6 +617,9 @@ def compute_hks(
     decomposition_dtype: Optional[np.dtype] = np.float64,
     point_laplacian: bool = False,
     n_neighbors: int = 30,
+    boundary_aware: bool = False,
+    boundary_weight: float = 0.5,
+    boundary_indices: Optional[np.ndarray] = None,
     verbose: Union[bool, int] = False,
 ) -> np.ndarray:
     """Compute the Heat Kernel Signature (HKS) for each vertex of a mesh.
@@ -662,6 +665,20 @@ def compute_hks(
         cotangent Laplacian (useful for point clouds without face data).
     n_neighbors :
         Number of neighbours used when ``point_laplacian=True``.
+    boundary_aware :
+        If ``True``, treat open mesh boundaries as partially absorbing: the
+        returned HKS is a convex mix of the Neumann (reflecting, standard)
+        signature and a Dirichlet (absorbing) signature computed on the
+        interior vertices only.  For a closed mesh this is a no-op.
+    boundary_weight :
+        Mixing weight for the Dirichlet signature when ``boundary_aware`` is
+        set: ``(1 - w) * neumann + w * dirichlet``.  ``0.5`` means boundary
+        vertices reflect half the heat and let the other half exit.
+    boundary_indices :
+        Optional precomputed vertex indices lying on open boundaries.  If
+        ``None`` and ``boundary_aware`` is set, they are detected from the
+        mesh faces via
+        [get_submesh_borders][meshmash.split.get_submesh_borders].
     verbose :
         Verbosity level passed to [spectral_geometry_filter][meshmash.decompose.spectral_geometry_filter].
 
@@ -684,6 +701,21 @@ def compute_hks(
         Meshes", Computer Graphics Forum, 39(5), 2020.
     """
     filter_func = get_hks_filter(t_max, t_min, n_components, dtype=decomposition_dtype)
+    if boundary_aware:
+        return _compute_boundary_aware_hks(
+            mesh,
+            filter_func,
+            max_eigenvalue=max_eigenvalue,
+            band_size=band_size,
+            truncate_extra=truncate_extra,
+            drop_first=drop_first,
+            robust=robust,
+            mollify_factor=mollify_factor,
+            decomposition_dtype=decomposition_dtype,
+            boundary_weight=boundary_weight,
+            boundary_indices=boundary_indices,
+            verbose=verbose,
+        )
     out = spectral_geometry_filter(
         mesh,
         filter_func,
@@ -699,6 +731,91 @@ def compute_hks(
         verbose=verbose,
     )
     return out
+
+
+def _compute_boundary_aware_hks(
+    mesh: Mesh,
+    filter_func: Callable[[np.ndarray], np.ndarray],
+    max_eigenvalue: float,
+    band_size: int,
+    truncate_extra: bool,
+    drop_first: bool,
+    robust: bool,
+    mollify_factor: float,
+    decomposition_dtype: Optional[np.dtype],
+    boundary_weight: float,
+    boundary_indices: Optional[np.ndarray],
+    verbose: Union[bool, int],
+) -> np.ndarray:
+    """HKS that mixes a reflecting (Neumann) and absorbing (Dirichlet) signature.
+
+    The standard cotangent/robust Laplacian on a mesh with boundary already
+    imposes natural (Neumann) boundary conditions, so its HKS is the
+    reflecting signature.  The Dirichlet signature is obtained by solving the
+    same generalized eigenproblem on the interior rows/columns only, then
+    scattering the interior features back with zeros on the boundary.  On the
+    boundary the Dirichlet contribution vanishes, so the mix leaves boundary
+    vertices at ``(1 - boundary_weight)`` of their reflecting value.
+    """
+    if isinstance(mesh, tuple) and isinstance(
+        mesh[0], (csr_array, csc_array, coo_array)
+    ):
+        raise ValueError(
+            "boundary_aware HKS requires a (vertices, faces) mesh so boundaries "
+            "can be detected; pass boundary_indices explicitly to use an (L, M) mesh."
+        )
+
+    L, M = cotangent_laplacian(mesh, robust=robust, mollify_factor=mollify_factor)
+
+    neumann = spectral_geometry_filter(
+        (L, M),
+        filter_func,
+        max_eigenvalue=max_eigenvalue,
+        band_size=band_size,
+        truncate_extra=truncate_extra,
+        drop_first=drop_first,
+        decomposition_dtype=decomposition_dtype,
+        verbose=verbose,
+    )
+
+    if boundary_indices is None:
+        from .split import get_submesh_borders
+
+        boundary_indices = get_submesh_borders(mesh)
+
+    # Closed mesh (no open boundary): nothing to absorb.
+    if len(boundary_indices) == 0:
+        return neumann
+
+    n = L.shape[0]
+    interior = np.ones(n, dtype=bool)
+    interior[boundary_indices] = False
+    interior_idx = np.flatnonzero(interior)
+
+    L_II = L.tocsr()[interior_idx][:, interior_idx]
+    # M is a diagonal (lumped-area) matrix; restrict its diagonal to the interior.
+    M_II = sparse.dia_array(
+        (np.asarray(M.diagonal())[interior_idx], 0),
+        shape=(interior_idx.size, interior_idx.size),
+    )
+
+    # Interior Laplacian is positive definite (no constant null mode), so the
+    # first eigenpair must NOT be dropped here.
+    dirichlet_interior = spectral_geometry_filter(
+        (L_II, M_II),
+        filter_func,
+        max_eigenvalue=max_eigenvalue,
+        band_size=band_size,
+        truncate_extra=truncate_extra,
+        drop_first=False,
+        decomposition_dtype=decomposition_dtype,
+        verbose=verbose,
+    )
+
+    dirichlet = np.zeros_like(neumann)
+    dirichlet[interior_idx] = dirichlet_interior
+
+    return (1.0 - boundary_weight) * neumann + boundary_weight * dirichlet
 
 
 def compute_geometry_vectors(

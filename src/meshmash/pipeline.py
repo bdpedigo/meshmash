@@ -19,6 +19,7 @@ from .types import interpret_mesh
 from .utils import (
     compute_distances_to_point,
     expand_labels,
+    simplify_to_density,
     threshold_mesh_by_component_size,
 )
 
@@ -450,6 +451,7 @@ def condensed_hks_pipeline(
     mesh,
     simplify_agg=7,
     simplify_target_reduction=0.7,
+    simplify_target_density=None,
     overlap_distance=20_000,
     max_vertex_threshold=20_000,
     min_vertex_threshold=200,
@@ -488,7 +490,16 @@ def condensed_hks_pipeline(
         ``simplify_target_reduction``.
     simplify_target_reduction :
         Fraction of triangles to remove during simplification.  ``None``
-        skips simplification.
+        skips simplification.  Mutually exclusive with
+        ``simplify_target_density``: to use density-targeted simplification,
+        set this to ``None``.
+    simplify_target_density :
+        Target vertex density (vertices per unit surface area) for
+        [simplify_to_density][meshmash.utils.simplify_to_density].  Unlike
+        the relative ``simplify_target_reduction``, this yields the same
+        physical mesh resolution regardless of dataset units or size.  Only
+        one of ``simplify_target_reduction`` / ``simplify_target_density``
+        may be non-``None``; providing both raises ``ValueError``.
     overlap_distance :
         Geodesic radius used to grow each chunk into its overlap region.
     max_vertex_threshold :
@@ -591,7 +602,21 @@ def condensed_hks_pipeline(
     # mesh simplification
     # NOTE: for some reason the order here differs from that in replay_simplification,
     # we want the latter so as to preserve the indices for `mapping`
-    if simplify_target_reduction is not None:
+    if simplify_target_reduction is not None and simplify_target_density is not None:
+        raise ValueError(
+            "Provide only one of `simplify_target_reduction` or "
+            "`simplify_target_density`, not both. To use density-targeted "
+            "simplification, set `simplify_target_reduction=None`."
+        )
+    if simplify_target_density is not None:
+        vertices, faces, thresh_to_simple_mapping = simplify_to_density(
+            mesh,
+            target_density=simplify_target_density,
+            simplify_agg=simplify_agg,
+            verbose=verbose,
+        )
+        mesh = (vertices, faces)
+    elif simplify_target_reduction is not None:
         _, _, collapses = simplify(
             mesh[0],
             mesh[1],
