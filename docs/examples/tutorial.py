@@ -18,7 +18,7 @@ import base64
 import warnings
 
 import pyvista as pv
-from IPython.display import HTML
+from IPython.display import HTML, display
 
 from meshmash import condensed_hks_pipeline, fetch_sample_mesh
 
