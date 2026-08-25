@@ -131,33 +131,189 @@ def orient_faces_by_winding(
     return vertices, oriented_faces
 
 
-def orient_mesh(
+def orient_faces_by_raycast(
     mesh: Mesh,
     flip_eps: float = 25.0,
     max_component_faces: Optional[int] = None,
+    n_samples: int = 64,
+    max_hits: int = 100,
+    seed: int = 0,
     verbose: Union[bool, int] = False,
 ) -> Mesh:
-    """Orient all faces to a consistent, outward-pointing winding.
+    """Flip each connected component's overall face sign to point outward.
 
-    Convenience wrapper that runs
-    [orient_faces_by_adjacency][meshmash.clean.orient_faces_by_adjacency] to make
-    windings consistent within each connected component, then
-    [orient_faces_by_winding][meshmash.clean.orient_faces_by_winding] to flip
-    each component's overall sign so its normals point outward.
+    A ray-casting alternative to
+    [orient_faces_by_winding][meshmash.clean.orient_faces_by_winding]: instead of
+    sampling a self-winding-number it decides each component's sign from a
+    self-*parity* majority vote.  Like the winding version it assumes each
+    component is already internally consistent, so it is normally run *after*
+    [orient_faces_by_adjacency][meshmash.clean.orient_faces_by_adjacency].
+
+    One embree BVH is built over the whole mesh.  For each component, rays are
+    cast from a subsample of its faces along the ``+`` normal and only crossings
+    that land back on the *same* component are counted (self-parity).  An odd
+    count means that face's ``+`` side lies inside its own component, so the
+    component's normals point inward and it is flipped.  The per-component
+    decision is a majority vote over the sampled faces.
+
+    Testing each component against itself is what makes the parity test valid:
+    there is no second surface in the crossing count, so the even/odd
+    (winding-mod-2) ambiguity that defeats a whole-mesh ray-parity test does not
+    arise.  This is typically faster than the winding version because the sign is
+    a single bit per component, so only a subsample of faces need be probed.
+    Requires the embree backend (``embreex``); parity is only meaningful for
+    (roughly) closed components, and ``max_hits`` must exceed the deepest
+    self-nesting a ray can pierce or the parity flips.
 
     Parameters
     ----------
     mesh :
         Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
     flip_eps :
-        Probe offset passed to
-        [orient_faces_by_winding][meshmash.clean.orient_faces_by_winding].
+        Distance, in mesh units, to offset the ray origin along each face normal.
     max_component_faces :
-        Component-size skip threshold passed to
-        [orient_faces_by_winding][meshmash.clean.orient_faces_by_winding].
+        If given, components with more than this many faces are skipped (left
+        untouched).
+    n_samples :
+        Maximum number of faces sampled per component for the majority vote.
+        Smaller components sample all of their faces.
+    max_hits :
+        Maximum crossings counted per ray (embree caps hits at this value).
+    seed :
+        Seed for the per-component face subsampling.
     verbose :
-        Verbosity passed to
-        [orient_faces_by_winding][meshmash.clean.orient_faces_by_winding].
+        If truthy, show a progress bar and print a summary of flipped
+        components (sorted by vote margin, most ambiguous first).
+
+    Returns
+    -------
+    :
+        The mesh as a ``(vertices, faces)`` tuple with each component's faces
+        reversed as needed to point outward.  Vertices are unchanged.
+    """
+    import trimesh
+
+    try:
+        from trimesh.ray.ray_pyembree import RayMeshIntersector
+    except ImportError as exc:  # pragma: no cover - depends on optional backend
+        raise ImportError(
+            "orient_faces_by_raycast requires the embree backend; install `embreex`"
+        ) from exc
+
+    vertices, faces = interpret_mesh(mesh)
+    _, _, face_components, _ = pcu.connected_components(vertices, faces)
+
+    tm = trimesh.Trimesh(
+        np.asarray(vertices, dtype=np.float64),
+        np.asarray(faces, dtype=np.int64),
+        process=False,
+    )
+    normals = np.asarray(tm.face_normals, dtype=np.float64)
+    centers = np.asarray(tm.triangles_center, dtype=np.float64)
+    intersector = RayMeshIntersector(tm)
+    rng = np.random.default_rng(seed)
+
+    component_ids = np.unique(face_components)
+    # one probe ray per sampled face; the sign is a single bit per component, so
+    # a subsample is enough to vote and keeps the ray count small
+    ray_face_parts = []
+    ray_comp_parts = []
+    for component_id in component_ids:
+        face_index = np.flatnonzero(face_components == component_id)
+        if (
+            max_component_faces is not None
+            and len(face_index) > max_component_faces
+        ):
+            continue
+        if len(face_index) > n_samples:
+            face_index = rng.choice(face_index, size=n_samples, replace=False)
+        ray_face_parts.append(face_index)
+        ray_comp_parts.append(np.full(len(face_index), component_id))
+
+    oriented_faces = faces.copy()
+    if not ray_face_parts:
+        return vertices, oriented_faces
+
+    ray_face = np.concatenate(ray_face_parts)
+    ray_comp = np.concatenate(ray_comp_parts)
+    origins = centers[ray_face] + normals[ray_face] * flip_eps
+    index_tri, index_ray = intersector.intersects_id(
+        ray_origins=origins,
+        ray_directions=normals[ray_face],
+        multiple_hits=True,
+        max_hits=max_hits,
+        return_locations=False,
+    )
+    # count only same-component crossings (self-parity), excluding the source face
+    same = (face_components[index_tri] == ray_comp[index_ray]) & (
+        index_tri != ray_face[index_ray]
+    )
+    counts = np.bincount(index_ray[same], minlength=len(ray_face))
+    inside_plus = (counts % 2) == 1  # +n probe sits inside its own component
+
+    flipped_info = []  # (component_id, n_faces, margin) for each flipped component
+    for component_id in tqdm(
+        component_ids, desc="Orienting components", disable=not verbose
+    ):
+        vote = ray_comp == component_id
+        if not vote.any():  # skipped by max_component_faces
+            continue
+        # fraction of sampled faces whose outward normal points inward
+        margin = float(inside_plus[vote].mean()) - 0.5
+        if margin > 0:  # majority point inward -> flip the whole component
+            component_face_mask = face_components == component_id
+            oriented_faces[component_face_mask] = oriented_faces[
+                component_face_mask
+            ][:, ::-1]
+            flipped_info.append(
+                (int(component_id), int(component_face_mask.sum()), margin)
+            )
+
+    if verbose:
+        print(
+            f"Flipped {len(flipped_info)} / {len(component_ids)} components to "
+            "outward orientation"
+        )
+        # smallest |margin| = near-tie = most ambiguous (e.g. tiny/open scraps)
+        for component_id, n_faces, margin in sorted(
+            flipped_info, key=lambda x: abs(x[2])
+        ):
+            print(f"  component {component_id}: {n_faces} faces, margin={margin:+.4f}")
+
+    return vertices, oriented_faces
+
+
+def orient_mesh(
+    mesh: Mesh,
+    flip_eps: float = 25.0,
+    max_component_faces: Optional[int] = None,
+    method: Literal["winding", "raycast"] = "winding",
+    verbose: Union[bool, int] = False,
+) -> Mesh:
+    """Orient all faces to a consistent, outward-pointing winding.
+
+    Convenience wrapper that runs
+    [orient_faces_by_adjacency][meshmash.clean.orient_faces_by_adjacency] to make
+    windings consistent within each connected component, then flips each
+    component's overall sign so its normals point outward.  The sign stage is
+    either [orient_faces_by_winding][meshmash.clean.orient_faces_by_winding]
+    (``method="winding"``, the fast-winding-number default) or
+    [orient_faces_by_raycast][meshmash.clean.orient_faces_by_raycast]
+    (``method="raycast"``, an embree self-parity majority vote that is typically
+    faster on large meshes).
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
+    flip_eps :
+        Probe / ray-origin offset passed to the sign stage.
+    max_component_faces :
+        Component-size skip threshold passed to the sign stage.
+    method :
+        Which sign stage to use: ``"winding"`` (default) or ``"raycast"``.
+    verbose :
+        Verbosity passed to the sign stage.
 
     Returns
     -------
@@ -166,12 +322,21 @@ def orient_mesh(
         pointing faces.  Vertices are unchanged.
     """
     mesh = orient_faces_by_adjacency(mesh)
-    return orient_faces_by_winding(
-        mesh,
-        flip_eps=flip_eps,
-        max_component_faces=max_component_faces,
-        verbose=verbose,
-    )
+    if method == "raycast":
+        return orient_faces_by_raycast(
+            mesh,
+            flip_eps=flip_eps,
+            max_component_faces=max_component_faces,
+            verbose=verbose,
+        )
+    if method == "winding":
+        return orient_faces_by_winding(
+            mesh,
+            flip_eps=flip_eps,
+            max_component_faces=max_component_faces,
+            verbose=verbose,
+        )
+    raise ValueError(f"unknown method {method!r}; choose 'winding' or 'raycast'")
 
 
 def remove_degenerate_faces(mesh: Mesh, min_area: float = 1e-2) -> Mesh:
