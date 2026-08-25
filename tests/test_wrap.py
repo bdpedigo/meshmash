@@ -18,6 +18,8 @@ def test_wrap_mesh_preserves_dtype(mesh):
 
 
 def test_wrap_mesh_alpha_fraction(mesh):
-    vertices, faces = wrap_mesh(mesh, alpha=None, offset=None, alpha_fraction=0.02, offset_fraction=0.002)
+    vertices, faces = wrap_mesh(
+        mesh, alpha=None, offset=None, alpha_fraction=0.02, offset_fraction=0.002
+    )
     assert vertices.shape[1] == 3
     assert faces.shape[1] == 3

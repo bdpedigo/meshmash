@@ -57,7 +57,6 @@ def graph_laplacian_split(
         eigen_tol = 1e-7
     elif dtype == np.float64 or dtype == "float64":
         eigen_tol = 1e-10
-    n = adj.shape[0]
 
     # TODO cannot figure out why this isn't deterministic
     # or if the random errors are from some other part of the pipeline
