@@ -3,7 +3,6 @@ from typing import NamedTuple, Optional
 
 import numpy as np
 import pandas as pd
-from fast_simplification import replay_simplification, simplify
 
 from .agglomerate import (
     agglomerate_mesh,
@@ -14,6 +13,7 @@ from .agglomerate import (
 from .decompose import compute_hks
 from .graph import condense_mesh_to_graph
 from .laplacian import compute_vertex_areas
+from .simplify import simplify_mesh
 from .split import MeshStitcher
 from .types import interpret_mesh
 from .utils import (
@@ -194,25 +194,9 @@ def chunked_hks_pipeline(
     # TODO need to somehow handle the case where the mesh is empty after thresholding
 
     # mesh simplification
-    # NOTE: for some reason the order here differs from that in replay_simplification,
-    # we want the latter so as to preserve the indices for `mapping`
-    if simplify_target_reduction is not None:
-        _, _, collapses = simplify(
-            mesh[0],
-            mesh[1],
-            agg=simplify_agg,
-            target_reduction=simplify_target_reduction,
-            return_collapses=True,
-        )
-
-        vertices, faces, thresh_to_simple_mapping = replay_simplification(
-            points=mesh[0],
-            triangles=mesh[1],
-            collapses=collapses,
-        )
-        mesh = (vertices, faces)
-    else:
-        thresh_to_simple_mapping = np.arange(len(mesh[0]))
+    mesh, thresh_to_simple_mapping = simplify_mesh(
+        mesh, agg=simplify_agg, target_reduction=simplify_target_reduction
+    )
 
     # mesh splitting
     currtime = time.time()
@@ -600,8 +584,6 @@ def condensed_hks_pipeline(
     )
 
     # mesh simplification
-    # NOTE: for some reason the order here differs from that in replay_simplification,
-    # we want the latter so as to preserve the indices for `mapping`
     if simplify_target_reduction is not None and simplify_target_density is not None:
         raise ValueError(
             "Provide only one of `simplify_target_reduction` or "
@@ -616,23 +598,12 @@ def condensed_hks_pipeline(
             verbose=verbose,
         )
         mesh = (vertices, faces)
-    elif simplify_target_reduction is not None:
-        _, _, collapses = simplify(
-            mesh[0],
-            mesh[1],
-            agg=simplify_agg,
-            target_reduction=simplify_target_reduction,
-            return_collapses=True,
-        )
-
-        vertices, faces, thresh_to_simple_mapping = replay_simplification(
-            points=mesh[0],
-            triangles=mesh[1],
-            collapses=collapses,
-        )
-        mesh = (vertices, faces)
     else:
-        thresh_to_simple_mapping = np.arange(len(mesh[0]))
+        # `simplify_mesh` also covers `target_reduction=None`, which returns
+        # the mesh untouched with an identity mapping.
+        mesh, thresh_to_simple_mapping = simplify_mesh(
+            mesh, agg=simplify_agg, target_reduction=simplify_target_reduction
+        )
 
     # mesh splitting
     currtime = time.time()

@@ -58,6 +58,7 @@ from .pipeline import (
     compute_condensed_hks,
     condensed_hks_pipeline,
 )
+from .simplify import simplify_mesh
 from .split import (
     MeshStitcher,
     apply_mesh_split,
@@ -176,6 +177,7 @@ __all__ = [
     "save_id_to_mesh_map",
     "scale_mesh",
     "shuffle_label_mapping",
+    "simplify_mesh",
     "spectral_geometry_filter",
     "subset_mesh_by_indices",
     "threshold_mesh_by_component_size",
