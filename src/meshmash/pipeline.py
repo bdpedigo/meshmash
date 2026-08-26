@@ -5,9 +5,9 @@ import numpy as np
 import pandas as pd
 
 from .agglomerate import (
-    agglomerate_mesh,
     agglomerate_split_mesh,
     aggregate_features,
+    condense_features,
     fix_split_labels_and_features,
 )
 from .decompose import compute_hks
@@ -411,24 +411,11 @@ def compute_condensed_hks(
         **compute_hks_kwargs,
     )
 
-    with np.errstate(divide="ignore"):
-        log_X_hks = np.log(X_hks)
-
-    agg_labels = agglomerate_mesh(
+    return condense_features(
         mesh,
-        log_X_hks,
-        distance_thresholds=distance_threshold,
-    )
-
-    weights = compute_vertex_areas(mesh)
-    X_hks_condensed = aggregate_features(
         pd.DataFrame(X_hks, columns=[f"hks_{i}" for i in range(X_hks.shape[1])]),
-        agg_labels,
-        func="mean",
-        weights=weights,
+        distance_threshold=distance_threshold,
     )
-
-    return X_hks_condensed, agg_labels
 
 
 def compute_split_condensed_hks(

@@ -242,6 +242,12 @@ def fit_mesh_split(
 
     # remap so the first submesh is largest
     valid_submesh_mapping = submesh_mapping[submesh_mapping != -1]
+    if len(valid_submesh_mapping) == 0:
+        # Every connected component fell under min_vertex_threshold, so
+        # there is nothing to reorder and no label to be the largest.
+        # Returning the all -1 mapping leaves that for the caller to
+        # notice; the reordering below raises on the empty maximum.
+        return submesh_mapping
     labels, counts = np.unique(valid_submesh_mapping, return_counts=True)
     reorder = np.argsort(-counts)
     new_labels = np.arange(labels.max() + 1)
@@ -695,6 +701,71 @@ class MeshStitcher:
             verbose=self.verbose,
         )
 
+        if self.verbose >= 2:
+            print(f"Subdivision took {time.time() - currtime:.3f} seconds.")
+
+        return self.expand_split(
+            submesh_mapping,
+            overlap_distance=overlap_distance,
+            max_overlap_neighbors=max_overlap_neighbors,
+            verify_connected=verify_connected,
+        )
+
+    def expand_split(
+        self,
+        submesh_mapping: np.ndarray,
+        overlap_distance: float = 20_000,
+        max_overlap_neighbors: Optional[int] = None,
+        verify_connected: bool = True,
+    ) -> list[Mesh]:
+        """Build the overlapping submeshes for a partition computed elsewhere.
+
+        The second half of [split_mesh][meshmash.split.MeshStitcher.split_mesh],
+        on its own: given the non-overlapping core chunks, expand each one
+        along mesh edges into its overlap region and store the submeshes,
+        their overlap vertex indices, and ``submesh_mapping`` on ``self``.
+        [split_mesh][meshmash.split.MeshStitcher.split_mesh] is exactly
+        [fit_mesh_split][meshmash.split.fit_mesh_split] followed by this.
+
+        The split of the two matters because only the first half is
+        expensive and only the first half is irreproducible: the recursive
+        Fiedler bisection partitions on the sign of an eigenvector that
+        converges to a tolerance, while this expansion is a deterministic
+        traversal.  A caller that has stored a partition can rebuild the
+        same stitcher from it as many times as it likes, and two callers
+        that rebuild from the same partition agree by construction.
+
+        Parameters
+        ----------
+        submesh_mapping :
+            Per-vertex integer array of length ``V`` naming each vertex's
+            core chunk, as returned by
+            [fit_mesh_split][meshmash.split.fit_mesh_split].  ``-1`` for a
+            vertex in no chunk.
+        overlap_distance :
+            Maximum geodesic edge distance used to expand each core chunk
+            into its overlapping neighbourhood.
+        max_overlap_neighbors :
+            If set, limits each chunk's overlap to at most this many
+            additional vertices (ranked by distance).  ``None`` keeps
+            all vertices within ``overlap_distance``.
+        verify_connected :
+            If ``True``, assert that every overlapping submesh forms a
+            single connected component.
+
+        Returns
+        -------
+        :
+            List of overlapping submeshes as ``(vertices, faces)``
+            tuples, one per chunk.
+        """
+        submesh_mapping = np.asarray(submesh_mapping)
+        if len(submesh_mapping) != len(self.mesh[0]):
+            raise ValueError(
+                f"submesh_mapping has {len(submesh_mapping)} entries but the "
+                f"mesh has {len(self.mesh[0])} vertices"
+            )
+
         self.submesh_mapping = submesh_mapping
         temp_submeshes = apply_mesh_split(self.mesh, submesh_mapping)
 
@@ -702,9 +773,6 @@ class MeshStitcher:
         # for submesh in temp_submeshes:
         #     poly = mesh_to_poly(submesh)
         #     assert poly.n_points == poly.extract_largest().n_points
-
-        if self.verbose >= 2:
-            print(f"Subdivision took {time.time() - currtime:.3f} seconds.")
 
         adjacency = mesh_to_adjacency(self.mesh)
 
@@ -986,8 +1054,9 @@ class MeshStitcher:
         X: np.ndarray,
         *args,
         fill_value: float = np.nan,
+        stitch: bool = True,
         **kwargs,
-    ) -> np.ndarray:
+    ) -> Union[np.ndarray, list]:
         """Apply a function that takes both a submesh and a feature slice.
 
         Like [apply][meshmash.split.MeshStitcher.apply], but also passes the slice of ``X`` corresponding
@@ -1006,13 +1075,20 @@ class MeshStitcher:
             Additional positional arguments forwarded to ``func``.
         fill_value :
             Fill value for uncomputed vertices.
+        stitch :
+            If ``True`` (default), stitch results into a full-mesh array
+            via [stitch_features][meshmash.split.MeshStitcher.stitch_features].  If ``False``, return the raw
+            list of per-submesh results — which is what a caller returning
+            more than an array per submesh needs.
         **kwargs :
             Keyword arguments forwarded to ``func``.
 
         Returns
         -------
         :
-            Stitched full-mesh result array of shape ``(V, n_out_features)``.
+            Stitched full-mesh result array of shape ``(V, n_out_features)``
+            when ``stitch=True``, or the raw list of per-submesh results
+            when ``stitch=False``.
         """
         func_name = func.__name__
         submeshes = self.submeshes
@@ -1041,6 +1117,9 @@ class MeshStitcher:
                     )
                     for i, submesh in enumerate(submeshes)
                 )
+
+        if not stitch:
+            return results_by_submesh
 
         out_features = self.stitch_features(results_by_submesh, fill_value=fill_value)
 

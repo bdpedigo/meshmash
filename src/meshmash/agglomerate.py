@@ -10,6 +10,7 @@ from sklearn.cluster import ward_tree
 # TODO dangerous to import private function here
 from sklearn.cluster._agglomerative import _hc_cut
 
+from .laplacian import compute_vertex_areas
 from .split import MeshStitcher
 from .types import ArrayLike
 from .utils import mesh_to_adjacency, subset_mesh_by_indices
@@ -305,6 +306,74 @@ def agglomerate_split_mesh(
         return agg_labels[:, 0]
 
     return agg_labels
+
+
+def condense_features(
+    mesh,
+    features: Union[np.ndarray, pd.DataFrame],
+    distance_threshold: float = 3.0,
+) -> tuple[pd.DataFrame, np.ndarray]:
+    """Agglomerate a mesh on its per-vertex features and aggregate them per domain.
+
+    The second half of
+    [compute_condensed_hks][meshmash.pipeline.compute_condensed_hks], on its
+    own: connectivity-constrained Ward on the *log* of the features, then an
+    area-weighted mean of the features themselves over each resulting domain.
+    Separated out so a caller holding per-vertex features already computed —
+    from a previous call, from disk — can cut and aggregate them without
+    recomputing the spectral decomposition that produced them.
+
+    The log is the HKS recipe rather than a generic step: heat kernel
+    signatures span orders of magnitude across timescales, so the Ward
+    distances are only meaningful on the log, while the aggregation is a mean
+    of the physical values.  **Features must therefore be positive.**  A
+    non-positive column makes its log non-finite, and
+    [agglomerate_mesh][meshmash.agglomerate.agglomerate_mesh] drops
+    non-finite vertices from the clustering entirely.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
+    features :
+        Per-vertex feature matrix of shape ``(V, F)``.  A DataFrame keeps its
+        column names on the output; an array gets positional ones.
+    distance_threshold :
+        Ward linkage-distance threshold used to cut the agglomeration tree
+        into domains.
+
+    Returns
+    -------
+    condensed_features :
+        Area-weighted mean of ``features`` per domain, indexed by domain
+        label and including a row for the null label ``-1``.  Not logged —
+        the caller decides, as
+        [compute_split_condensed_hks][meshmash.pipeline.compute_split_condensed_hks]
+        does after it has stitched every chunk together.
+    labels :
+        Per-vertex domain label array of length ``V``.
+    """
+    if not isinstance(features, pd.DataFrame):
+        features = pd.DataFrame(features)
+
+    with np.errstate(divide="ignore"):
+        log_features = np.log(features.to_numpy())
+
+    agg_labels = agglomerate_mesh(
+        mesh,
+        log_features,
+        distance_thresholds=distance_threshold,
+    )
+
+    weights = compute_vertex_areas(mesh)
+    condensed_features = aggregate_features(
+        features,
+        agg_labels,
+        func="mean",
+        weights=weights,
+    )
+
+    return condensed_features, agg_labels
 
 
 # TODO there's a working but probably fragile ref to dataframegroupby here

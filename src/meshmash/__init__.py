@@ -3,7 +3,9 @@ from .agglomerate import (
     agglomerate_split_mesh,
     aggregate_features,
     blow_up_features,
+    condense_features,
     fix_split_labels,
+    fix_split_labels_and_features,
     multicut_ward,
 )
 from .cave import (
@@ -121,6 +123,7 @@ __all__ = [
     "compute_hks",
     "compute_split_condensed_hks",
     "compute_vertex_areas",
+    "condense_features",
     "condense_mesh_to_graph",
     "condensed_hks_pipeline",
     "construct_bspline_basis",
@@ -137,6 +140,7 @@ __all__ = [
     "fit_overlapping_mesh_split",
     "fix_mesh",
     "fix_split_labels",
+    "fix_split_labels_and_features",
     "get_hks_filter",
     "get_label_components",
     "get_submesh_borders",
