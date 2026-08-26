@@ -56,6 +56,7 @@ from .morphometry_pipeline import component_morphometry_pipeline
 from .pipeline import (
     chunked_hks_pipeline,
     compute_condensed_hks,
+    compute_split_condensed_hks,
     condensed_hks_pipeline,
 )
 from .simplify import simplify_mesh
@@ -118,6 +119,7 @@ __all__ = [
     "compute_face_winding_numbers",
     "compute_geometry_vectors",
     "compute_hks",
+    "compute_split_condensed_hks",
     "compute_vertex_areas",
     "condense_mesh_to_graph",
     "condensed_hks_pipeline",

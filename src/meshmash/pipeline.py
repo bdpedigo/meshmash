@@ -431,6 +431,144 @@ def compute_condensed_hks(
     return X_hks_condensed, agg_labels
 
 
+def compute_split_condensed_hks(
+    mesh,
+    overlap_distance=20_000,
+    max_vertex_threshold=20_000,
+    min_vertex_threshold=200,
+    max_overlap_neighbors=60_000,
+    n_components=32,
+    t_min=5e4,
+    t_max=2e7,
+    max_eigenvalue=1e-5,
+    robust=True,
+    mollify_factor=1e-5,
+    truncate_extra=True,
+    drop_first=True,
+    decomposition_dtype="float32",
+    compute_hks_kwargs: dict = {},
+    distance_threshold=3.0,
+    n_jobs: Optional[int] = -1,
+    verbose=False,
+) -> tuple[pd.DataFrame, np.ndarray, MeshStitcher]:
+    """Split a mesh into chunks, and condense each chunk's HKS onto local domains.
+
+    The chunked middle of [condensed_hks_pipeline][meshmash.pipeline.condensed_hks_pipeline],
+    on its own: spectral bisection into overlapping chunks, per-chunk
+    [compute_condensed_hks][meshmash.pipeline.compute_condensed_hks],
+    and reconciliation of the per-chunk domain labels into one global
+    numbering.  Aggregating *within* each chunk before stitching is what keeps
+    memory proportional to a chunk rather than to the whole mesh.
+
+    It takes the mesh as given.  Neither component thresholding nor
+    simplification happens here, so a caller that has already conditioned its
+    mesh gets exactly this and nothing more — which is what the caller cannot
+    get by passing ``simplify_target_reduction=None`` to the pipeline, since
+    that switches off the simplification but not the component threshold.
+
+    It also stops at the aggregated features: no condensed node or edge table.
+    Those are computed on the pre-threshold mesh, which this function is not
+    handed.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
+        Conditioned as the caller wants it; nothing here removes vertices.
+    overlap_distance :
+        Geodesic radius used to grow each chunk into its overlap region.
+    max_vertex_threshold :
+        Maximum vertices per core chunk before overlapping.
+    min_vertex_threshold :
+        Minimum connected-component size within
+        [split_mesh][meshmash.split.MeshStitcher.split_mesh].
+    max_overlap_neighbors :
+        Cap on overlap region size (number of nearest neighbours);
+        overrides ``overlap_distance`` when set.
+    n_components :
+        Number of HKS timescales.
+    t_min :
+        Minimum diffusion timescale.
+    t_max :
+        Maximum diffusion timescale.
+    max_eigenvalue :
+        Maximum Laplacian eigenvalue used in the HKS computation.
+    robust :
+        If ``True``, use the robust Laplacian for HKS (recommended).
+    mollify_factor :
+        Mollification factor for the robust Laplacian.
+    truncate_extra :
+        If ``True``, discard eigenpairs that overshoot ``max_eigenvalue``.
+    drop_first :
+        If ``True``, drop the first (area-proportional) eigenpair.
+    decomposition_dtype :
+        Floating-point dtype for the eigendecomposition.
+    compute_hks_kwargs :
+        Extra keyword arguments forwarded to
+        [compute_hks][meshmash.decompose.compute_hks].
+    distance_threshold :
+        Ward linkage-distance threshold used to cut the agglomeration tree
+        into local domains.
+    n_jobs :
+        Number of parallel workers for [Parallel][joblib.Parallel].
+    verbose :
+        Verbosity level.
+
+    Returns
+    -------
+    condensed_features :
+        Log of the area-weighted mean HKS per domain, indexed by global domain
+        label.  Includes a row for the null label ``-1``, whose values are all
+        NaN.
+    labels :
+        Per-vertex domain label array of length ``V``.  ``-1`` for a vertex in
+        no domain.
+    stitcher :
+        The fitted [MeshStitcher][meshmash.split.MeshStitcher].
+    """
+    stitcher = MeshStitcher(mesh, n_jobs=n_jobs, verbose=verbose)
+    stitcher.split_mesh(
+        overlap_distance=overlap_distance,
+        max_vertex_threshold=max_vertex_threshold,
+        min_vertex_threshold=min_vertex_threshold,
+        max_overlap_neighbors=max_overlap_neighbors,
+        verify_connected=False,
+    )
+
+    if verbose:
+        print("Computing HKS across submeshes...")
+
+    results_by_submesh = stitcher.apply(
+        compute_condensed_hks,
+        n_components=n_components,
+        t_min=t_min,
+        t_max=t_max,
+        max_eigenvalue=max_eigenvalue,
+        robust=robust,
+        mollify_factor=mollify_factor,
+        truncate_extra=truncate_extra,
+        drop_first=drop_first,
+        decomposition_dtype=decomposition_dtype,
+        compute_hks_kwargs=compute_hks_kwargs,
+        distance_threshold=distance_threshold,
+        stitch=False,
+    )
+    sub_agg_labels = stitcher.stitch_features(
+        [result[1] for result in results_by_submesh],
+        fill_value=-1,
+    ).reshape(-1)
+    data_by_submesh = [res[0] for res in results_by_submesh]
+
+    agg_labels, condensed_hks_df = fix_split_labels_and_features(
+        sub_agg_labels,
+        stitcher.submesh_mapping,
+        data_by_submesh,
+    )
+    condensed_hks_df = np.log(condensed_hks_df)
+
+    return condensed_hks_df, agg_labels, stitcher
+
+
 def condensed_hks_pipeline(
     mesh,
     simplify_agg=7,
@@ -605,25 +743,14 @@ def condensed_hks_pipeline(
             mesh, agg=simplify_agg, target_reduction=simplify_target_reduction
         )
 
-    # mesh splitting
+    # mesh splitting, HKS, agglomeration, and aggregation
     currtime = time.time()
-    stitcher = MeshStitcher(mesh, n_jobs=n_jobs, verbose=verbose)
-    stitcher.split_mesh(
+    condensed_hks_df, simple_agg_labels, stitcher = compute_split_condensed_hks(
+        mesh,
         overlap_distance=overlap_distance,
         max_vertex_threshold=max_vertex_threshold,
         min_vertex_threshold=min_vertex_threshold,
         max_overlap_neighbors=max_overlap_neighbors,
-        verify_connected=False,
-    )
-    timing_info["split_time"] = time.time() - currtime
-
-    # compute HKS
-    currtime = time.time()
-    if verbose:
-        print("Computing HKS across submeshes...")
-
-    results_by_submesh = stitcher.apply(
-        compute_condensed_hks,
         n_components=n_components,
         t_min=t_min,
         t_max=t_max,
@@ -635,23 +762,10 @@ def condensed_hks_pipeline(
         decomposition_dtype=decomposition_dtype,
         compute_hks_kwargs=compute_hks_kwargs,
         distance_threshold=distance_threshold,
-        stitch=False,
+        n_jobs=n_jobs,
+        verbose=verbose,
     )
-    sub_agg_labels = stitcher.stitch_features(
-        [result[1] for result in results_by_submesh],
-        fill_value=-1,
-    ).reshape(-1)
-    data_by_submesh = [res[0] for res in results_by_submesh]
-
-    simple_agg_labels, condensed_hks_df = fix_split_labels_and_features(
-        sub_agg_labels,
-        stitcher.submesh_mapping,
-        data_by_submesh,
-    )
-
     timing_info["hks_time"] = time.time() - currtime
-
-    condensed_hks_df = np.log(condensed_hks_df)
 
     # reconstruct mapping to original mesh
     mapping = np.full(len(original_mesh[0]), -1, dtype=np.int32)
