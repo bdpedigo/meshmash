@@ -22,6 +22,8 @@ title: API Reference
 
 ::: meshmash.datasets
 
+::: meshmash.synthetic
+
 ::: meshmash.types
 
 ::: meshmash.wrap
