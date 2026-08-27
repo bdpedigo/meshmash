@@ -10,7 +10,7 @@ from scipy.sparse import coo_array, csc_array, csr_array, sparray
 from tqdm.auto import tqdm
 
 from .laplacian import cotangent_laplacian
-from .types import Mesh
+from .types import Mesh, interpret_mesh
 
 
 def decompose_laplacian(
@@ -397,6 +397,8 @@ def spectral_geometry_filter(
     point_laplacian: bool = False,
     n_neighbors: int = 30,
     verbose: Union[bool, int] = False,
+    signals: Optional[np.ndarray] = None,
+    signal_dtype: np.dtype = np.float64,
 ) -> Union[np.ndarray, tuple[np.ndarray, np.ndarray]]:
     """Apply a spectral filter to the geometry of a mesh.
 
@@ -430,12 +432,28 @@ def spectral_geometry_filter(
     verbose :
         If >0, print out additional information about the computation. Higher values
         give more information.
+    signals :
+        Optional per-vertex signals to filter, shape ``(V, S)``. Where the
+        default path filters the *diagonal* of the heat kernel -- one scalar
+        per vertex per filter -- this filters the kernel's action on a
+        function, :math:`(K_t f)(x) = \\sum_k c_t(\\lambda_k) \\phi_k(x)
+        \\langle \\phi_k, f \\rangle_M`, accumulated band by band beside the
+        diagonal off the same eigenpairs. Requires ``filter``.
+    signal_dtype :
+        Dtype the signal accumulation runs in, independent of
+        ``decomposition_dtype``. Defaults to float64: a caller forming second
+        moments differences a large number from a nearly equal one, and
+        float32 does not carry that.
 
     Returns
     -------
     :
-        A 2D array of features, where the first dimension is the number of vertices, and
-        the second is the number of features.
+        Three shapes, by what was asked for. With ``filter`` and no
+        ``signals``, a ``(V, F)`` array of filtered diagonal features. With
+        ``filter`` and ``signals``, the pair ``(features, signal_features)``
+        where ``signal_features`` is ``(V, F, S)``. With no ``filter``, the
+        pair ``(eigenvalues, eigenvectors)`` -- the decomposition itself,
+        unfiltered.
 
     Notes
     -----
@@ -474,6 +492,19 @@ def spectral_geometry_filter(
             #     mesh, robust=robust, mollify_factor=mollify_factor
             # )
 
+    if signals is not None:
+        if filter is None:
+            raise ValueError(
+                "signals need a filter: without one this function returns the "
+                "eigenpairs themselves and there is nothing to weight the "
+                "signal projections by"
+            )
+        signals = np.asarray(signals, dtype=signal_dtype)
+        if signals.ndim != 2 or len(signals) != L.shape[0]:
+            raise ValueError(
+                f"signals must be (V, S) with V={L.shape[0]}, got {signals.shape}"
+            )
+
     if decomposition_dtype is not None:
         L = L.astype(decomposition_dtype)
         if M is not None:
@@ -503,6 +534,16 @@ def spectral_geometry_filter(
     else:
         # will just store the eigenvectors themselves
         features = []
+
+    if signals is not None:
+        # M-weighted once, outside the loop: every band projects the signals
+        # against the same <., .>_M inner product.
+        weighted_signals = np.asarray(M @ signals, dtype=signal_dtype)
+        signal_features = np.zeros(
+            (L.shape[0], n_features, signals.shape[1]), dtype=signal_dtype
+        )
+    else:
+        signal_features = None
 
     timing = {}
     timing["decompose"] = 0
@@ -573,6 +614,25 @@ def spectral_geometry_filter(
             currtime = time.time()
             features += band_features
             timing["sum"] += time.time() - currtime
+
+            if signals is not None:
+                currtime = time.time()
+                band_phi = band_eigenvectors[:, first_idx:].astype(signal_dtype)
+                # <phi_k, f>_M, for every kept eigenvector and every signal.
+                projected = band_phi.T @ weighted_signals
+                # One GEMM rather than a loop over filters: fold the (F, K)
+                # coefficients into the (K, S) projections to get (K, F * S),
+                # then left-multiply by the eigenvectors once.
+                folded = (
+                    np.asarray(band_coefs, dtype=signal_dtype)[:, :, None]
+                    * projected[None, :, :]
+                ).transpose(1, 0, 2)
+                signal_features += (
+                    band_phi @ folded.reshape(band_phi.shape[1], -1)
+                ).reshape(signal_features.shape)
+                timing["signals"] = timing.get("signals", 0) + (
+                    time.time() - currtime
+                )
         else:
             features.append(band_eigenvectors)
 
@@ -599,6 +659,8 @@ def spectral_geometry_filter(
         eigenvalues = np.array(eigenvalues, dtype=decomposition_dtype)
         features = np.concatenate(features, axis=1, dtype=decomposition_dtype)
         return eigenvalues, features
+    elif signals is not None:
+        return features, signal_features
     else:
         return features
 
@@ -894,3 +956,339 @@ def compute_geometry_vectors(
         verbose=verbose,
     )
     return out
+
+
+#: The invariants [compute_heat_kernel_moments][meshmash.decompose.compute_heat_kernel_moments]
+#: emits per timescale, in the order it emits them.
+HEAT_KERNEL_MOMENT_NAMES = (
+    "drift",
+    "normal",
+    "tangent",
+    "extent",
+    "linear",
+    "planar",
+    "round",
+    "align1",
+    "align2",
+)
+
+#: The upper triangle of a symmetric 3x3, in the order the second-moment
+#: signals are built and read back.
+_MOMENT_PAIRS = ((0, 0), (0, 1), (0, 2), (1, 1), (1, 2), (2, 2))
+
+
+def heat_kernel_moment_names(n_scales: int) -> list[str]:
+    """Column names for a [compute_heat_kernel_moments][meshmash.decompose.compute_heat_kernel_moments] result.
+
+    Scale-major, matching the array's ``(V, n_scales, 8)`` layout before it is
+    flattened: every invariant of scale 0, then every invariant of scale 1.
+
+    Parameters
+    ----------
+    n_scales :
+        Number of timescales the moments were computed over.
+
+    Returns
+    -------
+    :
+        ``n_scales * 8`` names of the form ``drift_0``, ``normal_0``, ....
+    """
+    return [
+        f"{name}_{index}"
+        for index in range(n_scales)
+        for name in HEAT_KERNEL_MOMENT_NAMES
+    ]
+
+
+def vertex_normals(mesh: Mesh) -> np.ndarray:
+    """Unit vertex normals, area-weighted from the face normals.
+
+    The sign is whatever the mesh's face winding says, which for a mesh nobody
+    has oriented is arbitrary per connected component. Callers that need a
+    consistent sign have to fix it themselves — see
+    [compute_heat_kernel_moments][meshmash.decompose.compute_heat_kernel_moments],
+    which fixes it against the mean-curvature direction.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
+
+    Returns
+    -------
+    :
+        Unit normals of shape ``(V, 3)``. A vertex touching no face, or whose
+        face normals cancel exactly, comes back as the zero vector.
+    """
+    vertices, faces = interpret_mesh(mesh)
+    vertices = np.asarray(vertices, dtype=np.float64)
+    faces = np.asarray(faces)
+
+    corners = vertices[faces]
+    # |cross| is twice the triangle area, so summing the raw cross products
+    # area-weights the average for free.
+    crossed = np.cross(
+        corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]
+    )
+
+    flat = faces.reshape(-1)
+    repeated = np.repeat(crossed, 3, axis=0)
+    normals = np.empty((len(vertices), 3), dtype=np.float64)
+    for axis in range(3):
+        normals[:, axis] = np.bincount(
+            flat, weights=repeated[:, axis], minlength=len(vertices)
+        )
+
+    lengths = np.linalg.norm(normals, axis=1, keepdims=True)
+    return normals / np.where(lengths > 0, lengths, 1.0)
+
+
+def compute_heat_kernel_moments(
+    mesh: Mesh,
+    max_eigenvalue: float = 1e-8,
+    t_max: Optional[float] = None,
+    t_min: Optional[float] = None,
+    n_scales: int = 8,
+    band_size: int = 50,
+    truncate_extra: bool = True,
+    robust: bool = True,
+    mollify_factor: float = 1e-5,
+    decomposition_dtype: Optional[np.dtype] = np.float64,
+    moment_dtype: np.dtype = np.float64,
+    out_dtype: np.dtype = np.float32,
+    verbose: Union[bool, int] = False,
+) -> np.ndarray:
+    """Rotation-invariant spatial moments of the local heat kernel, per vertex.
+
+    Where the heat kernel signature reads the kernel's *diagonal* —
+    :math:`k_t(x, x)`, how much heat stays put — this reads the kernel's first
+    and second spatial moments: where the heat went, and how the cloud it
+    spread into is shaped.  Treating :math:`k_t(x, \\cdot)` as a probability
+    measure on the surface,
+
+    - the **drift** :math:`m_t(x) = \\int k_t(x, y)\\, y\\, dA - x` is the
+      heat-smoothed position minus the original one.  At small ``t`` it is the
+      mean-curvature normal, :math:`m_t \\approx t H \\mathbf{n}`; at larger
+      ``t`` it is a one-sidedness detector, near zero wherever heat can leave
+      symmetrically and large wherever it cannot.
+    - the **covariance** :math:`C_t(x)` is an intrinsic multiscale local PCA.
+      Diffusion weights follow the surface rather than a Euclidean ball, so
+      the neighbourhood does not leak across a gap that is close in space but
+      far along the mesh.
+
+    Both are computed by spectral filtering of nine signals — the three
+    coordinate functions and their six pairwise products — off the same
+    eigenpairs the HKS uses, via
+    [spectral_geometry_filter][meshmash.decompose.spectral_geometry_filter]'s
+    ``signals`` argument.  The measure needs no normalising: eigenvectors are
+    M-orthonormal and only the constant mode has nonzero
+    :math:`\\langle \\phi_k, 1 \\rangle_M`, so :math:`\\int k_t(x, y)\\, dA = 1`
+    exactly however far the spectrum is truncated.  **The constant mode is
+    therefore never dropped** — it is what carries the local mean — which is
+    the one place this differs from
+    [compute_hks][meshmash.decompose.compute_hks], where dropping it removes
+    only an additive constant.
+
+    Eight invariants come back per timescale, in
+    ``HEAT_KERNEL_MOMENT_NAMES`` order, with
+    :math:`\\lambda_1 \\ge \\lambda_2 \\ge \\lambda_3` the eigenvalues of
+    :math:`C_t`:
+
+    - ``drift``: :math:`\\lVert m_t \\rVert`, in mesh length units.
+    - ``normal``: :math:`m_t \\cdot \\mathbf{n}`, signed — the drift pushed
+      off the surface rather than along it.
+    - ``tangent``: :math:`\\lVert m_t - (m_t \\cdot \\mathbf{n})\\mathbf{n}
+      \\rVert`, the drift pushed *along* the surface — the one-sidedness
+      detector, and not recoverable from the two columns above by a tree
+      model, which cannot take the square root of a difference. On a tube it
+      is near zero however curved the tube is, because heat leaves equally in
+      both directions; it rises wherever one direction is closed off. Without
+      it ``drift`` reads a dendrite-radius tube and a spine cap as nearly the
+      same thing, because a tube's own mean curvature dominates the drift's
+      magnitude.
+    - ``extent``: :math:`\\sqrt{\\operatorname{tr} C_t}`, the neighbourhood's
+      overall size in length units.
+    - ``linear``, ``planar``, ``round``: :math:`(\\lambda_1 -
+      \\lambda_2)/\\lambda_1`, :math:`(\\lambda_2 - \\lambda_3)/\\lambda_1`,
+      :math:`\\lambda_3/\\lambda_1`.
+    - ``align1``, ``align2``: :math:`m_t' C_t m_t` and :math:`m_t' C_t^2 m_t`,
+      each normalised by :math:`\\lVert m_t \\rVert^2` and the matching power
+      of :math:`\\lambda_1` — how much of the drift lies along the
+      neighbourhood's dominant axis.
+
+    ``extent`` with ``linear`` and ``planar`` is the eigenvalue triple
+    re-expressed, not a subset of it: the map between them is a bijection.
+    Ratios are emitted rather than raw eigenvalues because the consumers are
+    tree models, which cannot form :math:`\\lambda_1 / \\lambda_3` themselves.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
+    max_eigenvalue :
+        Maximum Laplacian eigenvalue to include; see
+        [compute_hks][meshmash.decompose.compute_hks].
+    t_max :
+        Largest diffusion timescale.
+    t_min :
+        Smallest diffusion timescale.
+    n_scales :
+        Number of timescales, spaced logarithmically between ``t_min`` and
+        ``t_max``.  Each contributes eight columns.
+    band_size :
+        Number of eigenpairs per ARPACK band.
+    truncate_extra :
+        Whether to discard eigenpairs that overshoot ``max_eigenvalue``.
+    robust :
+        If ``True``, use the robust Laplacian.
+    mollify_factor :
+        Mollification factor for the robust Laplacian.
+    decomposition_dtype :
+        Floating-point dtype for the eigendecomposition.
+    moment_dtype :
+        Dtype the moments are accumulated and assembled in.  float64 is not
+        a default worth changing: :math:`C_t` is the difference between a
+        second moment scaled by the mesh's own extent and a nearly equal
+        outer product, and at spine scale on a micron-sized chunk those
+        differ by four orders of magnitude.
+    out_dtype :
+        Dtype of the returned invariants.  The invariants are well
+        conditioned once formed, so float32 is enough for them even though
+        it is not enough to form them.
+    verbose :
+        Verbosity level passed through to
+        [spectral_geometry_filter][meshmash.decompose.spectral_geometry_filter].
+
+    Returns
+    -------
+    :
+        Array of shape ``(V, n_scales * 8)``, scale-major, named by
+        [heat_kernel_moment_names][meshmash.decompose.heat_kernel_moment_names].
+
+    Notes
+    -----
+    The invariants are extrinsic: they read the shape of the diffusion cloud
+    in space, so a tube that curves appreciably within one diffusion length
+    loses ``linear`` gradually.  That is a smooth degradation with scale, not
+    a failure.
+
+    Precedent for the construction: integral invariants [1], local covariance
+    features from point-cloud processing [2], vector diffusion maps [3], and
+    the classical identity between heat smoothing and mean-curvature flow.
+
+    References
+    ----------
+    [1] H. Pottmann, J. Wallner, Q.-X. Huang, and Y.-L. Yang, "Integral
+        invariants for robust geometry processing", Computer Aided Geometric
+        Design, 26(1):37-60, 2009.
+    [2] M. Weinmann, B. Jutzi, S. Hinz, and C. Mallet, "Semantic point cloud
+        interpretation based on optimal neighborhoods, relevant features and
+        efficient classifiers", ISPRS Journal of Photogrammetry and Remote
+        Sensing, 105:286-304, 2015.
+    [3] A. Singer and H.-T. Wu, "Vector diffusion maps and the connection
+        Laplacian", Communications on Pure and Applied Mathematics,
+        65(8):1067-1144, 2012.
+    """
+    vertices, faces = interpret_mesh(mesh)
+    vertices = np.asarray(vertices, dtype=np.float64)
+    faces = np.asarray(faces)
+
+    L, M = cotangent_laplacian(
+        (vertices, faces), robust=robust, mollify_factor=mollify_factor
+    )
+
+    # Centred on the mesh's own centroid before the products are formed. The
+    # coordinates arrive as absolute dataset positions, which can be six
+    # orders of magnitude larger than the local structure being measured, and
+    # every digit of that offset is a digit the covariance's cancellation
+    # would eat.
+    centered = vertices - vertices.mean(axis=0)
+    signals = np.empty((len(vertices), 9), dtype=moment_dtype)
+    signals[:, :3] = centered
+    for column, (i, j) in enumerate(_MOMENT_PAIRS, start=3):
+        signals[:, column] = centered[:, i] * centered[:, j]
+
+    filter_func = get_hks_filter(t_max, t_min, n_scales, dtype=decomposition_dtype)
+    _, filtered = spectral_geometry_filter(
+        (L, M),
+        filter_func,
+        max_eigenvalue=max_eigenvalue,
+        band_size=band_size,
+        truncate_extra=truncate_extra,
+        drop_first=False,
+        decomposition_dtype=decomposition_dtype,
+        signals=signals,
+        signal_dtype=moment_dtype,
+        verbose=verbose,
+    )
+
+    mean = filtered[:, :, :3]
+    second = filtered[:, :, 3:]
+    drift = mean - centered[:, None, :].astype(moment_dtype)
+
+    covariance = np.empty(mean.shape + (3,), dtype=moment_dtype)
+    for column, (i, j) in enumerate(_MOMENT_PAIRS):
+        entry = second[:, :, column] - mean[:, :, i] * mean[:, :, j]
+        covariance[:, :, i, j] = entry
+        covariance[:, :, j, i] = entry
+
+    # Descending, and clipped: a covariance is positive semidefinite in exact
+    # arithmetic, and the smallest eigenvalue of a nearly degenerate one comes
+    # back slightly negative from the cancellation above.
+    eigenvalues = np.clip(np.linalg.eigvalsh(covariance)[:, :, ::-1], 0.0, None)
+    largest = eigenvalues[:, :, 0]
+    positive = largest > 0
+    safe = np.where(positive, largest, 1.0)
+
+    drift_norm = np.linalg.norm(drift, axis=-1)
+    covariance_drift = np.einsum("vtij,vtj->vti", covariance, drift)
+    drifting = drift_norm > 0
+    scaled = np.where(drifting & positive, drift_norm**2, 1.0)
+
+    normals = vertex_normals((vertices, faces))
+    # The winding of a mesh nobody oriented is arbitrary, so the absolute sign
+    # of a vertex normal says nothing. What is not arbitrary is the smallest
+    # scale's drift: heat smoothing is mean-curvature flow, so it points
+    # toward the centre of curvature whichever way the faces wind. Flipping
+    # the normals into anti-alignment with it fixes the outward convention
+    # from the geometry rather than from the file.
+    reference = drift[:, 0, :]
+    reference_norm = np.linalg.norm(reference, axis=-1)
+    usable = reference_norm > 0
+    if usable.any():
+        cosines = (
+            reference[usable] / reference_norm[usable, None] * normals[usable]
+        ).sum(axis=-1)
+        if np.median(cosines) > 0:
+            normals = -normals
+
+    normal_drift = np.einsum("vti,vi->vt", drift, normals.astype(moment_dtype))
+    # Pythagoras rather than subtracting the vector and re-normalising: the
+    # two give the same number and this is a third of the arithmetic. The clip
+    # is for the roundoff where the drift is almost entirely normal.
+    tangent_drift = np.sqrt(np.clip(drift_norm**2 - normal_drift**2, 0.0, None))
+
+    invariants = np.stack(
+        [
+            drift_norm,
+            normal_drift,
+            tangent_drift,
+            np.sqrt(eigenvalues.sum(axis=-1)),
+            np.where(positive, (eigenvalues[..., 0] - eigenvalues[..., 1]) / safe, 0.0),
+            np.where(positive, (eigenvalues[..., 1] - eigenvalues[..., 2]) / safe, 0.0),
+            np.where(positive, eigenvalues[..., 2] / safe, 0.0),
+            np.where(
+                drifting & positive,
+                (drift * covariance_drift).sum(axis=-1) / (scaled * safe),
+                0.0,
+            ),
+            np.where(
+                drifting & positive,
+                (covariance_drift * covariance_drift).sum(axis=-1)
+                / (scaled * safe**2),
+                0.0,
+            ),
+        ],
+        axis=-1,
+    )
+    return invariants.reshape(len(vertices), -1).astype(out_dtype)

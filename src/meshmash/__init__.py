@@ -27,8 +27,11 @@ from .clean import (
     remove_interior_faces,
 )
 from .datasets import fetch_sample_mesh
+from .synthetic import hemisphere_profile, revolve_profile, tube_profile
 from .decompose import (
+    HEAT_KERNEL_MOMENT_NAMES,
     compute_geometry_vectors,
+    compute_heat_kernel_moments,
     compute_hks,
     construct_bspline_basis,
     construct_bspline_filter,
@@ -36,7 +39,9 @@ from .decompose import (
     decompose_laplacian_by_bands,
     decompose_mesh,
     get_hks_filter,
+    heat_kernel_moment_names,
     spectral_geometry_filter,
+    vertex_normals,
 )
 from .graph import compute_edge_widths, condense_mesh_to_graph
 from .io import (
@@ -103,6 +108,7 @@ from .wrap import wrap_mesh
 # from .implicit_solver import HeatSolver
 
 __all__ = [
+    "HEAT_KERNEL_MOMENT_NAMES",
     "MeshStitcher",
     "agglomerate_mesh",
     "agglomerate_split_mesh",
@@ -120,6 +126,7 @@ __all__ = [
     "compute_edge_widths",
     "compute_face_winding_numbers",
     "compute_geometry_vectors",
+    "compute_heat_kernel_moments",
     "compute_hks",
     "compute_split_condensed_hks",
     "compute_vertex_areas",
@@ -143,6 +150,7 @@ __all__ = [
     "fix_split_labels_and_features",
     "get_hks_filter",
     "get_label_components",
+    "heat_kernel_moment_names",
     "get_submesh_borders",
     "get_synapse_mapping",
     "get_synapses",
@@ -150,6 +158,7 @@ __all__ = [
     "graph_laplacian_split",
     "graph_to_adjacency",
     "graphcut_face_mask",
+    "hemisphere_profile",
     "interpret_mesh",
     "interpret_path",
     "label_propagation",
@@ -175,6 +184,7 @@ __all__ = [
     "remove_degenerate_faces",
     "remove_fins",
     "remove_interior_faces",
+    "revolve_profile",
     "rough_subset_mesh_by_indices",
     "save_array",
     "save_condensed_edges",
@@ -187,8 +197,10 @@ __all__ = [
     "spectral_geometry_filter",
     "subset_mesh_by_indices",
     "threshold_mesh_by_component_size",
+    "tube_profile",
     "wrap_mesh",
     "surface_area",
     "vertex_density",
+    "vertex_normals",
     "simplify_to_density",
 ]
