@@ -1,6 +1,4 @@
 import numpy as np
-from pymeshlab import Mesh as PyMesh
-from pymeshlab import MeshSet, PercentageValue
 
 from .types import Mesh
 
@@ -24,6 +22,11 @@ def wrap_mesh(
     offset_fraction : float
         Offset distance as a fraction of the largest bounding-box diagonal (used when offset is None).
     """
+    # pymeshlab's import loads MeshLab's whole Qt plugin tree (minutes on a
+    # cold macOS env); only this function needs it, so only callers pay.
+    from pymeshlab import Mesh as PyMesh
+    from pymeshlab import MeshSet, PercentageValue
+
     vertices = input_mesh[0]
     bbox_min = vertices.min(axis=0)
     bbox_max = vertices.max(axis=0)
