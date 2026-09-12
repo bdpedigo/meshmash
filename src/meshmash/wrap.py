@@ -21,9 +21,12 @@ def wrap_mesh(
         Ball size as a fraction of the largest bounding-box diagonal (used when alpha is None).
     offset_fraction : float
         Offset distance as a fraction of the largest bounding-box diagonal (used when offset is None).
+
+    Returns
+    -------
+    Mesh
+        The wrapped mesh as a tuple of vertices and faces.
     """
-    # pymeshlab's import loads MeshLab's whole Qt plugin tree (minutes on a
-    # cold macOS env); only this function needs it, so only callers pay.
     from pymeshlab import Mesh as PyMesh
     from pymeshlab import MeshSet, PercentageValue
 
