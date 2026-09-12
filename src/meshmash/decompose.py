@@ -10,7 +10,7 @@ from scipy.sparse import coo_array, csc_array, csr_array, sparray
 from tqdm.auto import tqdm
 
 from .laplacian import cotangent_laplacian
-from .types import Mesh
+from .types import ArrayLike, Mesh
 
 
 def decompose_laplacian(
@@ -297,13 +297,89 @@ def get_hks_filter(
         Callable that accepts a 1-D eigenvalue array of length ``K`` and
         returns a ``(n_scales, K)`` coefficient array.
     """
-    scales = np.geomspace(t_min, t_max, n_scales, dtype=dtype)
+    return get_heat_filter(
+        np.geomspace(t_min, t_max, n_scales, dtype=dtype), dtype=dtype
+    )
 
-    def hks_filter(eigenvalues):
+
+def get_heat_filter(
+    scales: ArrayLike, dtype: np.dtype = np.float64
+) -> Callable[[np.ndarray], np.ndarray]:
+    """Build a heat-kernel spectral filter over explicitly chosen timescales.
+
+    The same :math:`\\exp(-t \\lambda)` bank that
+    [get_hks_filter][meshmash.decompose.get_hks_filter] builds, but from a
+    timescale array the caller supplies rather than from a geometric grid.
+    Useful when the timescales come from a length scale of interest, since a
+    diffusion of timescale ``t`` smooths over roughly ``sqrt(t)`` of surface.
+
+    Parameters
+    ----------
+    scales :
+        Diffusion timescales, shape ``(T,)``.  Need not be evenly spaced.
+    dtype :
+        Floating-point dtype for the output coefficients.
+
+    Returns
+    -------
+    :
+        Callable that accepts a 1-D eigenvalue array of length ``K`` and
+        returns a ``(T, K)`` coefficient array.
+    """
+    scales = np.asarray(scales, dtype=dtype)
+
+    def heat_filter(eigenvalues):
         coefs = np.exp(-np.outer(scales, eigenvalues))
         return coefs
 
-    return hks_filter
+    return heat_filter
+
+
+def concatenate_filters(
+    *filters: Optional[Callable[[np.ndarray], np.ndarray]],
+) -> Callable[[np.ndarray], np.ndarray]:
+    """Stack several spectral filters into one bank, in the order given.
+
+    One decomposition is the expensive part of
+    [spectral_geometry_filter][meshmash.decompose.spectral_geometry_filter], and
+    a stacked bank lets one call serve several filters off it.  The stacked
+    filter's output rows are the inputs' output rows, concatenated, so a caller
+    slices the result back apart by the widths it put in.
+
+    ``None`` entries are skipped, so an optional filter can be passed straight
+    through without a branch at the call site.
+
+    Parameters
+    ----------
+    *filters :
+        Filters as accepted by
+        [spectral_geometry_filter][meshmash.decompose.spectral_geometry_filter],
+        each mapping a ``(K,)`` eigenvalue array to a ``(F_i, K)`` coefficient
+        array.
+
+    Returns
+    -------
+    :
+        Callable returning a ``(sum(F_i), K)`` coefficient array.
+
+    Raises
+    ------
+    ValueError
+        If every argument is ``None``.
+    """
+    kept = [f for f in filters if f is not None]
+    if not kept:
+        raise ValueError(
+            "concatenate_filters needs at least one filter that is not None"
+        )
+
+    if len(kept) == 1:
+        return kept[0]
+
+    def concatenated_filter(eigenvalues):
+        return np.concatenate([f(eigenvalues) for f in kept], axis=0)
+
+    return concatenated_filter
 
 
 def construct_bspline_basis(
@@ -397,6 +473,8 @@ def spectral_geometry_filter(
     point_laplacian: bool = False,
     n_neighbors: int = 30,
     verbose: Union[bool, int] = False,
+    signals: Optional[np.ndarray] = None,
+    signal_dtype: np.dtype = np.float64,
 ) -> Union[np.ndarray, tuple[np.ndarray, np.ndarray]]:
     """Apply a spectral filter to the geometry of a mesh.
 
@@ -430,12 +508,29 @@ def spectral_geometry_filter(
     verbose :
         If >0, print out additional information about the computation. Higher values
         give more information.
+    signals :
+        Optional per-vertex signals to filter, shape ``(V, S)``. Where the
+        default path filters the *diagonal* of the heat kernel -- one scalar
+        per vertex per filter -- this filters the kernel's action on a
+        function, :math:`(K_t f)(x) = \\sum_k c_t(\\lambda_k) \\phi_k(x)
+        \\langle \\phi_k, f \\rangle_M`, accumulated band by band beside the
+        diagonal off the same eigenpairs. Requires ``filter``.
+    signal_dtype :
+        Dtype the signal accumulation runs in, independent of
+        ``decomposition_dtype``. Defaults to float64, which is a deliberate
+        asymmetry: the decomposition tolerates float32, but a projection sums
+        over every vertex of the mesh and a caller differencing two filtered
+        signals needs the digits that float32 does not carry.
 
     Returns
     -------
     :
-        A 2D array of features, where the first dimension is the number of vertices, and
-        the second is the number of features.
+        Three shapes, by what was asked for. With ``filter`` and no
+        ``signals``, a ``(V, F)`` array of filtered diagonal features. With
+        ``filter`` and ``signals``, the pair ``(features, signal_features)``
+        where ``signal_features`` is ``(V, F, S)``. With no ``filter``, the
+        pair ``(eigenvalues, eigenvectors)`` -- the decomposition itself,
+        unfiltered.
 
     Notes
     -----
@@ -474,6 +569,19 @@ def spectral_geometry_filter(
             #     mesh, robust=robust, mollify_factor=mollify_factor
             # )
 
+    if signals is not None:
+        if filter is None:
+            raise ValueError(
+                "signals need a filter: without one this function returns the "
+                "eigenpairs themselves and there is nothing to weight the "
+                "signal projections by"
+            )
+        signals = np.asarray(signals, dtype=signal_dtype)
+        if signals.ndim != 2 or len(signals) != L.shape[0]:
+            raise ValueError(
+                f"signals must be (V, S) with V={L.shape[0]}, got {signals.shape}"
+            )
+
     if decomposition_dtype is not None:
         L = L.astype(decomposition_dtype)
         if M is not None:
@@ -503,6 +611,16 @@ def spectral_geometry_filter(
     else:
         # will just store the eigenvectors themselves
         features = []
+
+    if signals is not None:
+        # M-weighted once, outside the loop: every band projects the signals
+        # against the same <., .>_M inner product.
+        weighted_signals = np.asarray(M @ signals, dtype=signal_dtype)
+        signal_features = np.zeros(
+            (L.shape[0], n_features, signals.shape[1]), dtype=signal_dtype
+        )
+    else:
+        signal_features = None
 
     timing = {}
     timing["decompose"] = 0
@@ -573,6 +691,23 @@ def spectral_geometry_filter(
             currtime = time.time()
             features += band_features
             timing["sum"] += time.time() - currtime
+
+            if signals is not None:
+                currtime = time.time()
+                band_phi = band_eigenvectors[:, first_idx:].astype(signal_dtype)
+                # <phi_k, f>_M, for every kept eigenvector and every signal.
+                projected = band_phi.T @ weighted_signals
+                # One GEMM rather than a loop over filters: fold the (F, K)
+                # coefficients into the (K, S) projections to get (K, F * S),
+                # then left-multiply by the eigenvectors once.
+                folded = (
+                    np.asarray(band_coefs, dtype=signal_dtype)[:, :, None]
+                    * projected[None, :, :]
+                ).transpose(1, 0, 2)
+                signal_features += (
+                    band_phi @ folded.reshape(band_phi.shape[1], -1)
+                ).reshape(signal_features.shape)
+                timing["signals"] = timing.get("signals", 0) + (time.time() - currtime)
         else:
             features.append(band_eigenvectors)
 
@@ -599,6 +734,8 @@ def spectral_geometry_filter(
         eigenvalues = np.array(eigenvalues, dtype=decomposition_dtype)
         features = np.concatenate(features, axis=1, dtype=decomposition_dtype)
         return eigenvalues, features
+    elif signals is not None:
+        return features, signal_features
     else:
         return features
 
