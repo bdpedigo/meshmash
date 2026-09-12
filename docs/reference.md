@@ -8,6 +8,8 @@ title: API Reference
 
 ::: meshmash.decompose
 
+::: meshmash.curvature
+
 ::: meshmash.laplacian
 
 ::: meshmash.split

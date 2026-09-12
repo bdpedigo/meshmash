@@ -59,6 +59,45 @@ def mesh_to_edges(mesh: Mesh) -> np.ndarray:
     return edges
 
 
+def boundary_vertices(mesh: Mesh) -> np.ndarray:
+    """Find the vertices on the open boundary of a mesh.
+
+    An edge that only one face uses is a boundary edge, and its two endpoints
+    are boundary vertices.  On a closed surface there are none.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh.
+
+    Returns
+    -------
+    :
+        Sorted array of vertex indices on boundary edges.
+
+    Notes
+    -----
+    [get_submesh_borders][meshmash.split.get_submesh_borders] answers the same
+    question through [PolyData.extract_feature_edges][pyvista.PolyData.extract_feature_edges].
+    This one counts edges in numpy instead, without building a
+    [PolyData][pyvista.PolyData], because it runs once per chunk inside
+    per-vertex featurizers.
+
+    Quantities that a boundary corrupts are usually zeroed there rather than
+    dropped, so that the array keeps one row per vertex.  A vertex area at the
+    boundary is a partial area, and the differential quantities built on it are
+    wrong by an amount nothing downstream can see.
+    """
+    _, faces = interpret_mesh(mesh)
+    faces = np.asarray(faces)
+    edges = np.sort(
+        np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]]),
+        axis=1,
+    )
+    unique_edges, counts = np.unique(edges, axis=0, return_counts=True)
+    return np.unique(unique_edges[counts == 1])
+
+
 def mesh_to_adjacency(mesh: Mesh) -> csr_array:
     """Build a sparse weighted adjacency matrix from a mesh.
 
