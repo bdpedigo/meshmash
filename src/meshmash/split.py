@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd
@@ -141,6 +141,158 @@ def bisect_adjacency(
     return sub_adjs, submesh_indices
 
 
+def _interpret_adjacency(mesh: Union[Mesh, np.ndarray, csr_array]) -> csr_array:
+    """Return a mesh graph's adjacency, accepting either a mesh or an adjacency.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh],
+        or an adjacency matrix that is already one of those.
+
+    Returns
+    -------
+    :
+        Sparse adjacency matrix of the mesh graph, shape ``(V, V)``.
+    """
+    if isinstance(mesh, (csr_array, np.ndarray)):
+        return mesh
+    return mesh_to_adjacency(interpret_mesh(mesh))
+
+
+def _order_split_by_size(submesh_mapping: np.ndarray) -> np.ndarray:
+    """Relabel a split so that label ``0`` is the largest chunk.
+
+    Parameters
+    ----------
+    submesh_mapping :
+        Per-vertex integer label array, ``-1`` for a vertex in no chunk.
+
+    Returns
+    -------
+    :
+        The same partition with labels renumbered ``0, 1, …, K-1`` from
+        largest chunk to smallest.  ``-1`` stays ``-1``.
+    """
+    valid_submesh_mapping = submesh_mapping[submesh_mapping != -1]
+    if len(valid_submesh_mapping) == 0:
+        # Every connected component fell under min_vertex_threshold, so
+        # there is nothing to reorder and no label to be the largest.
+        # Returning the all -1 mapping leaves that for the caller to
+        # notice; the reordering below raises on the empty maximum.
+        return submesh_mapping
+    labels, counts = np.unique(valid_submesh_mapping, return_counts=True)
+    reorder = np.argsort(-counts)
+    new_labels = np.arange(labels.max() + 1)
+    old_to_new = dict(zip(labels[reorder], new_labels))
+    old_to_new[-1] = -1
+    return np.vectorize(old_to_new.get)(submesh_mapping)
+
+
+def _fit_split_by_queue(
+    whole_adj: csr_array,
+    make_piece: Callable[[np.ndarray], Any],
+    size_of: Callable[[Any], int],
+    cut: Callable[[Any], tuple[Sequence[Any], Sequence[np.ndarray]]],
+    max_vertex_threshold: int = 20_000,
+    min_vertex_threshold: int = 100,
+    max_rounds: int = 100_000,
+    verbose: Union[bool, int] = False,
+) -> np.ndarray:
+    """Run a cut over a work queue until every piece is small enough.
+
+    Every way of splitting a mesh in this module is this one loop with a
+    different cut in the middle: seed the queue with the connected components
+    worth keeping, pull a piece off, cut it if it is too big, and put the
+    sub-pieces back.  The loop lives here so that a new cut method is a cut and
+    nothing else.  The component pre-pass, the index bookkeeping, the runaway
+    guard, the ``-1`` convention and the largest-first ordering are shared, so
+    a method cannot get one of them subtly wrong on its own.
+
+    A *piece* is whatever state the cut works on.  It is opaque here: the graph
+    Laplacian cut carries a sub-adjacency, the cotangent cut carries an
+    ``(L, M)`` pair.  Each cut slices its own piece out of its parent rather
+    than out of the whole mesh, which is why the piece travels through the
+    queue at all.
+
+    Parameters
+    ----------
+    whole_adj :
+        Sparse adjacency matrix of the whole mesh graph, shape ``(V, V)``.
+        Used for the connected-component pre-pass and for the vertex count.
+    make_piece :
+        Builds the piece for one connected component, given that component's
+        vertex indices into the whole mesh.
+    size_of :
+        Returns the number of vertices a piece holds.
+    cut :
+        Splits one piece into two or more.  Returns the sub-pieces, and for
+        each sub-piece the indices it occupies *within its parent piece*.
+        Raise from inside ``cut`` if a piece cannot be divided.
+    max_vertex_threshold :
+        Stop cutting a piece once it contains at most this many vertices.
+    min_vertex_threshold :
+        Discard connected components with fewer than this many vertices;
+        their vertices receive label ``-1``.
+    max_rounds :
+        Maximum number of cuts before the loop stops regardless of the
+        remaining piece sizes.
+    verbose :
+        If truthy, print the queue size every 50 rounds.
+
+    Returns
+    -------
+    :
+        Per-vertex integer label array of shape ``(V,)``.  Labels run
+        ``0, 1, …, K-1`` ordered from largest to smallest chunk; vertices
+        not assigned to any chunk have label ``-1``.
+    """
+    n_vertices = whole_adj.shape[0]
+    mesh_indices = np.arange(n_vertices)
+
+    # first, append all the connected components that are large enough to the queue
+    n_components, component_labels = connected_components(whole_adj)
+
+    queue = []
+    for component_id in range(n_components):
+        component_mask = component_labels == component_id
+        count = component_mask.sum()
+        if count >= min_vertex_threshold:
+            component_indices = mesh_indices[component_mask]
+            queue.append((make_piece(component_indices), component_indices))
+
+    submesh_mapping = np.full(n_vertices, -1, dtype=int)
+
+    n_finished = 0
+    rounds = 0
+
+    while len(queue) > 0 and rounds < max_rounds:
+        if verbose and rounds % 50 == 0:
+            print("Meshes in queue:", len(queue))
+        current_piece, current_indices = queue.pop(0)
+
+        # if this piece is small enough, it is finished as it stands; this
+        # happens when a connected component is already small
+        if size_of(current_piece) <= max_vertex_threshold:
+            pieces, indices_to_main = [current_piece], [current_indices]
+        else:  # otherwise, cut it
+            pieces, local_indices = cut(current_piece)
+
+            # adjust indices to be in terms of the main mesh
+            indices_to_main = [current_indices[indices] for indices in local_indices]
+
+        for piece, indices in zip(pieces, indices_to_main):
+            if size_of(piece) > max_vertex_threshold:
+                queue.append((piece, indices))
+            else:
+                submesh_mapping[indices] = n_finished
+                n_finished += 1
+        rounds += 1
+
+    # remap so the first submesh is largest
+    return _order_split_by_size(submesh_mapping)
+
+
 def fit_mesh_split(
     mesh: Union[Mesh, np.ndarray, csr_array],
     max_vertex_threshold: int = 20_000,
@@ -181,81 +333,18 @@ def fit_mesh_split(
         ``0, 1, …, K-1`` ordered from largest to smallest chunk; vertices
         not assigned to any chunk have label ``-1``.
     """
-    if isinstance(mesh, (csr_array, np.ndarray)):
-        whole_adj = mesh
-    else:
-        mesh = interpret_mesh(mesh)
-        whole_adj = mesh_to_adjacency(mesh)
+    whole_adj = _interpret_adjacency(mesh)
 
-    n_vertices = whole_adj.shape[0]
-    mesh_indices = np.arange(n_vertices)
-
-    # first, append all the connected components that are large enough to the queue
-    n_components, component_labels = connected_components(whole_adj)
-
-    adj_queue = []
-    for component_id in range(n_components):
-        component_mask = component_labels == component_id
-        count = component_mask.sum()
-        if count >= min_vertex_threshold:
-            component_indices = mesh_indices[component_mask]
-            component_adj = whole_adj[component_indices][:, component_indices]
-            adj_queue.append((component_adj, component_indices))
-
-    submesh_mapping = np.full(n_vertices, -1, dtype=int)
-    indices_by_submesh = []
-
-    n_finished = 0
-    rounds = 0
-
-    while len(adj_queue) > 0 and rounds < max_rounds:
-        if verbose and rounds % 50 == 0:
-            print("Meshes in queue:", len(adj_queue))
-        current_adj, current_indices = adj_queue.pop(0)
-
-        # if this submesh is small enough, add it to the finished list
-        # this can happen if ccs are already small
-        if current_adj.shape[0] <= max_vertex_threshold:
-            sub_adjs, submesh_indices_to_main = [current_adj], [current_indices]
-        else:  # otherwise, split
-            sub_adjs, submesh_indices = bisect_adjacency(current_adj)
-            submesh_colors = np.zeros(n_vertices, dtype=float)
-            submesh_colors[submesh_indices[0]] = 0
-            submesh_colors[submesh_indices[1]] = 1
-
-            # adjust indices to be in terms of the main mesh
-            submesh_indices_to_main = [
-                current_indices[indices] for indices in submesh_indices
-            ]
-
-        for sub_adj, indices in zip(sub_adjs, submesh_indices_to_main):
-            if sub_adj.shape[0] > max_vertex_threshold:
-                adj_queue.append((sub_adj, indices))
-            else:
-                # TODO maybe add ensure_connected as a flag?
-                # assert connected_components(sub_adj)[0] == 1
-                # finished_meshes.append((sub_adj, indices))
-                submesh_mapping[indices] = n_finished
-                indices_by_submesh.append(indices)
-                n_finished += 1
-        rounds += 1
-
-    # remap so the first submesh is largest
-    valid_submesh_mapping = submesh_mapping[submesh_mapping != -1]
-    if len(valid_submesh_mapping) == 0:
-        # Every connected component fell under min_vertex_threshold, so
-        # there is nothing to reorder and no label to be the largest.
-        # Returning the all -1 mapping leaves that for the caller to
-        # notice; the reordering below raises on the empty maximum.
-        return submesh_mapping
-    labels, counts = np.unique(valid_submesh_mapping, return_counts=True)
-    reorder = np.argsort(-counts)
-    new_labels = np.arange(labels.max() + 1)
-    old_to_new = dict(zip(labels[reorder], new_labels))
-    old_to_new[-1] = -1
-    submesh_mapping = np.vectorize(old_to_new.get)(submesh_mapping)
-
-    return submesh_mapping
+    return _fit_split_by_queue(
+        whole_adj,
+        lambda indices: whole_adj[indices][:, indices],
+        lambda adj: adj.shape[0],
+        bisect_adjacency,
+        max_vertex_threshold=max_vertex_threshold,
+        min_vertex_threshold=min_vertex_threshold,
+        max_rounds=max_rounds,
+        verbose=verbose,
+    )
 
 
 # def laplacian_split(L: csr_array, M):
@@ -343,7 +432,7 @@ def bisect_laplacian(
 
 
 def fit_mesh_split_lap(
-    mesh: Union[Mesh, np.ndarray, csr_array],
+    mesh: Mesh,
     max_vertex_threshold: int = 20_000,
     min_vertex_threshold: int = 100,
     max_rounds: int = 100_000,
@@ -362,6 +451,9 @@ def fit_mesh_split_lap(
     ----------
     mesh :
         Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
+        An adjacency matrix is not enough here, unlike in
+        [fit_mesh_split][meshmash.split.fit_mesh_split]: the cotangent
+        Laplacian is built from the vertex positions.
     max_vertex_threshold :
         Stop bisecting a chunk once it contains at most this many vertices.
     min_vertex_threshold :
@@ -386,78 +478,179 @@ def fit_mesh_split_lap(
         not assigned to any chunk have label ``-1``.
     """
     if isinstance(mesh, (csr_array, np.ndarray)):
-        whole_adj = mesh
-    else:
-        mesh = interpret_mesh(mesh)
-        whole_adj = mesh_to_adjacency(mesh)
+        raise TypeError(
+            "fit_mesh_split_lap needs the mesh itself, not an adjacency "
+            "matrix: the cotangent Laplacian is built from vertex positions"
+        )
+    mesh = interpret_mesh(mesh)
+    whole_adj = mesh_to_adjacency(mesh)
 
-    n_vertices = whole_adj.shape[0]
-    mesh_indices = np.arange(n_vertices)
+    def make_piece(indices: np.ndarray):
+        submesh = subset_mesh_by_indices(mesh, indices)
+        return cotangent_laplacian(
+            submesh, robust=robust, mollify_factor=mollify_factor
+        )
 
-    # first, append all the connected components that are large enough to the queue
-    n_components, component_labels = connected_components(whole_adj)
+    return _fit_split_by_queue(
+        whole_adj,
+        make_piece,
+        lambda piece: piece[0].shape[0],
+        lambda piece: bisect_laplacian(*piece),
+        max_vertex_threshold=max_vertex_threshold,
+        min_vertex_threshold=min_vertex_threshold,
+        max_rounds=max_rounds,
+        verbose=verbose,
+    )
 
-    adj_queue = []
-    for component_id in range(n_components):
-        component_mask = component_labels == component_id
-        count = component_mask.sum()
-        if count >= min_vertex_threshold:
-            component_indices = mesh_indices[component_mask]
-            # component_adj = whole_adj[component_indices][:, component_indices]
-            submesh = subset_mesh_by_indices(mesh, component_indices)
-            L, M = cotangent_laplacian(
-                submesh, robust=robust, mollify_factor=mollify_factor
+
+def geodesic_voronoi_split(adj: csr_array, n_cells: int) -> np.ndarray:
+    """Cut a mesh graph into ``n_cells`` geodesic Voronoi cells.
+
+    Picks ``n_cells`` seed vertices by farthest-point sampling over
+    edge-length distances, then gives every vertex to the seed that reaches
+    it first along the surface.
+
+    Two properties follow from the construction, and they are the reason to
+    cut a mesh this way.  A cell of a connected graph is connected, because
+    any vertex on a shortest path to the owning seed is itself owned by that
+    seed.  And every vertex lies within the sampling radius of its own seed,
+    so the cells are compact.  Compactness is what a distance-based collar such as
+    [MeshStitcher.expand_split][meshmash.split.MeshStitcher.expand_split]
+    prices.
+
+    Each farthest-point step is a single-source
+    [dijkstra][scipy.sparse.csgraph.dijkstra] truncated at the current
+    sampling radius, since a new seed can only improve vertices nearer to it
+    than that.  Seeding therefore costs far less than one full traversal per
+    seed.
+
+    The cut is deterministic and takes no random seed: the first seed is
+    vertex ``0`` and ties break by index.
+
+    Parameters
+    ----------
+    adj :
+        Sparse adjacency matrix of the mesh graph, shape ``(V, V)``, weighted
+        by edge length as [mesh_to_adjacency][meshmash.utils.mesh_to_adjacency]
+        returns it.
+    n_cells :
+        Number of seeds, and so the largest number of cells.
+
+    Returns
+    -------
+    :
+        Per-vertex cell label of shape ``(V,)``, running ``0, 1, …``.  A cell
+        can come back empty if two seeds land on the same vertex.
+    """
+    nearest = dijkstra(adj, directed=False, indices=[0], min_only=True)
+    seeds = [0]
+    for _ in range(1, n_cells):
+        farthest = int(np.argmax(nearest))
+        update = dijkstra(
+            adj,
+            directed=False,
+            indices=[farthest],
+            min_only=True,
+            limit=float(nearest[farthest]),
+        )
+        nearest = np.minimum(nearest, update)
+        seeds.append(farthest)
+
+    _, _, sources = dijkstra(
+        adj,
+        directed=False,
+        indices=seeds,
+        min_only=True,
+        return_predecessors=True,
+    )
+    lookup = np.full(adj.shape[0], -1, dtype=np.int64)
+    lookup[np.asarray(seeds)] = np.arange(len(seeds))
+    return lookup[sources]
+
+
+def fit_mesh_split_geodesic(
+    mesh: Union[Mesh, np.ndarray, csr_array],
+    max_vertex_threshold: int = 20_000,
+    min_vertex_threshold: int = 100,
+    target_vertices: int = 10_000,
+    max_rounds: int = 100_000,
+    verbose: Union[bool, int] = False,
+) -> np.ndarray:
+    """Partition a mesh into non-overlapping chunks by geodesic Voronoi cells.
+
+    An alternative to
+    [fit_mesh_split][meshmash.split.fit_mesh_split] that never solves an
+    eigenproblem.  A piece over ``max_vertex_threshold`` vertices is cut into
+    ``ceil(n / target_vertices)`` cells at once by
+    [geodesic_voronoi_split][meshmash.split.geodesic_voronoi_split], and a
+    cell still over the threshold is cut again.  The recursion is what makes
+    the chunk sizes ragged: a dense patch such as a soma packs more vertices
+    into a sampling radius than a thin process does, so it gets re-cut.
+
+    Where the two differ, beyond the cost of the cut itself.  Spectral
+    bisection halves a piece by a Fiedler sign, which balances the two sides
+    but says nothing about how far a chunk reaches across the surface.  This
+    method bounds the reach instead and lets the sizes vary.  Chunks are
+    connected by construction here, which the bisection does not promise, and
+    the result is reproducible run to run, which the bisection is not.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh, adjacency matrix, or vertex array accepted by
+        [interpret_mesh][meshmash.types.interpret_mesh] /
+        [mesh_to_adjacency][meshmash.utils.mesh_to_adjacency].
+    max_vertex_threshold :
+        Stop cutting a chunk once it contains at most this many vertices.
+    min_vertex_threshold :
+        Discard connected components with fewer than this many vertices;
+        their vertices receive label ``-1``.
+    target_vertices :
+        Wanted vertices per cell, which sets how many seeds a piece gets.
+        Cells come out near this size, and always under
+        ``max_vertex_threshold``.
+    max_rounds :
+        Maximum number of cuts before the algorithm terminates regardless of
+        remaining chunk sizes.
+    verbose :
+        If truthy, print queue size every 50 rounds.
+
+    Returns
+    -------
+    :
+        Per-vertex integer label array of shape ``(V,)``.  Labels run
+        ``0, 1, …, K-1`` ordered from largest to smallest chunk; vertices
+        not assigned to any chunk have label ``-1``.
+    """
+    whole_adj = _interpret_adjacency(mesh)
+
+    def cut(adj: csr_array) -> tuple[list[csr_array], list[np.ndarray]]:
+        n_cells = max(2, int(np.ceil(adj.shape[0] / target_vertices)))
+        cell_of_vertex = geodesic_voronoi_split(adj, n_cells)
+        pieces = []
+        local_indices = []
+        for cell in range(n_cells):
+            members = np.nonzero(cell_of_vertex == cell)[0]
+            if len(members) > 0:
+                pieces.append(adj[members][:, members])
+                local_indices.append(members)
+        if len(pieces) < 2:
+            raise RuntimeError(
+                f"the geodesic cut left a {adj.shape[0]}-vertex piece whole; "
+                "every seed landed on the same vertex"
             )
-            adj_queue.append(((L, M), component_indices))
+        return pieces, local_indices
 
-    submesh_mapping = np.full(n_vertices, -1, dtype=int)
-    indices_by_submesh = []
-
-    n_finished = 0
-    rounds = 0
-
-    while len(adj_queue) > 0 and rounds < max_rounds:
-        if verbose:
-            print("Meshes in queue:", len(adj_queue))
-        current_adj, current_indices = adj_queue.pop(0)
-
-        # if this submesh is small enough, add it to the finished list
-        # this can happen if ccs are already small
-        if current_adj[0].shape[0] <= max_vertex_threshold:
-            sub_adjs, submesh_indices_to_main = [current_adj], [current_indices]
-        else:  # otherwise, split
-            sub_adjs, submesh_indices = bisect_laplacian(*current_adj)
-            submesh_colors = np.zeros(n_vertices, dtype=float)
-            submesh_colors[submesh_indices[0]] = 0
-            submesh_colors[submesh_indices[1]] = 1
-
-            # adjust indices to be in terms of the main mesh
-            submesh_indices_to_main = [
-                current_indices[indices] for indices in submesh_indices
-            ]
-
-        for sub_adj, indices in zip(sub_adjs, submesh_indices_to_main):
-            if sub_adj[0].shape[0] > max_vertex_threshold:
-                adj_queue.append((sub_adj, indices))
-            else:
-                # TODO maybe add ensure_connected as a flag?
-                # assert connected_components(sub_adj)[0] == 1
-                # finished_meshes.append((sub_adj, indices))
-                submesh_mapping[indices] = n_finished
-                indices_by_submesh.append(indices)
-                n_finished += 1
-        rounds += 1
-
-    # remap so the first submesh is largest
-    valid_submesh_mapping = submesh_mapping[submesh_mapping != -1]
-    labels, counts = np.unique(valid_submesh_mapping, return_counts=True)
-    reorder = np.argsort(-counts)
-    new_labels = np.arange(labels.max() + 1)
-    old_to_new = dict(zip(labels[reorder], new_labels))
-    old_to_new[-1] = -1
-    submesh_mapping = np.vectorize(old_to_new.get)(submesh_mapping)
-
-    return submesh_mapping
+    return _fit_split_by_queue(
+        whole_adj,
+        lambda indices: whole_adj[indices][:, indices],
+        lambda adj: adj.shape[0],
+        cut,
+        max_vertex_threshold=max_vertex_threshold,
+        min_vertex_threshold=min_vertex_threshold,
+        max_rounds=max_rounds,
+        verbose=verbose,
+    )
 
 
 def apply_mesh_split(mesh: Mesh, split_mapping: np.ndarray) -> list[Mesh]:
@@ -646,10 +839,12 @@ class MeshStitcher:
         max_rounds: int = 100000,
         max_overlap_neighbors: Optional[int] = None,
         verify_connected: bool = True,
+        method: str = "bisect",
+        target_vertices: int = 10_000,
     ) -> list[Mesh]:
         """Partition the mesh and build overlapping submesh chunks.
 
-        Calls [fit_mesh_split][meshmash.split.fit_mesh_split] to produce non-overlapping core
+        Calls one of the fitting functions to produce non-overlapping core
         chunks, then expands each chunk by including all vertices
         reachable within ``overlap_distance`` along mesh edges.  The
         resulting submeshes, their overlap vertex indices, and the
@@ -657,11 +852,15 @@ class MeshStitcher:
         [apply][meshmash.split.MeshStitcher.apply], [apply_on_features][meshmash.split.MeshStitcher.apply_on_features], and
         [stitch_features][meshmash.split.MeshStitcher.stitch_features].
 
+        ``method`` chooses how the mesh is cut, and nothing downstream of the
+        cut changes with it: the collar, the per-chunk work and the stitching
+        all read the same per-vertex partition.
+
         Parameters
         ----------
         max_vertex_threshold :
             Maximum vertices per non-overlapping core chunk; passed to
-            [fit_mesh_split][meshmash.split.fit_mesh_split].
+            the fitting function.
         min_vertex_threshold :
             Minimum connected-component size; smaller components are
             discarded.
@@ -677,6 +876,16 @@ class MeshStitcher:
         verify_connected :
             If ``True``, assert that every overlapping submesh forms a
             single connected component.
+        method :
+            Which cut to use.  ``"bisect"`` is recursive spectral bisection
+            ([fit_mesh_split][meshmash.split.fit_mesh_split]), the default.
+            ``"geodesic"`` is geodesic Voronoi cells
+            ([fit_mesh_split_geodesic][meshmash.split.fit_mesh_split_geodesic]),
+            which is cheaper, reproducible, and gives connected chunks.
+        target_vertices :
+            Wanted vertices per chunk for ``method="geodesic"``.  Ignored by
+            ``method="bisect"``, which has no size target beyond
+            ``max_vertex_threshold``.
 
         Returns
         -------
@@ -684,6 +893,9 @@ class MeshStitcher:
             List of overlapping submeshes as ``(vertices, faces)``
             tuples, one per chunk.
         """
+        if method not in ("bisect", "geodesic"):
+            raise ValueError(f"method must be 'bisect' or 'geodesic', got {method!r}")
+
         if max_vertex_threshold is None:
             max_vertex_threshold = len(self.mesh[0])
         if min_vertex_threshold is None:
@@ -693,13 +905,23 @@ class MeshStitcher:
             currtime = time.time()
             print("Subdividing mesh...")
 
-        submesh_mapping = fit_mesh_split(
-            self.mesh,
-            max_vertex_threshold=max_vertex_threshold,
-            min_vertex_threshold=min_vertex_threshold,
-            max_rounds=max_rounds,
-            verbose=self.verbose,
-        )
+        if method == "geodesic":
+            submesh_mapping = fit_mesh_split_geodesic(
+                self.mesh,
+                max_vertex_threshold=max_vertex_threshold,
+                min_vertex_threshold=min_vertex_threshold,
+                target_vertices=target_vertices,
+                max_rounds=max_rounds,
+                verbose=self.verbose,
+            )
+        else:
+            submesh_mapping = fit_mesh_split(
+                self.mesh,
+                max_vertex_threshold=max_vertex_threshold,
+                min_vertex_threshold=min_vertex_threshold,
+                max_rounds=max_rounds,
+                verbose=self.verbose,
+            )
 
         if self.verbose >= 2:
             print(f"Subdivision took {time.time() - currtime:.3f} seconds.")
