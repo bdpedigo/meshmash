@@ -144,13 +144,13 @@ def _interpret_adjacency(mesh: Union[Mesh, np.ndarray, csr_array]) -> csr_array:
     Parameters
     ----------
     mesh :
-        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh],
-        or an adjacency matrix that is already one of those.
+        The input mesh. Should be a tuple of (vertices, faces), or an object with
+        `vertices` and `faces` attributes. An adjacency matrix is returned unchanged.
 
     Returns
     -------
     :
-        Sparse adjacency matrix of the mesh graph, shape ``(V, V)``.
+        The sparse adjacency matrix of the mesh graph.
     """
     if isinstance(mesh, (csr_array, np.ndarray)):
         return mesh
@@ -163,13 +163,13 @@ def _order_split_by_size(submesh_mapping: np.ndarray) -> np.ndarray:
     Parameters
     ----------
     submesh_mapping :
-        Per-vertex integer label array, ``-1`` for a vertex in no chunk.
+        The chunk label for each vertex, with -1 for a vertex in no chunk.
 
     Returns
     -------
     :
-        The same partition with labels renumbered ``0, 1, …, K-1`` from
-        largest chunk to smallest.  ``-1`` stays ``-1``.
+        The same partition, with labels renumbered from 0 to K-1 in order from the
+        largest chunk to the smallest. Labels of -1 are left alone.
     """
     valid_submesh_mapping = submesh_mapping[submesh_mapping != -1]
     if len(valid_submesh_mapping) == 0:
@@ -199,29 +199,29 @@ def _fit_split_by_queue(
     Parameters
     ----------
     adj :
-        Sparse adjacency matrix of the whole mesh graph, shape ``(V, V)``.
-        Used for the connected-component pre-pass and to seed the queue.
+        The sparse adjacency matrix of the whole mesh graph. Used for the connected
+        component pre-pass and to seed the queue.
     cut :
-        Splits one sub-adjacency into two or more.  Returns the sub-pieces,
-        and for each sub-piece the indices it occupies *within its parent*.
-        Raise from inside ``cut`` if a piece cannot be divided.
+        A function which splits one sub-adjacency into two or more pieces. Returns the
+        pieces, and for each piece the indices it occupies within its parent. Should
+        raise if a piece cannot be divided.
     max_vertex_threshold :
-        Stop cutting a piece once it contains at most this many vertices.
+        The maximum number of vertices for a piece. Larger pieces are cut again.
     min_vertex_threshold :
-        Discard connected components with fewer than this many vertices;
-        their vertices receive label ``-1``.
+        The minimum number of vertices for a connected component to be included. This
+        can be used to filter out small disconnected pieces of the mesh; vertices in
+        smaller components are given a label of -1.
     max_rounds :
-        Maximum number of cuts before the loop stops regardless of the
-        remaining piece sizes.
+        The maximum number of cuts before the loop stops, regardless of the sizes of
+        the remaining pieces.
     verbose :
-        If truthy, print the queue size every 50 rounds.
+        Whether to print the number of pieces in the queue every 50 rounds.
 
     Returns
     -------
     :
-        Per-vertex integer label array of shape ``(V,)``.  Labels run
-        ``0, 1, …, K-1`` ordered from largest to smallest chunk; vertices
-        not assigned to any chunk have label ``-1``.
+        The chunk label for each vertex. Labels run from 0 to K-1, ordered from the
+        largest chunk to the smallest; vertices in no chunk have a label of -1.
     """
     n_vertices = adj.shape[0]
     mesh_indices = np.arange(n_vertices)
@@ -323,24 +323,23 @@ def fit_mesh_split(
 def geodesic_voronoi_split(adj: csr_array, n_cells: int) -> np.ndarray:
     """Cut a mesh graph into ``n_cells`` geodesic Voronoi cells.
 
-    Picks ``n_cells`` seed vertices by farthest-point sampling, 
-    then gives every vertex to the seed that reaches it first. The cut is deterministic
-    and takes no random seed: the first seed is vertex ``0`` and ties break by index.
+    Picks ``n_cells`` seed vertices by farthest-point sampling, then gives every
+    vertex to the seed that reaches it first. The cut is deterministic and takes no
+    random seed: the first seed is vertex ``0`` and ties break by index.
 
     Parameters
     ----------
     adj :
-        Sparse adjacency matrix of the mesh graph, shape ``(V, V)``, weighted
-        by edge length as [mesh_to_adjacency][meshmash.utils.mesh_to_adjacency]
-        returns it.
+        The sparse adjacency matrix of the mesh graph, weighted by edge length as
+        [mesh_to_adjacency][meshmash.utils.mesh_to_adjacency] returns it.
     n_cells :
-        Number of seeds, and so the largest number of cells.
+        The number of seeds, and therefore the maximum number of cells.
 
     Returns
     -------
     :
-        Per-vertex cell label of shape ``(V,)``, running ``0, 1, …``.  A cell
-        can come back empty if two seeds land on the same vertex.
+        The cell label for each vertex, running from 0 to `n_cells` - 1. A cell can
+        come back empty if two seeds land on the same vertex.
     """
     nearest = dijkstra(adj, directed=False, indices=[0], min_only=True)
     seeds = [0]
@@ -380,36 +379,35 @@ def fit_mesh_split_geodesic(
 
     A piece over ``max_vertex_threshold`` vertices is cut into
     ``ceil(n / target_vertices)`` cells at once by
-    [geodesic_voronoi_split][meshmash.split.geodesic_voronoi_split], and a
-    cell still over the threshold is cut again.
+    [geodesic_voronoi_split][meshmash.split.geodesic_voronoi_split], and a cell still
+    over the threshold is cut again.
 
     Parameters
     ----------
     mesh :
-        Input mesh, adjacency matrix, or vertex array accepted by
-        [interpret_mesh][meshmash.types.interpret_mesh] /
-        [mesh_to_adjacency][meshmash.utils.mesh_to_adjacency].
+        The input mesh. Should be a tuple of (vertices, faces), or an object with
+        `vertices` and `faces` attributes. An adjacency matrix can also be passed.
     max_vertex_threshold :
-        Stop cutting a chunk once it contains at most this many vertices.
+        The maximum number of vertices for a mesh chunk, before overlapping.
     min_vertex_threshold :
-        Discard connected components with fewer than this many vertices;
-        their vertices receive label ``-1``.
+        The minimum number of vertices for a connected component to be included. This
+        can be used to filter out small disconnected pieces of the mesh; vertices in
+        smaller components are given a label of -1.
     target_vertices :
-        Wanted vertices per cell, which sets how many seeds a piece gets.
-        Cells come out near this size, and always under
-        ``max_vertex_threshold``.  Must be a positive integer.
+        The number of vertices to aim for in each chunk, which sets how many seeds a
+        piece is cut with. Chunks come out near this size, and always under
+        ``max_vertex_threshold``. Must be a positive integer.
     max_rounds :
-        Maximum number of cuts before the algorithm terminates regardless of
-        remaining chunk sizes.
+        The maximum number of cuts before the algorithm stops, regardless of the sizes
+        of the remaining chunks.
     verbose :
-        If truthy, print queue size every 50 rounds.
+        Whether to print the number of pieces in the queue every 50 rounds.
 
     Returns
     -------
     :
-        Per-vertex integer label array of shape ``(V,)``.  Labels run
-        ``0, 1, …, K-1`` ordered from largest to smallest chunk; vertices
-        not assigned to any chunk have label ``-1``.
+        The chunk label for each vertex. Labels run from 0 to K-1, ordered from the
+        largest chunk to the smallest; vertices in no chunk have a label of -1.
 
     Raises
     ------
@@ -573,10 +571,6 @@ class MeshStitcher:
         [apply][meshmash.split.MeshStitcher.apply], [apply_on_features][meshmash.split.MeshStitcher.apply_on_features], and
         [stitch_features][meshmash.split.MeshStitcher.stitch_features].
 
-        ``method`` chooses how the mesh is cut, and nothing downstream of the
-        cut changes with it: the collar, the per-chunk work and the stitching
-        all read the same per-vertex partition.
-
         Parameters
         ----------
         max_vertex_threshold :
@@ -598,15 +592,14 @@ class MeshStitcher:
             If ``True``, assert that every overlapping submesh forms a
             single connected component.
         method :
-            Which cut to use.  ``"bisect"`` is recursive spectral bisection
-            ([fit_mesh_split][meshmash.split.fit_mesh_split]), the default.
-            ``"geodesic"`` is geodesic Voronoi cells
+            Which routine to use to cut the mesh. ``"bisect"`` uses spectral
+            bisection ([fit_mesh_split][meshmash.split.fit_mesh_split]).
+            ``"geodesic"`` uses geodesic Voronoi cells
             ([fit_mesh_split_geodesic][meshmash.split.fit_mesh_split_geodesic]),
             which is cheaper, reproducible, and gives connected chunks.
         target_vertices :
-            Wanted vertices per chunk for ``method="geodesic"``, where it
-            must be a positive integer.  Ignored by ``method="bisect"``,
-            which has no size target beyond ``max_vertex_threshold``.
+            The number of vertices to aim for in each chunk. Only used when ``method``
+            is ``"geodesic"``, where it must be a positive integer.
 
         Returns
         -------
@@ -684,9 +677,8 @@ class MeshStitcher:
             Per-vertex integer array of length ``V`` naming each vertex's
             core chunk, as returned by
             [fit_mesh_split][meshmash.split.fit_mesh_split].  ``-1`` for a
-            vertex in no chunk.  The other labels must run
-            ``0, 1, …, K-1``, since chunk ``i`` of the returned list is the
-            chunk labelled ``i``.
+            vertex in no chunk. The other labels must run from 0 to K-1, since chunk
+            i of the returned list is the chunk with label i.
         overlap_distance :
             Maximum geodesic edge distance used to expand each core chunk
             into its overlapping neighbourhood.
@@ -707,8 +699,8 @@ class MeshStitcher:
         Raises
         ------
         ValueError
-            If ``submesh_mapping`` has the wrong length, or if its labels do
-            not run ``0, 1, …, K-1``.
+            If ``submesh_mapping`` is the wrong length, or if its labels do not run
+            from 0 to K-1.
         """
         submesh_mapping = np.asarray(submesh_mapping)
         if len(submesh_mapping) != len(self.mesh[0]):
