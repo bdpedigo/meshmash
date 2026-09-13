@@ -973,7 +973,9 @@ class MeshStitcher:
             Per-vertex integer array of length ``V`` naming each vertex's
             core chunk, as returned by
             [fit_mesh_split][meshmash.split.fit_mesh_split].  ``-1`` for a
-            vertex in no chunk.
+            vertex in no chunk.  The other labels must run
+            ``0, 1, …, K-1``, since chunk ``i`` of the returned list is the
+            chunk labelled ``i``.
         overlap_distance :
             Maximum geodesic edge distance used to expand each core chunk
             into its overlapping neighbourhood.
@@ -990,6 +992,12 @@ class MeshStitcher:
         :
             List of overlapping submeshes as ``(vertices, faces)``
             tuples, one per chunk.
+
+        Raises
+        ------
+        ValueError
+            If ``submesh_mapping`` has the wrong length, or if its labels do
+            not run ``0, 1, …, K-1``.
         """
         submesh_mapping = np.asarray(submesh_mapping)
         if len(submesh_mapping) != len(self.mesh[0]):
@@ -999,12 +1007,19 @@ class MeshStitcher:
             )
 
         self.submesh_mapping = submesh_mapping
-        temp_submeshes = apply_mesh_split(self.mesh, submesh_mapping)
 
-        # # check if all submeshes are one connected component
-        # for submesh in temp_submeshes:
-        #     poly = mesh_to_poly(submesh)
-        #     assert poly.n_points == poly.extract_largest().n_points
+        # The chunks come from the partition itself, not from a face-derived
+        # submesh list: a cell one vertex wide owns no face whose three
+        # vertices share its label, so it would drop out of such a list and
+        # take the position of every chunk after it with it.
+        labels = np.unique(submesh_mapping)
+        labels = labels[labels >= 0]
+        n_chunks = len(labels)
+        if n_chunks > 0 and not np.array_equal(labels, np.arange(n_chunks)):
+            raise ValueError(
+                "submesh_mapping labels must run 0, 1, ..., K-1, because the "
+                f"chunk at position i is the chunk labelled i; got {labels}"
+            )
 
         adjacency = mesh_to_adjacency(self.mesh)
 
@@ -1014,7 +1029,7 @@ class MeshStitcher:
         if self.verbose:
             currtime = time.time()
             print("Finding overlapping submeshes...")
-        for i, submesh in enumerate(temp_submeshes):
+        for i in range(n_chunks):
             submesh_to_original_mapping = np.where(submesh_mapping == i)[0]
             neighbor_dists = dijkstra(
                 adjacency,

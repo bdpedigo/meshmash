@@ -134,6 +134,63 @@ def test_geodesic_drops_small_components(tube):
     assert (labels[: len(vertices)] != -1).all()
 
 
+def face_less_mapping(tube):
+    """A partition whose middle chunk owns one vertex, and so owns no face.
+
+    A face joins a chunk only when all three of its vertices carry the label,
+    so a single vertex, and equally a cell one vertex wide, contributes none.
+    The geodesic cut can leave such a cell; here it is built by hand so the
+    test does not depend on finding a mesh that provokes one.
+    """
+    n_vertices = len(tube[0])
+    submesh_mapping = np.zeros(n_vertices, dtype=int)
+    submesh_mapping[n_vertices // 2 :] = 2
+    submesh_mapping[n_vertices // 4] = 1
+    return submesh_mapping
+
+
+def test_expand_split_keeps_a_chunk_that_owns_no_face(tube):
+    """Chunk count comes from the partition, not from the faces that survive it.
+
+    `apply_mesh_split` drops a label with no face of its own.  Taking the
+    loop bounds from that list drops the trailing chunks and pairs the rest
+    with the wrong core.
+    """
+    submesh_mapping = face_less_mapping(tube)
+    stitcher = MeshStitcher(tube, n_jobs=1)
+
+    submeshes = stitcher.expand_split(submesh_mapping, overlap_distance=5.0)
+
+    assert len(submeshes) == 3
+    for label in (0, 1, 2):
+        core = np.nonzero(submesh_mapping == label)[0]
+        overlap = stitcher.submesh_overlap_indices[label]
+        assert np.isin(core, overlap).all(), (
+            f"chunk {label} must contain the vertices it owns"
+        )
+
+
+def test_stitching_covers_every_vertex_of_a_face_less_partition(tube):
+    """The symptom downstream: a lost chunk leaves its vertices unfilled."""
+    submesh_mapping = face_less_mapping(tube)
+    stitcher = MeshStitcher(tube, n_jobs=1)
+    stitcher.expand_split(submesh_mapping, overlap_distance=5.0)
+
+    stitched = stitcher.apply(lambda submesh: submesh[0][:, 2:3])
+
+    assert np.allclose(stitched[:, 0], tube[0][:, 2])
+
+
+def test_expand_split_rejects_labels_with_a_gap(tube):
+    """Position and label are the same number, so a gap has no right answer."""
+    submesh_mapping = np.zeros(len(tube[0]), dtype=int)
+    submesh_mapping[len(tube[0]) // 2 :] = 2
+    stitcher = MeshStitcher(tube, n_jobs=1)
+
+    with pytest.raises(ValueError):
+        stitcher.expand_split(submesh_mapping, overlap_distance=5.0)
+
+
 def test_stitcher_runs_the_whole_workflow_on_geodesic_chunks(tube):
     """Split, compute per chunk, stitch back, with only the cut swapped."""
     stitcher = MeshStitcher(tube, n_jobs=1)
