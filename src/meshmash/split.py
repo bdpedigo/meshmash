@@ -21,30 +21,28 @@ from .utils import (
 )
 
 
-def graph_laplacian_split(
+def spectral_bisect(
     adj: csr_array, dtype: type = np.float32
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Bisect a mesh using the Fiedler vector of the graph Laplacian.
+    """Cut a mesh graph in two along the Fiedler vector of the graph Laplacian.
 
-    Computes the second smallest eigenvector (Fiedler vector) of the
-    unnormalised graph Laplacian and partitions vertices by the sign of
-    their Fiedler coefficient.
+    The Fiedler vector is the eigenvector of the second smallest eigenvalue of the
+    graph Laplacian. Vertices are split by the sign of their entry in it, which tends
+    to cut the graph at a narrow place.
 
     Parameters
     ----------
     adj :
-        Sparse adjacency matrix of the mesh graph, shape ``(V, V)``.
+        The sparse adjacency matrix of the mesh graph.
     dtype :
-        Floating-point dtype used for the eigensolver.
+        The floating-point dtype to use for the eigensolver.
 
     Returns
     -------
     indices1 :
-        Indices of vertices in the first partition
-        (Fiedler coefficient >= 0).
+        The indices of the vertices whose Fiedler entry is >= 0.
     indices2 :
-        Indices of vertices in the second partition
-        (Fiedler coefficient < 0).
+        The indices of the vertices whose Fiedler entry is < 0.
     """
     # probably some issue with tolerance/sigma?
     # TODO normed didn't seem to make much of a difference here; perhaps just because
@@ -77,33 +75,35 @@ def graph_laplacian_split(
     return indices1, indices2
 
 
-def bisect_adjacency(
+def spectral_bisect_adjacency(
     adj: csr_array, n_retries: int = 7, check: bool = True
 ) -> tuple[tuple[csr_array, csr_array], tuple[np.ndarray, np.ndarray]]:
-    """Bisect a mesh graph into two parts using the graph-Laplacian Fiedler vector.
+    """Cut a mesh graph in two with [spectral_bisect][meshmash.split.spectral_bisect].
 
-    Calls [graph_laplacian_split][meshmash.split.graph_laplacian_split] and retries if the result is
-    degenerate (one empty partition or disconnected nodes).  Uses
-    recursion up to ``n_retries`` times.
+    The cut is retried, recursively, if it comes back degenerate: one side empty, or a
+    vertex left isolated.
 
     Parameters
     ----------
     adj :
-        Sparse adjacency matrix of shape ``(V, V)``.
+        The sparse adjacency matrix of the mesh graph.
     n_retries :
-        Maximum number of retry attempts when the split fails to produce
-        two non-empty, connected partitions.
+        The maximum number of retries before the cut is given up on.
     check :
-        If ``True``, verify that no vertex becomes isolated (zero-degree)
-        after splitting and retry if so.
+        Whether to check that the cut leaves no vertex isolated (zero-degree), and
+        retry if one is.
 
     Returns
     -------
     sub_adjs :
-        Pair of sub-adjacency matrices ``(adj1, adj2)`` for each partition.
+        The pair of sub-adjacency matrices, one for each side of the cut.
     submesh_indices :
-        Pair of index arrays ``(indices1, indices2)`` mapping each
-        partition's rows back to the original ``adj``.
+        For each side, the indices it occupies within ``adj``.
+
+    Raises
+    ------
+    RuntimeError
+        If the cut still fails after ``n_retries`` retries.
     """
     if n_retries == 0:
         logging.info("Adjacency shape: %s", adj.shape)
@@ -111,12 +111,12 @@ def bisect_adjacency(
         raise RuntimeError("Split failed to divide mesh.")
 
     # get the split indices
-    indices1, indices2 = graph_laplacian_split(adj)
+    indices1, indices2 = spectral_bisect(adj)
 
     if len(indices1) == 0 or len(indices2) == 0:
         # print(adj.shape)
         logging.info("Split failed to divide mesh, retrying.")
-        return bisect_adjacency(adj, n_retries=n_retries - 1)
+        return spectral_bisect_adjacency(adj, n_retries=n_retries - 1)
 
     # get the sub-adjacencies
     sub_adj1 = adj[indices1][:, indices1]
@@ -130,7 +130,7 @@ def bisect_adjacency(
             # TODO no idea why retrying here helps almost always after one go...
             # did not think randomness should have that much of an effect?
             logging.info("Some nodes were disconnected in the split, retrying.")
-            return bisect_adjacency(adj, n_retries=n_retries - 1)
+            return spectral_bisect_adjacency(adj, n_retries=n_retries - 1)
 
     sub_adjs = (sub_adj1, sub_adj2)
     submesh_indices = (indices1, indices2)
@@ -268,51 +268,47 @@ def _fit_split_by_queue(
     return _order_split_by_size(submesh_mapping)
 
 
-def fit_mesh_split(
+def fit_mesh_split_spectral(
     mesh: Union[Mesh, np.ndarray, csr_array],
     max_vertex_threshold: int = 20_000,
     min_vertex_threshold: int = 100,
     max_rounds: int = 100_000,
     verbose: Union[bool, int] = False,
 ) -> np.ndarray:
-    """Partition a mesh into non-overlapping chunks using recursive bisection.
+    """Partition a mesh into non-overlapping chunks by recursive spectral bisection.
 
-    Repeatedly bisects each chunk using the Fiedler vector of the graph
-    Laplacian until every chunk has at most ``max_vertex_threshold`` vertices.
-    Chunks belonging to connected components with fewer than
-    ``min_vertex_threshold`` vertices are dropped (their vertices receive
-    label ``-1``).  The returned labels are ordered so that the largest
-    chunk has label ``0``.
+    A piece over ``max_vertex_threshold`` vertices is cut in two by
+    [spectral_bisect_adjacency][meshmash.split.spectral_bisect_adjacency], and a half
+    still over the threshold is cut again.
 
     Parameters
     ----------
     mesh :
-        Input mesh, adjacency matrix, or vertex array accepted by
-        [interpret_mesh][meshmash.types.interpret_mesh] /
-        [mesh_to_adjacency][meshmash.utils.mesh_to_adjacency].
+        The input mesh. Should be a tuple of (vertices, faces), or an object with
+        `vertices` and `faces` attributes. An adjacency matrix can also be passed.
     max_vertex_threshold :
-        Stop bisecting a chunk once it contains at most this many vertices.
+        The maximum number of vertices for a mesh chunk, before overlapping.
     min_vertex_threshold :
-        Discard connected components with fewer than this many vertices;
-        their vertices receive label ``-1``.
+        The minimum number of vertices for a connected component to be included. This
+        can be used to filter out small disconnected pieces of the mesh; vertices in
+        smaller components are given a label of -1.
     max_rounds :
-        Maximum number of bisection steps before the algorithm terminates
-        regardless of remaining chunk sizes.
+        The maximum number of cuts before the algorithm stops, regardless of the sizes
+        of the remaining chunks.
     verbose :
-        If truthy, print queue size every 50 rounds.
+        Whether to print the number of pieces in the queue every 50 rounds.
 
     Returns
     -------
     :
-        Per-vertex integer label array of shape ``(V,)``.  Labels run
-        ``0, 1, …, K-1`` ordered from largest to smallest chunk; vertices
-        not assigned to any chunk have label ``-1``.
+        The chunk label for each vertex. Labels run from 0 to K-1, ordered from the
+        largest chunk to the smallest; vertices in no chunk have a label of -1.
     """
     whole_adj = _interpret_adjacency(mesh)
 
     return _fit_split_by_queue(
         whole_adj,
-        bisect_adjacency,
+        spectral_bisect_adjacency,
         max_vertex_threshold=max_vertex_threshold,
         min_vertex_threshold=min_vertex_threshold,
         max_rounds=max_rounds,
@@ -460,7 +456,9 @@ def apply_mesh_split(mesh: Mesh, split_mapping: np.ndarray) -> list[Mesh]:
         Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
     split_mapping :
         Per-vertex integer label array of length ``V`` as produced by
-        [fit_mesh_split][meshmash.split.fit_mesh_split].  Vertices with label ``-1`` are excluded.
+        [fit_mesh_split_spectral][meshmash.split.fit_mesh_split_spectral] or
+        [fit_mesh_split_geodesic][meshmash.split.fit_mesh_split_geodesic].  Vertices
+        with label ``-1`` are excluded.
 
     Returns
     -------
@@ -558,7 +556,7 @@ class MeshStitcher:
         max_rounds: int = 100000,
         max_overlap_neighbors: Optional[int] = None,
         verify_connected: bool = True,
-        method: str = "bisect",
+        method: str = "spectral",
         target_vertices: int = 10_000,
     ) -> list[Mesh]:
         """Partition the mesh and build overlapping submesh chunks.
@@ -583,7 +581,7 @@ class MeshStitcher:
             Maximum geodesic edge distance used to expand each core chunk
             into its overlapping neighbourhood.
         max_rounds :
-            Maximum bisection rounds; passed to [fit_mesh_split][meshmash.split.fit_mesh_split].
+            Maximum number of cuts; passed to the fitting function.
         max_overlap_neighbors :
             If set, limits each chunk's overlap to at most this many
             additional vertices (ranked by distance).  ``None`` keeps
@@ -592,8 +590,9 @@ class MeshStitcher:
             If ``True``, assert that every overlapping submesh forms a
             single connected component.
         method :
-            Which routine to use to cut the mesh. ``"bisect"`` uses spectral
-            bisection ([fit_mesh_split][meshmash.split.fit_mesh_split]).
+            Which routine to use to cut the mesh. ``"spectral"`` uses recursive
+            spectral bisection
+            ([fit_mesh_split_spectral][meshmash.split.fit_mesh_split_spectral]).
             ``"geodesic"`` uses geodesic Voronoi cells
             ([fit_mesh_split_geodesic][meshmash.split.fit_mesh_split_geodesic]),
             which is cheaper, reproducible, and gives connected chunks.
@@ -607,8 +606,8 @@ class MeshStitcher:
             List of overlapping submeshes as ``(vertices, faces)``
             tuples, one per chunk.
         """
-        if method not in ("bisect", "geodesic"):
-            raise ValueError(f"method must be 'bisect' or 'geodesic', got {method!r}")
+        if method not in ("spectral", "geodesic"):
+            raise ValueError(f"method must be 'spectral' or 'geodesic', got {method!r}")
 
         if max_vertex_threshold is None:
             max_vertex_threshold = len(self.mesh[0])
@@ -629,7 +628,7 @@ class MeshStitcher:
                 verbose=self.verbose,
             )
         else:
-            submesh_mapping = fit_mesh_split(
+            submesh_mapping = fit_mesh_split_spectral(
                 self.mesh,
                 max_vertex_threshold=max_vertex_threshold,
                 min_vertex_threshold=min_vertex_threshold,
@@ -660,14 +659,14 @@ class MeshStitcher:
         on its own: given the non-overlapping core chunks, expand each one
         along mesh edges into its overlap region and store the submeshes,
         their overlap vertex indices, and ``submesh_mapping`` on ``self``.
-        [split_mesh][meshmash.split.MeshStitcher.split_mesh] is exactly
-        [fit_mesh_split][meshmash.split.fit_mesh_split] followed by this.
+        [split_mesh][meshmash.split.MeshStitcher.split_mesh] is exactly one of the
+        fitting functions followed by this.
 
         The split of the two matters because only the first half is
-        expensive and only the first half is irreproducible: the recursive
-        Fiedler bisection partitions on the sign of an eigenvector that
-        converges to a tolerance, while this expansion is a deterministic
-        traversal.  A caller that has stored a partition can rebuild the
+        expensive, and under ``method="spectral"`` only the first half is
+        irreproducible: the spectral bisection partitions on the sign of an
+        eigenvector that converges to a tolerance, while this expansion is a
+        deterministic traversal.  A caller that has stored a partition can rebuild the
         same stitcher from it as many times as it likes, and two callers
         that rebuild from the same partition agree by construction.
 
@@ -676,8 +675,9 @@ class MeshStitcher:
         submesh_mapping :
             Per-vertex integer array of length ``V`` naming each vertex's
             core chunk, as returned by
-            [fit_mesh_split][meshmash.split.fit_mesh_split].  ``-1`` for a
-            vertex in no chunk. The other labels must run from 0 to K-1, since chunk
+            [fit_mesh_split_spectral][meshmash.split.fit_mesh_split_spectral] or
+            [fit_mesh_split_geodesic][meshmash.split.fit_mesh_split_geodesic].  ``-1``
+            for a vertex in no chunk. The other labels must run from 0 to K-1, since chunk
             i of the returned list is the chunk with label i.
         overlap_distance :
             Maximum geodesic edge distance used to expand each core chunk

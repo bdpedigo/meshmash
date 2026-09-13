@@ -1,7 +1,7 @@
 """Tests for the splitting methods and the queue they share.
 
 Every mesh here is synthetic, so the tests need no download.  They also avoid
-the eigensolver: the recursive bisection is not reproducible run to run (a
+the eigensolver: the recursive spectral bisection is not reproducible run to run (a
 vertex inside the solver's tolerance lands on either side), so the only way to
 pin its loop is to feed it a cut that is.
 """
@@ -12,11 +12,11 @@ from scipy.sparse.csgraph import connected_components
 
 from meshmash import (
     MeshStitcher,
-    fit_mesh_split,
     fit_mesh_split_geodesic,
+    fit_mesh_split_spectral,
     mesh_to_adjacency,
 )
-from meshmash.split import _fit_split_by_queue, bisect_adjacency
+from meshmash.split import _fit_split_by_queue, spectral_bisect_adjacency
 
 
 def tube_mesh(n_rings=100, n_theta=40, radius=5.0, spacing=1.0):
@@ -71,7 +71,7 @@ def test_geodesic_chunks_are_connected(tube):
     """The property the method rests on: a cell of a connected piece is connected.
 
     Any vertex on a shortest path to its owning seed is owned by that seed, so
-    a chunk cannot come back in two pieces.  The bisection makes no such
+    a chunk cannot come back in two pieces.  The spectral cut makes no such
     promise, which is why nothing downstream can assume it.
     """
     labels = fit_mesh_split_geodesic(tube, max_vertex_threshold=500)
@@ -116,7 +116,7 @@ def test_geodesic_rejects_a_non_positive_target(tube, target_vertices):
 
 
 def test_geodesic_drops_small_components(tube):
-    """A second component under the threshold is dropped, as in the bisection."""
+    """A second component under the threshold is dropped, as in the spectral cut."""
     vertices, faces = tube
     small_vertices, small_faces = tube_mesh(n_rings=3, n_theta=10)
     small_vertices = small_vertices + np.array([0.0, 0.0, 1_000.0])
@@ -216,8 +216,9 @@ def test_split_mesh_rejects_an_unknown_method(tube):
         stitcher.split_mesh(method="metis")
 
 
-def test_bisection_takes_an_adjacency_matrix(tube):
-    """The polymorphic entry `fit_mesh_split` documents, kept by the refactor."""
+def test_spectral_split_takes_an_adjacency_matrix(tube):
+    """The polymorphic entry `fit_mesh_split_spectral` documents, kept by the
+    refactor."""
     adjacency = mesh_to_adjacency(tube)
 
     def halve(adj):
@@ -228,18 +229,18 @@ def test_bisection_takes_an_adjacency_matrix(tube):
 
     from meshmash import split as split_module
 
-    original = split_module.bisect_adjacency
-    split_module.bisect_adjacency = halve
+    original = split_module.spectral_bisect_adjacency
+    split_module.spectral_bisect_adjacency = halve
     try:
-        labels = fit_mesh_split(adjacency, max_vertex_threshold=500)
+        labels = fit_mesh_split_spectral(adjacency, max_vertex_threshold=500)
     finally:
-        split_module.bisect_adjacency = original
+        split_module.spectral_bisect_adjacency = original
 
     assert len(labels) == adjacency.shape[0]
     assert chunk_sizes(labels).max() <= 500
 
 
-def reference_fit_mesh_split(
+def reference_fit_mesh_split_spectral(
     whole_adj, cut, max_vertex_threshold, min_vertex_threshold, max_rounds
 ):
     """The loop as it stood before the queue was shared, for comparison only."""
@@ -287,7 +288,7 @@ def reference_fit_mesh_split(
 def test_shared_queue_reproduces_the_loop_it_replaced(tube):
     """Same cut, same partition as the per-method loop that came before.
 
-    The cut here is a deterministic index halving, because the real Fiedler
+    The cut here is a deterministic index halving, because the real spectral
     cut does not repeat itself and cannot settle the question.
     """
     adjacency = mesh_to_adjacency(tube)
@@ -305,7 +306,7 @@ def test_shared_queue_reproduces_the_loop_it_replaced(tube):
         min_vertex_threshold=100,
         max_rounds=100_000,
     )
-    expected = reference_fit_mesh_split(
+    expected = reference_fit_mesh_split_spectral(
         adjacency,
         halve,
         max_vertex_threshold=300,
@@ -322,7 +323,7 @@ def test_max_rounds_stops_the_queue(tube):
 
     labels = _fit_split_by_queue(
         adjacency,
-        bisect_adjacency,
+        spectral_bisect_adjacency,
         max_vertex_threshold=100,
         min_vertex_threshold=100,
         max_rounds=0,

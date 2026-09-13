@@ -5,8 +5,8 @@
 # mesh must first be cut into chunks of a workable size. There are two ways to
 # make that cut:
 #
-# - `fit_mesh_split` bisects a chunk again and again along the Fiedler vector of
-#   the graph Laplacian, which is the spectral cut.
+# - `fit_mesh_split_spectral` bisects a chunk again and again along the Fiedler
+#   vector of the graph Laplacian, which is the spectral cut.
 # - `fit_mesh_split_geodesic` picks seed vertices spread across a chunk, then
 #   gives every vertex to the nearest seed along the surface, which is the
 #   geodesic Voronoi cut.
@@ -34,8 +34,8 @@ from meshmash import (
     MeshStitcher,
     apply_mesh_split,
     fetch_sample_mesh,
-    fit_mesh_split,
     fit_mesh_split_geodesic,
+    fit_mesh_split_spectral,
     mesh_to_adjacency,
 )
 
@@ -66,8 +66,8 @@ print(f"Edges: {adjacency.nnz:,}")
 # %% [markdown]
 # ## Cut with recursive spectral bisection
 #
-# `fit_mesh_split` splits a chunk in two along the Fiedler vector, which is the
-# eigenvector of the second smallest eigenvalue of the graph Laplacian. That
+# `fit_mesh_split_spectral` splits a chunk in two along the Fiedler vector, which
+# is the eigenvector of the second smallest eigenvalue of the graph Laplacian. That
 # vector separates the two ends of an elongated shape, so the cut tends to fall
 # at a narrow place. The splitter repeats the bisection until every chunk holds
 # at most `max_vertex_threshold` vertices.
@@ -79,7 +79,7 @@ print(f"Edges: {adjacency.nnz:,}")
 MAX_VERTICES = 5_000
 
 start = time.perf_counter()
-spectral_labels = fit_mesh_split(adjacency, max_vertex_threshold=MAX_VERTICES)
+spectral_labels = fit_mesh_split_spectral(adjacency, max_vertex_threshold=MAX_VERTICES)
 spectral_seconds = time.perf_counter() - start
 
 print(f"Chunks: {spectral_labels.max() + 1}  Seconds: {spectral_seconds:.2f}")
@@ -103,7 +103,7 @@ print(f"Unassigned vertices: {(spectral_labels == -1).sum()}")
 # The number of seeds comes from `target_vertices`: a chunk of `n` vertices is
 # cut with `ceil(n / target_vertices)` seeds. So `target_vertices` sets the chunk
 # size you aim for, and `max_vertex_threshold` sets the size you refuse to
-# exceed. Ask for chunks near 4,000 vertices to match the sizes the bisection
+# exceed. Ask for chunks near 4,000 vertices to match the sizes the spectral cut
 # produced above.
 
 # %%
@@ -193,7 +193,7 @@ with warnings.catch_warnings():
 # compute on at once. `MeshStitcher` runs that loop for you:
 #
 # 1. `split_mesh` cuts the mesh with either method above, through its `method`
-#    argument.
+#    argument: `"spectral"` or `"geodesic"`.
 # 2. It grows every chunk by `overlap_distance`, so each submesh carries an
 #    overlapping region of vertices from its neighbors.
 # 3. `apply` runs your function on every submesh, in parallel when `n_jobs` is
