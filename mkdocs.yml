@@ -7,7 +7,7 @@ nav:
   - index.md
   - install.md
   - Examples:
-    - HKS Pipeline: examples/tutorial.py
+    - HKS Pipeline: examples/hks_tutorial.py
   - API Reference: reference.md
   - CLI: cli.md
 theme:
