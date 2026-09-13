@@ -4,17 +4,14 @@ from typing import Any, Callable, Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd
-import scipy.sparse as sparse
 from joblib import Parallel, delayed
-from scipy.sparse import csr_array, diags_array
+from scipy.sparse import csr_array
 from scipy.sparse.csgraph import connected_components, dijkstra, laplacian
 from scipy.sparse.linalg import eigsh
 from scipy.stats import rankdata
 from tqdm.auto import tqdm
 from tqdm_joblib import tqdm_joblib
 
-from .decompose import decompose_laplacian
-from .laplacian import cotangent_laplacian
 from .types import Mesh, interpret_mesh
 from .utils import (
     mesh_to_adjacency,
@@ -191,9 +188,7 @@ def _order_split_by_size(submesh_mapping: np.ndarray) -> np.ndarray:
 
 def _fit_split_by_queue(
     whole_adj: csr_array,
-    make_piece: Callable[[np.ndarray], Any],
-    size_of: Callable[[Any], int],
-    cut: Callable[[Any], tuple[Sequence[Any], Sequence[np.ndarray]]],
+    cut: Callable[[csr_array], tuple[Sequence[csr_array], Sequence[np.ndarray]]],
     max_vertex_threshold: int = 20_000,
     min_vertex_threshold: int = 100,
     max_rounds: int = 100_000,
@@ -209,25 +204,19 @@ def _fit_split_by_queue(
     guard, the ``-1`` convention and the largest-first ordering are shared, so
     a method cannot get one of them subtly wrong on its own.
 
-    A *piece* is whatever state the cut works on.  It is opaque here: the graph
-    Laplacian cut carries a sub-adjacency, the cotangent cut carries an
-    ``(L, M)`` pair.  Each cut slices its own piece out of its parent rather
-    than out of the whole mesh, which is why the piece travels through the
-    queue at all.
+    A piece travels through the queue as its own sub-adjacency, sliced out of
+    its parent rather than out of the whole mesh, so a cut never has to know
+    where in the mesh it is working.  The indices that say where travel
+    beside it.
 
     Parameters
     ----------
     whole_adj :
         Sparse adjacency matrix of the whole mesh graph, shape ``(V, V)``.
-        Used for the connected-component pre-pass and for the vertex count.
-    make_piece :
-        Builds the piece for one connected component, given that component's
-        vertex indices into the whole mesh.
-    size_of :
-        Returns the number of vertices a piece holds.
+        Used for the connected-component pre-pass and to seed the queue.
     cut :
-        Splits one piece into two or more.  Returns the sub-pieces, and for
-        each sub-piece the indices it occupies *within its parent piece*.
+        Splits one sub-adjacency into two or more.  Returns the sub-pieces,
+        and for each sub-piece the indices it occupies *within its parent*.
         Raise from inside ``cut`` if a piece cannot be divided.
     max_vertex_threshold :
         Stop cutting a piece once it contains at most this many vertices.
@@ -256,10 +245,9 @@ def _fit_split_by_queue(
     queue = []
     for component_id in range(n_components):
         component_mask = component_labels == component_id
-        count = component_mask.sum()
-        if count >= min_vertex_threshold:
-            component_indices = mesh_indices[component_mask]
-            queue.append((make_piece(component_indices), component_indices))
+        if component_mask.sum() >= min_vertex_threshold:
+            indices = mesh_indices[component_mask]
+            queue.append((whole_adj[indices][:, indices], indices))
 
     submesh_mapping = np.full(n_vertices, -1, dtype=int)
 
@@ -269,21 +257,21 @@ def _fit_split_by_queue(
     while len(queue) > 0 and rounds < max_rounds:
         if verbose and rounds % 50 == 0:
             print("Meshes in queue:", len(queue))
-        current_piece, current_indices = queue.pop(0)
+        current_adj, current_indices = queue.pop(0)
 
         # if this piece is small enough, it is finished as it stands; this
         # happens when a connected component is already small
-        if size_of(current_piece) <= max_vertex_threshold:
-            pieces, indices_to_main = [current_piece], [current_indices]
+        if current_adj.shape[0] <= max_vertex_threshold:
+            sub_adjs, indices_to_main = [current_adj], [current_indices]
         else:  # otherwise, cut it
-            pieces, local_indices = cut(current_piece)
+            sub_adjs, local_indices = cut(current_adj)
 
             # adjust indices to be in terms of the main mesh
             indices_to_main = [current_indices[indices] for indices in local_indices]
 
-        for piece, indices in zip(pieces, indices_to_main):
-            if size_of(piece) > max_vertex_threshold:
-                queue.append((piece, indices))
+        for sub_adj, indices in zip(sub_adjs, indices_to_main):
+            if sub_adj.shape[0] > max_vertex_threshold:
+                queue.append((sub_adj, indices))
             else:
                 submesh_mapping[indices] = n_finished
                 n_finished += 1
@@ -337,137 +325,7 @@ def fit_mesh_split(
 
     return _fit_split_by_queue(
         whole_adj,
-        lambda indices: whole_adj[indices][:, indices],
-        lambda adj: adj.shape[0],
         bisect_adjacency,
-        max_vertex_threshold=max_vertex_threshold,
-        min_vertex_threshold=min_vertex_threshold,
-        max_rounds=max_rounds,
-        verbose=verbose,
-    )
-
-
-def subset_diags(matrix: sparse.sparray, indices: np.ndarray) -> diags_array:
-    return diags_array(matrix.diagonal()[indices], shape=(len(indices), len(indices)))
-
-
-def bisect_laplacian(
-    L: sparse.sparray, M: sparse.sparray
-) -> tuple[
-    tuple[tuple[sparse.sparray, diags_array], tuple[sparse.sparray, diags_array]],  # noqa: E501
-    tuple[np.ndarray, np.ndarray],
-]:
-    """Bisect a mesh into two parts using the cotangent-Laplacian Fiedler vector.
-
-    Computes the second eigenvector of the generalised eigenproblem
-    ``L v = λ M v`` via [decompose_laplacian][meshmash.decompose.decompose_laplacian]
-    and partitions vertices by its sign.
-
-    Parameters
-    ----------
-    L :
-        Cotangent Laplacian matrix of shape ``(V, V)`` as returned by
-        [cotangent_laplacian][meshmash.laplacian.cotangent_laplacian].
-    M :
-        Diagonal mass matrix of shape ``(V, V)`` as returned by
-        [cotangent_laplacian][meshmash.laplacian.cotangent_laplacian].
-
-    Returns
-    -------
-    sub_laps :
-        Pair of ``(L_sub, M_sub)`` tuples for each partition, where
-        ``M_sub`` is a [diags_array][scipy.sparse.diags_array] of the diagonal
-        mass entries for that partition.
-    submesh_indices :
-        Pair of index arrays ``(indices1, indices2)`` mapping each
-        partition's rows back to the original ``L``.
-    """
-    # get the split indices
-    # indices1, indices2 = graph_laplacian_split(adj)
-
-    _, eigenvectors = decompose_laplacian(L, M, n_components=2)
-    indices1 = np.nonzero(eigenvectors[:, 1] >= 0)[0]
-    indices2 = np.nonzero(eigenvectors[:, 1] < 0)[0]
-
-    # get the sub-adjacencies
-    sub_adj1 = L[indices1][:, indices1]
-    sub_adj2 = L[indices2][:, indices2]
-
-    sub_laps = (
-        (sub_adj1, subset_diags(M, indices1)),
-        (sub_adj2, subset_diags(M, indices2)),
-    )
-
-    submesh_indices = (indices1, indices2)
-
-    return sub_laps, submesh_indices
-
-
-def fit_mesh_split_lap(
-    mesh: Mesh,
-    max_vertex_threshold: int = 20_000,
-    min_vertex_threshold: int = 100,
-    max_rounds: int = 100_000,
-    robust: bool = True,
-    mollify_factor: float = 1e-5,
-    verbose: Union[bool, int] = False,
-) -> np.ndarray:
-    """Partition a mesh into chunks using recursive cotangent-Laplacian bisection.
-
-    Like [fit_mesh_split][meshmash.split.fit_mesh_split] but uses the Fiedler vector of the
-    cotangent Laplacian (instead of the graph Laplacian) for each
-    bisection step, which can produce more geometrically uniform
-    partitions on irregular meshes.
-
-    Parameters
-    ----------
-    mesh :
-        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
-        An adjacency matrix is not enough here, unlike in
-        [fit_mesh_split][meshmash.split.fit_mesh_split]: the cotangent
-        Laplacian is built from the vertex positions.
-    max_vertex_threshold :
-        Stop bisecting a chunk once it contains at most this many vertices.
-    min_vertex_threshold :
-        Discard connected components with fewer than this many vertices;
-        their vertices receive label ``-1``.
-    max_rounds :
-        Maximum number of bisection steps before the algorithm terminates.
-    robust :
-        If ``True``, use the robust cotangent Laplacian variant; passed
-        to [cotangent_laplacian][meshmash.laplacian.cotangent_laplacian].
-    mollify_factor :
-        Mollification factor passed to
-        [cotangent_laplacian][meshmash.laplacian.cotangent_laplacian].
-    verbose :
-        If truthy, print queue information each round.
-
-    Returns
-    -------
-    :
-        Per-vertex integer label array of shape ``(V,)``.  Labels run
-        ``0, 1, …, K-1`` ordered from largest to smallest chunk; vertices
-        not assigned to any chunk have label ``-1``.
-    """
-    if isinstance(mesh, (csr_array, np.ndarray)):
-        raise TypeError(
-            "fit_mesh_split_lap needs the mesh itself, not an adjacency "
-            "matrix: the cotangent Laplacian is built from vertex positions"
-        )
-    mesh = interpret_mesh(mesh)
-    whole_adj = mesh_to_adjacency(mesh)
-
-    def make_piece(indices: np.ndarray):
-        submesh = subset_mesh_by_indices(mesh, indices)
-        return cotangent_laplacian(
-            submesh, robust=robust, mollify_factor=mollify_factor
-        )
-
-    return _fit_split_by_queue(
-        whole_adj,
-        make_piece,
-        lambda piece: piece[0].shape[0],
-        lambda piece: bisect_laplacian(*piece),
         max_vertex_threshold=max_vertex_threshold,
         min_vertex_threshold=min_vertex_threshold,
         max_rounds=max_rounds,
@@ -625,8 +483,6 @@ def fit_mesh_split_geodesic(
 
     return _fit_split_by_queue(
         whole_adj,
-        lambda indices: whole_adj[indices][:, indices],
-        lambda adj: adj.shape[0],
         cut,
         max_vertex_threshold=max_vertex_threshold,
         min_vertex_threshold=min_vertex_threshold,

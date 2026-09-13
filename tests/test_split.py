@@ -14,7 +14,6 @@ from meshmash import (
     MeshStitcher,
     fit_mesh_split,
     fit_mesh_split_geodesic,
-    fit_mesh_split_lap,
     mesh_to_adjacency,
 )
 from meshmash.split import _fit_split_by_queue, bisect_adjacency
@@ -217,12 +216,6 @@ def test_split_mesh_rejects_an_unknown_method(tube):
         stitcher.split_mesh(method="metis")
 
 
-def test_lap_split_refuses_an_adjacency_matrix(tube):
-    """It never worked: the cotangent Laplacian needs vertex positions."""
-    with pytest.raises(TypeError):
-        fit_mesh_split_lap(mesh_to_adjacency(tube))
-
-
 def test_bisection_takes_an_adjacency_matrix(tube):
     """The polymorphic entry `fit_mesh_split` documents, kept by the refactor."""
     adjacency = mesh_to_adjacency(tube)
@@ -307,8 +300,6 @@ def test_shared_queue_reproduces_the_loop_it_replaced(tube):
 
     shared = _fit_split_by_queue(
         adjacency,
-        lambda indices: adjacency[indices][:, indices],
-        lambda adj: adj.shape[0],
         halve,
         max_vertex_threshold=300,
         min_vertex_threshold=100,
@@ -331,8 +322,6 @@ def test_max_rounds_stops_the_queue(tube):
 
     labels = _fit_split_by_queue(
         adjacency,
-        lambda indices: adjacency[indices][:, indices],
-        lambda adj: adj.shape[0],
         bisect_adjacency,
         max_vertex_threshold=100,
         min_vertex_threshold=100,

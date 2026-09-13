@@ -67,8 +67,6 @@ from .split import (
     apply_mesh_split,
     fit_mesh_split,
     fit_mesh_split_geodesic,
-    fit_mesh_split_lap,
-    fit_overlapping_mesh_split,
     get_submesh_borders,
     graph_laplacian_split,
 )
@@ -138,8 +136,6 @@ __all__ = [
     "find_nucleus_point",
     "fit_mesh_split",
     "fit_mesh_split_geodesic",
-    "fit_mesh_split_lap",
-    "fit_overlapping_mesh_split",
     "fix_mesh",
     "fix_split_labels",
     "fix_split_labels_and_features",
