@@ -705,69 +705,6 @@ def get_submesh_borders(submesh: Mesh) -> np.ndarray:
     return border_indices
 
 
-def fit_overlapping_mesh_split(
-    mesh: Mesh,
-    overlap_distance: float = 20_000,
-    vertex_threshold: int = 20_000,
-    max_rounds: int = 1_000,
-) -> list[np.ndarray]:
-    """Split a mesh and grow each chunk geodesically to create overlapping regions.
-
-    First calls [fit_mesh_split][meshmash.split.fit_mesh_split] to partition the mesh, then expands
-    each chunk by including all vertices reachable within ``overlap_distance``
-    along mesh edges (using shortest-path distances).
-
-    Parameters
-    ----------
-    mesh :
-        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
-    overlap_distance :
-        Maximum geodesic distance from the core chunk within which
-        additional vertices are included in the overlap region.
-    vertex_threshold :
-        Maximum number of vertices per non-overlapping core chunk passed
-        to [fit_mesh_split][meshmash.split.fit_mesh_split].
-    max_rounds :
-        Maximum bisection rounds; see [fit_mesh_split][meshmash.split.fit_mesh_split].
-
-    Returns
-    -------
-    :
-        List of vertex index arrays (one per chunk), each containing the
-        core vertices plus their overlap neighbourhood.
-    """
-    mesh = interpret_mesh(mesh)
-    submesh_mapping = fit_mesh_split(
-        mesh, vertex_threshold=vertex_threshold, max_rounds=max_rounds
-    )
-    submeshes = apply_mesh_split(mesh, submesh_mapping)
-    for submesh in submeshes:
-        poly = mesh_to_poly(submesh)
-        assert poly.n_points == poly.extract_largest().n_points
-
-    adjacency = mesh_to_adjacency(mesh)
-    new_indices_by_submesh = []
-
-    for i, submesh in enumerate(submeshes):
-        # border_indices = get_submesh_borders(submesh)
-        submesh_to_original_mapping = np.where(submesh_mapping == i)[0]
-        # border_indices = submesh_to_original_mapping[border_indices]
-        neighbor_dists = dijkstra(
-            adjacency,
-            directed=False,
-            indices=submesh_to_original_mapping,
-            unweighted=False,
-            limit=overlap_distance,
-            min_only=True,
-        )
-        neighbor_mask = np.isfinite(neighbor_dists)
-        indices = np.arange(adjacency.shape[0])
-        indices = indices[neighbor_mask | (submesh_mapping == i)]
-        new_indices_by_submesh.append(indices)
-        assert connected_components(adjacency[indices][:, indices])[0] == 1
-    return new_indices_by_submesh
-
-
 class MeshStitcher:
     """Split a mesh into overlapping chunks and apply functions across them.
 
