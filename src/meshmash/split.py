@@ -608,7 +608,7 @@ def fit_mesh_split_geodesic(
     target_vertices :
         Wanted vertices per cell, which sets how many seeds a piece gets.
         Cells come out near this size, and always under
-        ``max_vertex_threshold``.
+        ``max_vertex_threshold``.  Must be a positive integer.
     max_rounds :
         Maximum number of cuts before the algorithm terminates regardless of
         remaining chunk sizes.
@@ -621,7 +621,17 @@ def fit_mesh_split_geodesic(
         Per-vertex integer label array of shape ``(V,)``.  Labels run
         ``0, 1, …, K-1`` ordered from largest to smallest chunk; vertices
         not assigned to any chunk have label ``-1``.
+
+    Raises
+    ------
+    ValueError
+        If ``target_vertices`` is not a positive integer.
     """
+    if target_vertices < 1:
+        raise ValueError(
+            f"target_vertices must be a positive integer, got {target_vertices}"
+        )
+
     whole_adj = _interpret_adjacency(mesh)
 
     def cut(adj: csr_array) -> tuple[list[csr_array], list[np.ndarray]]:
@@ -883,9 +893,9 @@ class MeshStitcher:
             ([fit_mesh_split_geodesic][meshmash.split.fit_mesh_split_geodesic]),
             which is cheaper, reproducible, and gives connected chunks.
         target_vertices :
-            Wanted vertices per chunk for ``method="geodesic"``.  Ignored by
-            ``method="bisect"``, which has no size target beyond
-            ``max_vertex_threshold``.
+            Wanted vertices per chunk for ``method="geodesic"``, where it
+            must be a positive integer.  Ignored by ``method="bisect"``,
+            which has no size target beyond ``max_vertex_threshold``.
 
         Returns
         -------

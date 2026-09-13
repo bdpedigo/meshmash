@@ -102,6 +102,20 @@ def test_geodesic_target_vertices_sets_the_chunk_size(tube):
     assert len(chunk_sizes(fine)) > len(chunk_sizes(coarse))
 
 
+@pytest.mark.parametrize("target_vertices", [0, -1, -1_000])
+def test_geodesic_rejects_a_non_positive_target(tube, target_vertices):
+    """The seed count divides by this, so a bad value must fail at the door.
+
+    Zero divides by zero inside the cut, and a negative value fails
+    silently: ``max(2, ...)`` turns it into a two-cell cut that ignores the
+    caller.  Neither is an answer to give back.
+    """
+    with pytest.raises(ValueError):
+        fit_mesh_split_geodesic(
+            tube, max_vertex_threshold=500, target_vertices=target_vertices
+        )
+
+
 def test_geodesic_drops_small_components(tube):
     """A second component under the threshold is dropped, as in the bisection."""
     vertices, faces = tube
