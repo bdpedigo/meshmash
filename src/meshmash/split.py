@@ -187,7 +187,7 @@ def _order_split_by_size(submesh_mapping: np.ndarray) -> np.ndarray:
 
 
 def _fit_split_by_queue(
-    whole_adj: csr_array,
+    adj: csr_array,
     cut: Callable[[csr_array], tuple[Sequence[csr_array], Sequence[np.ndarray]]],
     max_vertex_threshold: int = 20_000,
     min_vertex_threshold: int = 100,
@@ -196,22 +196,9 @@ def _fit_split_by_queue(
 ) -> np.ndarray:
     """Run a cut over a work queue until every piece is small enough.
 
-    Every way of splitting a mesh in this module is this one loop with a
-    different cut in the middle: seed the queue with the connected components
-    worth keeping, pull a piece off, cut it if it is too big, and put the
-    sub-pieces back.  The loop lives here so that a new cut method is a cut and
-    nothing else.  The component pre-pass, the index bookkeeping, the runaway
-    guard, the ``-1`` convention and the largest-first ordering are shared, so
-    a method cannot get one of them subtly wrong on its own.
-
-    A piece travels through the queue as its own sub-adjacency, sliced out of
-    its parent rather than out of the whole mesh, so a cut never has to know
-    where in the mesh it is working.  The indices that say where travel
-    beside it.
-
     Parameters
     ----------
-    whole_adj :
+    adj :
         Sparse adjacency matrix of the whole mesh graph, shape ``(V, V)``.
         Used for the connected-component pre-pass and to seed the queue.
     cut :
@@ -236,18 +223,18 @@ def _fit_split_by_queue(
         ``0, 1, …, K-1`` ordered from largest to smallest chunk; vertices
         not assigned to any chunk have label ``-1``.
     """
-    n_vertices = whole_adj.shape[0]
+    n_vertices = adj.shape[0]
     mesh_indices = np.arange(n_vertices)
 
     # first, append all the connected components that are large enough to the queue
-    n_components, component_labels = connected_components(whole_adj)
+    n_components, component_labels = connected_components(adj)
 
     queue = []
     for component_id in range(n_components):
         component_mask = component_labels == component_id
         if component_mask.sum() >= min_vertex_threshold:
             indices = mesh_indices[component_mask]
-            queue.append((whole_adj[indices][:, indices], indices))
+            queue.append((adj[indices][:, indices], indices))
 
     submesh_mapping = np.full(n_vertices, -1, dtype=int)
 
@@ -336,26 +323,9 @@ def fit_mesh_split(
 def geodesic_voronoi_split(adj: csr_array, n_cells: int) -> np.ndarray:
     """Cut a mesh graph into ``n_cells`` geodesic Voronoi cells.
 
-    Picks ``n_cells`` seed vertices by farthest-point sampling over
-    edge-length distances, then gives every vertex to the seed that reaches
-    it first along the surface.
-
-    Two properties follow from the construction, and they are the reason to
-    cut a mesh this way.  A cell of a connected graph is connected, because
-    any vertex on a shortest path to the owning seed is itself owned by that
-    seed.  And every vertex lies within the sampling radius of its own seed,
-    so the cells are compact.  Compactness is what a distance-based collar such as
-    [MeshStitcher.expand_split][meshmash.split.MeshStitcher.expand_split]
-    prices.
-
-    Each farthest-point step is a single-source
-    [dijkstra][scipy.sparse.csgraph.dijkstra] truncated at the current
-    sampling radius, since a new seed can only improve vertices nearer to it
-    than that.  Seeding therefore costs far less than one full traversal per
-    seed.
-
-    The cut is deterministic and takes no random seed: the first seed is
-    vertex ``0`` and ties break by index.
+    Picks ``n_cells`` seed vertices by farthest-point sampling, 
+    then gives every vertex to the seed that reaches it first. The cut is deterministic
+    and takes no random seed: the first seed is vertex ``0`` and ties break by index.
 
     Parameters
     ----------
@@ -408,21 +378,10 @@ def fit_mesh_split_geodesic(
 ) -> np.ndarray:
     """Partition a mesh into non-overlapping chunks by geodesic Voronoi cells.
 
-    An alternative to
-    [fit_mesh_split][meshmash.split.fit_mesh_split] that never solves an
-    eigenproblem.  A piece over ``max_vertex_threshold`` vertices is cut into
+    A piece over ``max_vertex_threshold`` vertices is cut into
     ``ceil(n / target_vertices)`` cells at once by
     [geodesic_voronoi_split][meshmash.split.geodesic_voronoi_split], and a
-    cell still over the threshold is cut again.  The recursion is what makes
-    the chunk sizes ragged: a dense patch such as a soma packs more vertices
-    into a sampling radius than a thin process does, so it gets re-cut.
-
-    Where the two differ, beyond the cost of the cut itself.  Spectral
-    bisection halves a piece by a Fiedler sign, which balances the two sides
-    but says nothing about how far a chunk reaches across the surface.  This
-    method bounds the reach instead and lets the sizes vary.  Chunks are
-    connected by construction here, which the bisection does not promise, and
-    the result is reproducible run to run, which the bisection is not.
+    cell still over the threshold is cut again.
 
     Parameters
     ----------
