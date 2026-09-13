@@ -8,6 +8,7 @@ nav:
   - install.md
   - Examples:
     - HKS Pipeline: examples/hks_tutorial.py
+    - Mesh Splitting: examples/split_tutorial.py
   - API Reference: reference.md
   - CLI: cli.md
 theme:
