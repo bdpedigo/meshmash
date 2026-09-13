@@ -65,11 +65,10 @@ from .simplify import simplify_mesh
 from .split import (
     MeshStitcher,
     apply_mesh_split,
-    fit_mesh_split,
-    fit_mesh_split_lap,
-    fit_overlapping_mesh_split,
+    fit_mesh_split_geodesic,
+    fit_mesh_split_spectral,
     get_submesh_borders,
-    graph_laplacian_split,
+    spectral_bisect,
 )
 from .types import interpret_mesh
 from .utils import (
@@ -135,9 +134,8 @@ __all__ = [
     "edges_to_lines",
     "fetch_sample_mesh",
     "find_nucleus_point",
-    "fit_mesh_split",
-    "fit_mesh_split_lap",
-    "fit_overlapping_mesh_split",
+    "fit_mesh_split_geodesic",
+    "fit_mesh_split_spectral",
     "fix_mesh",
     "fix_split_labels",
     "fix_split_labels_and_features",
@@ -147,7 +145,6 @@ __all__ = [
     "get_synapse_mapping",
     "get_synapses",
     "get_synapses_at_oldest",
-    "graph_laplacian_split",
     "graph_to_adjacency",
     "graphcut_face_mask",
     "interpret_mesh",
@@ -184,6 +181,7 @@ __all__ = [
     "scale_mesh",
     "shuffle_label_mapping",
     "simplify_mesh",
+    "spectral_bisect",
     "spectral_geometry_filter",
     "subset_mesh_by_indices",
     "threshold_mesh_by_component_size",

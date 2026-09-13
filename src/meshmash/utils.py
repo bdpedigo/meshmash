@@ -298,7 +298,7 @@ def mask_mesh_by_faces(mesh: Mesh, face_mask: np.ndarray) -> Mesh:
 
     Faces not selected by ``face_mask`` are dropped.  Any vertices left
     unreferenced by the remaining faces are removed, and the face indices are
-    renumbered to a compact ``0..V'-1`` range using [fastremap.renumber][].
+    renumbered to a compact ``0..V'-1`` range using ``fastremap.renumber``.
 
     Parameters
     ----------

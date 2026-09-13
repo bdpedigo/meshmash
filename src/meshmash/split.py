@@ -1,20 +1,17 @@
 import logging
 import time
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd
-import scipy.sparse as sparse
 from joblib import Parallel, delayed
-from scipy.sparse import csr_array, diags_array
+from scipy.sparse import csr_array
 from scipy.sparse.csgraph import connected_components, dijkstra, laplacian
 from scipy.sparse.linalg import eigsh
 from scipy.stats import rankdata
 from tqdm.auto import tqdm
 from tqdm_joblib import tqdm_joblib
 
-from .decompose import decompose_laplacian
-from .laplacian import cotangent_laplacian
 from .types import Mesh, interpret_mesh
 from .utils import (
     mesh_to_adjacency,
@@ -24,30 +21,28 @@ from .utils import (
 )
 
 
-def graph_laplacian_split(
+def spectral_bisect(
     adj: csr_array, dtype: type = np.float32
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Bisect a mesh using the Fiedler vector of the graph Laplacian.
+    """Cut a mesh graph in two along the Fiedler vector of the graph Laplacian.
 
-    Computes the second smallest eigenvector (Fiedler vector) of the
-    unnormalised graph Laplacian and partitions vertices by the sign of
-    their Fiedler coefficient.
+    The Fiedler vector is the eigenvector of the second smallest eigenvalue of the
+    graph Laplacian. Vertices are split by the sign of their entry in it, which tends
+    to cut the graph at a narrow place.
 
     Parameters
     ----------
     adj :
-        Sparse adjacency matrix of the mesh graph, shape ``(V, V)``.
+        The sparse adjacency matrix of the mesh graph.
     dtype :
-        Floating-point dtype used for the eigensolver.
+        The floating-point dtype to use for the eigensolver.
 
     Returns
     -------
     indices1 :
-        Indices of vertices in the first partition
-        (Fiedler coefficient >= 0).
+        The indices of the vertices whose Fiedler entry is >= 0.
     indices2 :
-        Indices of vertices in the second partition
-        (Fiedler coefficient < 0).
+        The indices of the vertices whose Fiedler entry is < 0.
     """
     # probably some issue with tolerance/sigma?
     # TODO normed didn't seem to make much of a difference here; perhaps just because
@@ -80,33 +75,35 @@ def graph_laplacian_split(
     return indices1, indices2
 
 
-def bisect_adjacency(
+def spectral_bisect_adjacency(
     adj: csr_array, n_retries: int = 7, check: bool = True
 ) -> tuple[tuple[csr_array, csr_array], tuple[np.ndarray, np.ndarray]]:
-    """Bisect a mesh graph into two parts using the graph-Laplacian Fiedler vector.
+    """Cut a mesh graph in two with [spectral_bisect][meshmash.split.spectral_bisect].
 
-    Calls [graph_laplacian_split][meshmash.split.graph_laplacian_split] and retries if the result is
-    degenerate (one empty partition or disconnected nodes).  Uses
-    recursion up to ``n_retries`` times.
+    The cut is retried, recursively, if it comes back degenerate: one side empty, or a
+    vertex left isolated.
 
     Parameters
     ----------
     adj :
-        Sparse adjacency matrix of shape ``(V, V)``.
+        The sparse adjacency matrix of the mesh graph.
     n_retries :
-        Maximum number of retry attempts when the split fails to produce
-        two non-empty, connected partitions.
+        The maximum number of retries before the cut is given up on.
     check :
-        If ``True``, verify that no vertex becomes isolated (zero-degree)
-        after splitting and retry if so.
+        Whether to check that the cut leaves no vertex isolated (zero-degree), and
+        retry if one is.
 
     Returns
     -------
     sub_adjs :
-        Pair of sub-adjacency matrices ``(adj1, adj2)`` for each partition.
+        The pair of sub-adjacency matrices, one for each side of the cut.
     submesh_indices :
-        Pair of index arrays ``(indices1, indices2)`` mapping each
-        partition's rows back to the original ``adj``.
+        For each side, the indices it occupies within ``adj``.
+
+    Raises
+    ------
+    RuntimeError
+        If the cut still fails after ``n_retries`` retries.
     """
     if n_retries == 0:
         logging.info("Adjacency shape: %s", adj.shape)
@@ -114,12 +111,12 @@ def bisect_adjacency(
         raise RuntimeError("Split failed to divide mesh.")
 
     # get the split indices
-    indices1, indices2 = graph_laplacian_split(adj)
+    indices1, indices2 = spectral_bisect(adj)
 
     if len(indices1) == 0 or len(indices2) == 0:
         # print(adj.shape)
         logging.info("Split failed to divide mesh, retrying.")
-        return bisect_adjacency(adj, n_retries=n_retries - 1)
+        return spectral_bisect_adjacency(adj, n_retries=n_retries - 1)
 
     # get the sub-adjacencies
     sub_adj1 = adj[indices1][:, indices1]
@@ -133,7 +130,7 @@ def bisect_adjacency(
             # TODO no idea why retrying here helps almost always after one go...
             # did not think randomness should have that much of an effect?
             logging.info("Some nodes were disconnected in the split, retrying.")
-            return bisect_adjacency(adj, n_retries=n_retries - 1)
+            return spectral_bisect_adjacency(adj, n_retries=n_retries - 1)
 
     sub_adjs = (sub_adj1, sub_adj2)
     submesh_indices = (indices1, indices2)
@@ -141,106 +138,39 @@ def bisect_adjacency(
     return sub_adjs, submesh_indices
 
 
-def fit_mesh_split(
-    mesh: Union[Mesh, np.ndarray, csr_array],
-    max_vertex_threshold: int = 20_000,
-    min_vertex_threshold: int = 100,
-    max_rounds: int = 100_000,
-    verbose: Union[bool, int] = False,
-) -> np.ndarray:
-    """Partition a mesh into non-overlapping chunks using recursive bisection.
-
-    Repeatedly bisects each chunk using the Fiedler vector of the graph
-    Laplacian until every chunk has at most ``max_vertex_threshold`` vertices.
-    Chunks belonging to connected components with fewer than
-    ``min_vertex_threshold`` vertices are dropped (their vertices receive
-    label ``-1``).  The returned labels are ordered so that the largest
-    chunk has label ``0``.
+def _interpret_adjacency(mesh: Union[Mesh, np.ndarray, csr_array]) -> csr_array:
+    """Return a mesh graph's adjacency, accepting either a mesh or an adjacency.
 
     Parameters
     ----------
     mesh :
-        Input mesh, adjacency matrix, or vertex array accepted by
-        [interpret_mesh][meshmash.types.interpret_mesh] /
-        [mesh_to_adjacency][meshmash.utils.mesh_to_adjacency].
-    max_vertex_threshold :
-        Stop bisecting a chunk once it contains at most this many vertices.
-    min_vertex_threshold :
-        Discard connected components with fewer than this many vertices;
-        their vertices receive label ``-1``.
-    max_rounds :
-        Maximum number of bisection steps before the algorithm terminates
-        regardless of remaining chunk sizes.
-    verbose :
-        If truthy, print queue size every 50 rounds.
+        The input mesh. Should be a tuple of (vertices, faces), or an object with
+        `vertices` and `faces` attributes. An adjacency matrix is returned unchanged.
 
     Returns
     -------
     :
-        Per-vertex integer label array of shape ``(V,)``.  Labels run
-        ``0, 1, …, K-1`` ordered from largest to smallest chunk; vertices
-        not assigned to any chunk have label ``-1``.
+        The sparse adjacency matrix of the mesh graph.
     """
     if isinstance(mesh, (csr_array, np.ndarray)):
-        whole_adj = mesh
-    else:
-        mesh = interpret_mesh(mesh)
-        whole_adj = mesh_to_adjacency(mesh)
+        return mesh
+    return mesh_to_adjacency(interpret_mesh(mesh))
 
-    n_vertices = whole_adj.shape[0]
-    mesh_indices = np.arange(n_vertices)
 
-    # first, append all the connected components that are large enough to the queue
-    n_components, component_labels = connected_components(whole_adj)
+def _order_split_by_size(submesh_mapping: np.ndarray) -> np.ndarray:
+    """Relabel a split so that label ``0`` is the largest chunk.
 
-    adj_queue = []
-    for component_id in range(n_components):
-        component_mask = component_labels == component_id
-        count = component_mask.sum()
-        if count >= min_vertex_threshold:
-            component_indices = mesh_indices[component_mask]
-            component_adj = whole_adj[component_indices][:, component_indices]
-            adj_queue.append((component_adj, component_indices))
+    Parameters
+    ----------
+    submesh_mapping :
+        The chunk label for each vertex, with -1 for a vertex in no chunk.
 
-    submesh_mapping = np.full(n_vertices, -1, dtype=int)
-    indices_by_submesh = []
-
-    n_finished = 0
-    rounds = 0
-
-    while len(adj_queue) > 0 and rounds < max_rounds:
-        if verbose and rounds % 50 == 0:
-            print("Meshes in queue:", len(adj_queue))
-        current_adj, current_indices = adj_queue.pop(0)
-
-        # if this submesh is small enough, add it to the finished list
-        # this can happen if ccs are already small
-        if current_adj.shape[0] <= max_vertex_threshold:
-            sub_adjs, submesh_indices_to_main = [current_adj], [current_indices]
-        else:  # otherwise, split
-            sub_adjs, submesh_indices = bisect_adjacency(current_adj)
-            submesh_colors = np.zeros(n_vertices, dtype=float)
-            submesh_colors[submesh_indices[0]] = 0
-            submesh_colors[submesh_indices[1]] = 1
-
-            # adjust indices to be in terms of the main mesh
-            submesh_indices_to_main = [
-                current_indices[indices] for indices in submesh_indices
-            ]
-
-        for sub_adj, indices in zip(sub_adjs, submesh_indices_to_main):
-            if sub_adj.shape[0] > max_vertex_threshold:
-                adj_queue.append((sub_adj, indices))
-            else:
-                # TODO maybe add ensure_connected as a flag?
-                # assert connected_components(sub_adj)[0] == 1
-                # finished_meshes.append((sub_adj, indices))
-                submesh_mapping[indices] = n_finished
-                indices_by_submesh.append(indices)
-                n_finished += 1
-        rounds += 1
-
-    # remap so the first submesh is largest
+    Returns
+    -------
+    :
+        The same partition, with labels renumbered from 0 to K-1 in order from the
+        largest chunk to the smallest. Labels of -1 are left alone.
+    """
     valid_submesh_mapping = submesh_mapping[submesh_mapping != -1]
     if len(valid_submesh_mapping) == 0:
         # Every connected component fell under min_vertex_threshold, so
@@ -253,211 +183,265 @@ def fit_mesh_split(
     new_labels = np.arange(labels.max() + 1)
     old_to_new = dict(zip(labels[reorder], new_labels))
     old_to_new[-1] = -1
-    submesh_mapping = np.vectorize(old_to_new.get)(submesh_mapping)
-
-    return submesh_mapping
+    return np.vectorize(old_to_new.get)(submesh_mapping)
 
 
-# def laplacian_split(L: csr_array, M):
-#     # TODO normed didn't seem to make much of a difference here; perhaps just because
-#     # degrees are fairly homogeneous?
-#     # lap, degrees = laplacian(adj, normed=False, symmetrized=True, return_diag=True)
-
-#     # NOTE: tried this as initialization, but it also didn't seem to make a difference
-#     # maybe overhead is all in the LU decomposition?
-#     # n = adj.shape[0]
-#     # v0 = np.full(n, 1 / np.sqrt(n))
-#     eigenvalues, eigenvectors = eigsh(
-#         L,
-
-#         k=2,
-#         sigma=-1e-10,
-#     )
-#     indices1 = np.nonzero(eigenvectors[:, 1] >= 0)[0]
-#     indices2 = np.nonzero(eigenvectors[:, 1] < 0)[0]
-#     return indices1, indices2
-
-
-def subset_diags(matrix: sparse.sparray, indices: np.ndarray) -> diags_array:
-    return diags_array(matrix.diagonal()[indices], shape=(len(indices), len(indices)))
-
-
-def bisect_laplacian(
-    L: sparse.sparray, M: sparse.sparray
-) -> tuple[
-    tuple[tuple[sparse.sparray, diags_array], tuple[sparse.sparray, diags_array]],  # noqa: E501
-    tuple[np.ndarray, np.ndarray],
-]:
-    """Bisect a mesh into two parts using the cotangent-Laplacian Fiedler vector.
-
-    Computes the second eigenvector of the generalised eigenproblem
-    ``L v = λ M v`` via [decompose_laplacian][meshmash.decompose.decompose_laplacian]
-    and partitions vertices by its sign.
-
-    Parameters
-    ----------
-    L :
-        Cotangent Laplacian matrix of shape ``(V, V)`` as returned by
-        [cotangent_laplacian][meshmash.laplacian.cotangent_laplacian].
-    M :
-        Diagonal mass matrix of shape ``(V, V)`` as returned by
-        [cotangent_laplacian][meshmash.laplacian.cotangent_laplacian].
-
-    Returns
-    -------
-    sub_laps :
-        Pair of ``(L_sub, M_sub)`` tuples for each partition, where
-        ``M_sub`` is a [diags_array][scipy.sparse.diags_array] of the diagonal
-        mass entries for that partition.
-    submesh_indices :
-        Pair of index arrays ``(indices1, indices2)`` mapping each
-        partition's rows back to the original ``L``.
-    """
-    # get the split indices
-    # indices1, indices2 = graph_laplacian_split(adj)
-
-    _, eigenvectors = decompose_laplacian(L, M, n_components=2)
-    indices1 = np.nonzero(eigenvectors[:, 1] >= 0)[0]
-    indices2 = np.nonzero(eigenvectors[:, 1] < 0)[0]
-
-    # get the sub-adjacencies
-    sub_adj1 = L[indices1][:, indices1]
-    sub_adj2 = L[indices2][:, indices2]
-
-    # make sure we didn't disconnect any nodes
-    # degrees1 = np.sum(sub_adj1, axis=1) + np.sum(sub_adj1, axis=0)
-    # degrees2 = np.sum(sub_adj2, axis=1) + np.sum(sub_adj2, axis=0)
-    # if np.any(degrees1 == 0):
-    #     raise RuntimeError("Some nodes were disconnected in the split.")
-    # if np.any(degrees2 == 0):
-    #     raise RuntimeError("Some nodes were disconnected in the split.")
-
-    sub_laps = (
-        (sub_adj1, subset_diags(M, indices1)),
-        (sub_adj2, subset_diags(M, indices2)),
-    )
-
-    submesh_indices = (indices1, indices2)
-
-    return sub_laps, submesh_indices
-
-
-def fit_mesh_split_lap(
-    mesh: Union[Mesh, np.ndarray, csr_array],
+def _fit_split_by_queue(
+    adj: csr_array,
+    cut: Callable[[csr_array], tuple[Sequence[csr_array], Sequence[np.ndarray]]],
     max_vertex_threshold: int = 20_000,
     min_vertex_threshold: int = 100,
     max_rounds: int = 100_000,
-    robust: bool = True,
-    mollify_factor: float = 1e-5,
     verbose: Union[bool, int] = False,
 ) -> np.ndarray:
-    """Partition a mesh into chunks using recursive cotangent-Laplacian bisection.
-
-    Like [fit_mesh_split][meshmash.split.fit_mesh_split] but uses the Fiedler vector of the
-    cotangent Laplacian (instead of the graph Laplacian) for each
-    bisection step, which can produce more geometrically uniform
-    partitions on irregular meshes.
+    """Run a cut over a work queue until every piece is small enough.
 
     Parameters
     ----------
-    mesh :
-        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
+    adj :
+        The sparse adjacency matrix of the whole mesh graph. Used for the connected
+        component pre-pass and to seed the queue.
+    cut :
+        A function which splits one sub-adjacency into two or more pieces. Returns the
+        pieces, and for each piece the indices it occupies within its parent. Should
+        raise if a piece cannot be divided.
     max_vertex_threshold :
-        Stop bisecting a chunk once it contains at most this many vertices.
+        The maximum number of vertices for a piece. Larger pieces are cut again.
     min_vertex_threshold :
-        Discard connected components with fewer than this many vertices;
-        their vertices receive label ``-1``.
+        The minimum number of vertices for a connected component to be included. This
+        can be used to filter out small disconnected pieces of the mesh; vertices in
+        smaller components are given a label of -1.
     max_rounds :
-        Maximum number of bisection steps before the algorithm terminates.
-    robust :
-        If ``True``, use the robust cotangent Laplacian variant; passed
-        to [cotangent_laplacian][meshmash.laplacian.cotangent_laplacian].
-    mollify_factor :
-        Mollification factor passed to
-        [cotangent_laplacian][meshmash.laplacian.cotangent_laplacian].
+        The maximum number of cuts before the loop stops, regardless of the sizes of
+        the remaining pieces.
     verbose :
-        If truthy, print queue information each round.
+        Whether to print the number of pieces in the queue every 50 rounds.
 
     Returns
     -------
     :
-        Per-vertex integer label array of shape ``(V,)``.  Labels run
-        ``0, 1, …, K-1`` ordered from largest to smallest chunk; vertices
-        not assigned to any chunk have label ``-1``.
+        The chunk label for each vertex. Labels run from 0 to K-1, ordered from the
+        largest chunk to the smallest; vertices in no chunk have a label of -1.
     """
-    if isinstance(mesh, (csr_array, np.ndarray)):
-        whole_adj = mesh
-    else:
-        mesh = interpret_mesh(mesh)
-        whole_adj = mesh_to_adjacency(mesh)
-
-    n_vertices = whole_adj.shape[0]
+    n_vertices = adj.shape[0]
     mesh_indices = np.arange(n_vertices)
 
     # first, append all the connected components that are large enough to the queue
-    n_components, component_labels = connected_components(whole_adj)
+    n_components, component_labels = connected_components(adj)
 
-    adj_queue = []
+    queue = []
     for component_id in range(n_components):
         component_mask = component_labels == component_id
-        count = component_mask.sum()
-        if count >= min_vertex_threshold:
-            component_indices = mesh_indices[component_mask]
-            # component_adj = whole_adj[component_indices][:, component_indices]
-            submesh = subset_mesh_by_indices(mesh, component_indices)
-            L, M = cotangent_laplacian(
-                submesh, robust=robust, mollify_factor=mollify_factor
-            )
-            adj_queue.append(((L, M), component_indices))
+        if component_mask.sum() >= min_vertex_threshold:
+            indices = mesh_indices[component_mask]
+            queue.append((adj[indices][:, indices], indices))
 
     submesh_mapping = np.full(n_vertices, -1, dtype=int)
-    indices_by_submesh = []
 
     n_finished = 0
     rounds = 0
 
-    while len(adj_queue) > 0 and rounds < max_rounds:
-        if verbose:
-            print("Meshes in queue:", len(adj_queue))
-        current_adj, current_indices = adj_queue.pop(0)
+    while len(queue) > 0 and rounds < max_rounds:
+        if verbose and rounds % 50 == 0:
+            print("Meshes in queue:", len(queue))
+        current_adj, current_indices = queue.pop(0)
 
-        # if this submesh is small enough, add it to the finished list
-        # this can happen if ccs are already small
-        if current_adj[0].shape[0] <= max_vertex_threshold:
-            sub_adjs, submesh_indices_to_main = [current_adj], [current_indices]
-        else:  # otherwise, split
-            sub_adjs, submesh_indices = bisect_laplacian(*current_adj)
-            submesh_colors = np.zeros(n_vertices, dtype=float)
-            submesh_colors[submesh_indices[0]] = 0
-            submesh_colors[submesh_indices[1]] = 1
+        # if this piece is small enough, it is finished as it stands; this
+        # happens when a connected component is already small
+        if current_adj.shape[0] <= max_vertex_threshold:
+            sub_adjs, indices_to_main = [current_adj], [current_indices]
+        else:  # otherwise, cut it
+            sub_adjs, local_indices = cut(current_adj)
 
             # adjust indices to be in terms of the main mesh
-            submesh_indices_to_main = [
-                current_indices[indices] for indices in submesh_indices
-            ]
+            indices_to_main = [current_indices[indices] for indices in local_indices]
 
-        for sub_adj, indices in zip(sub_adjs, submesh_indices_to_main):
-            if sub_adj[0].shape[0] > max_vertex_threshold:
-                adj_queue.append((sub_adj, indices))
+        for sub_adj, indices in zip(sub_adjs, indices_to_main):
+            if sub_adj.shape[0] > max_vertex_threshold:
+                queue.append((sub_adj, indices))
             else:
-                # TODO maybe add ensure_connected as a flag?
-                # assert connected_components(sub_adj)[0] == 1
-                # finished_meshes.append((sub_adj, indices))
                 submesh_mapping[indices] = n_finished
-                indices_by_submesh.append(indices)
                 n_finished += 1
         rounds += 1
 
     # remap so the first submesh is largest
-    valid_submesh_mapping = submesh_mapping[submesh_mapping != -1]
-    labels, counts = np.unique(valid_submesh_mapping, return_counts=True)
-    reorder = np.argsort(-counts)
-    new_labels = np.arange(labels.max() + 1)
-    old_to_new = dict(zip(labels[reorder], new_labels))
-    old_to_new[-1] = -1
-    submesh_mapping = np.vectorize(old_to_new.get)(submesh_mapping)
+    return _order_split_by_size(submesh_mapping)
 
-    return submesh_mapping
+
+def fit_mesh_split_spectral(
+    mesh: Union[Mesh, np.ndarray, csr_array],
+    max_vertex_threshold: int = 20_000,
+    min_vertex_threshold: int = 100,
+    max_rounds: int = 100_000,
+    verbose: Union[bool, int] = False,
+) -> np.ndarray:
+    """Partition a mesh into non-overlapping chunks by recursive spectral bisection.
+
+    A piece over ``max_vertex_threshold`` vertices is cut in two by
+    [spectral_bisect_adjacency][meshmash.split.spectral_bisect_adjacency], and a half
+    still over the threshold is cut again.
+
+    Parameters
+    ----------
+    mesh :
+        The input mesh. Should be a tuple of (vertices, faces), or an object with
+        `vertices` and `faces` attributes. An adjacency matrix can also be passed.
+    max_vertex_threshold :
+        The maximum number of vertices for a mesh chunk, before overlapping.
+    min_vertex_threshold :
+        The minimum number of vertices for a connected component to be included. This
+        can be used to filter out small disconnected pieces of the mesh; vertices in
+        smaller components are given a label of -1.
+    max_rounds :
+        The maximum number of cuts before the algorithm stops, regardless of the sizes
+        of the remaining chunks.
+    verbose :
+        Whether to print the number of pieces in the queue every 50 rounds.
+
+    Returns
+    -------
+    :
+        The chunk label for each vertex. Labels run from 0 to K-1, ordered from the
+        largest chunk to the smallest; vertices in no chunk have a label of -1.
+    """
+    whole_adj = _interpret_adjacency(mesh)
+
+    return _fit_split_by_queue(
+        whole_adj,
+        spectral_bisect_adjacency,
+        max_vertex_threshold=max_vertex_threshold,
+        min_vertex_threshold=min_vertex_threshold,
+        max_rounds=max_rounds,
+        verbose=verbose,
+    )
+
+
+def geodesic_voronoi_split(adj: csr_array, n_cells: int) -> np.ndarray:
+    """Cut a mesh graph into ``n_cells`` geodesic Voronoi cells.
+
+    Picks ``n_cells`` seed vertices by farthest-point sampling, then gives every
+    vertex to the seed that reaches it first. The cut is deterministic and takes no
+    random seed: the first seed is vertex ``0`` and ties break by index.
+
+    Parameters
+    ----------
+    adj :
+        The sparse adjacency matrix of the mesh graph, weighted by edge length as
+        [mesh_to_adjacency][meshmash.utils.mesh_to_adjacency] returns it.
+    n_cells :
+        The number of seeds, and therefore the maximum number of cells.
+
+    Returns
+    -------
+    :
+        The cell label for each vertex, running from 0 to `n_cells` - 1. A cell can
+        come back empty if two seeds land on the same vertex.
+    """
+    nearest = dijkstra(adj, directed=False, indices=[0], min_only=True)
+    seeds = [0]
+    for _ in range(1, n_cells):
+        farthest = int(np.argmax(nearest))
+        update = dijkstra(
+            adj,
+            directed=False,
+            indices=[farthest],
+            min_only=True,
+            limit=float(nearest[farthest]),
+        )
+        nearest = np.minimum(nearest, update)
+        seeds.append(farthest)
+
+    _, _, sources = dijkstra(
+        adj,
+        directed=False,
+        indices=seeds,
+        min_only=True,
+        return_predecessors=True,
+    )
+    lookup = np.full(adj.shape[0], -1, dtype=np.int64)
+    lookup[np.asarray(seeds)] = np.arange(len(seeds))
+    return lookup[sources]
+
+
+def fit_mesh_split_geodesic(
+    mesh: Union[Mesh, np.ndarray, csr_array],
+    max_vertex_threshold: int = 20_000,
+    min_vertex_threshold: int = 100,
+    target_vertices: int = 10_000,
+    max_rounds: int = 100_000,
+    verbose: Union[bool, int] = False,
+) -> np.ndarray:
+    """Partition a mesh into non-overlapping chunks by geodesic Voronoi cells.
+
+    A piece over ``max_vertex_threshold`` vertices is cut into
+    ``ceil(n / target_vertices)`` cells at once by
+    [geodesic_voronoi_split][meshmash.split.geodesic_voronoi_split], and a cell still
+    over the threshold is cut again.
+
+    Parameters
+    ----------
+    mesh :
+        The input mesh. Should be a tuple of (vertices, faces), or an object with
+        `vertices` and `faces` attributes. An adjacency matrix can also be passed.
+    max_vertex_threshold :
+        The maximum number of vertices for a mesh chunk, before overlapping.
+    min_vertex_threshold :
+        The minimum number of vertices for a connected component to be included. This
+        can be used to filter out small disconnected pieces of the mesh; vertices in
+        smaller components are given a label of -1.
+    target_vertices :
+        The number of vertices to aim for in each chunk, which sets how many seeds a
+        piece is cut with. Chunks come out near this size, and always under
+        ``max_vertex_threshold``. Must be a positive integer.
+    max_rounds :
+        The maximum number of cuts before the algorithm stops, regardless of the sizes
+        of the remaining chunks.
+    verbose :
+        Whether to print the number of pieces in the queue every 50 rounds.
+
+    Returns
+    -------
+    :
+        The chunk label for each vertex. Labels run from 0 to K-1, ordered from the
+        largest chunk to the smallest; vertices in no chunk have a label of -1.
+
+    Raises
+    ------
+    ValueError
+        If ``target_vertices`` is not a positive integer.
+    """
+    if target_vertices < 1:
+        raise ValueError(
+            f"target_vertices must be a positive integer, got {target_vertices}"
+        )
+
+    whole_adj = _interpret_adjacency(mesh)
+
+    def cut(adj: csr_array) -> tuple[list[csr_array], list[np.ndarray]]:
+        n_cells = max(2, int(np.ceil(adj.shape[0] / target_vertices)))
+        cell_of_vertex = geodesic_voronoi_split(adj, n_cells)
+        pieces = []
+        local_indices = []
+        for cell in range(n_cells):
+            members = np.nonzero(cell_of_vertex == cell)[0]
+            if len(members) > 0:
+                pieces.append(adj[members][:, members])
+                local_indices.append(members)
+        if len(pieces) < 2:
+            raise RuntimeError(
+                f"the geodesic cut left a {adj.shape[0]}-vertex piece whole; "
+                "every seed landed on the same vertex"
+            )
+        return pieces, local_indices
+
+    return _fit_split_by_queue(
+        whole_adj,
+        cut,
+        max_vertex_threshold=max_vertex_threshold,
+        min_vertex_threshold=min_vertex_threshold,
+        max_rounds=max_rounds,
+        verbose=verbose,
+    )
 
 
 def apply_mesh_split(mesh: Mesh, split_mapping: np.ndarray) -> list[Mesh]:
@@ -472,7 +456,9 @@ def apply_mesh_split(mesh: Mesh, split_mapping: np.ndarray) -> list[Mesh]:
         Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
     split_mapping :
         Per-vertex integer label array of length ``V`` as produced by
-        [fit_mesh_split][meshmash.split.fit_mesh_split].  Vertices with label ``-1`` are excluded.
+        [fit_mesh_split_spectral][meshmash.split.fit_mesh_split_spectral] or
+        [fit_mesh_split_geodesic][meshmash.split.fit_mesh_split_geodesic].  Vertices
+        with label ``-1`` are excluded.
 
     Returns
     -------
@@ -530,82 +516,6 @@ def get_submesh_borders(submesh: Mesh) -> np.ndarray:
     return border_indices
 
 
-def fit_overlapping_mesh_split(
-    mesh: Mesh,
-    overlap_distance: float = 20_000,
-    vertex_threshold: int = 20_000,
-    max_rounds: int = 1_000,
-) -> list[np.ndarray]:
-    """Split a mesh and grow each chunk geodesically to create overlapping regions.
-
-    First calls [fit_mesh_split][meshmash.split.fit_mesh_split] to partition the mesh, then expands
-    each chunk by including all vertices reachable within ``overlap_distance``
-    along mesh edges (using shortest-path distances).
-
-    Parameters
-    ----------
-    mesh :
-        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
-    overlap_distance :
-        Maximum geodesic distance from the core chunk within which
-        additional vertices are included in the overlap region.
-    vertex_threshold :
-        Maximum number of vertices per non-overlapping core chunk passed
-        to [fit_mesh_split][meshmash.split.fit_mesh_split].
-    max_rounds :
-        Maximum bisection rounds; see [fit_mesh_split][meshmash.split.fit_mesh_split].
-
-    Returns
-    -------
-    :
-        List of vertex index arrays (one per chunk), each containing the
-        core vertices plus their overlap neighbourhood.
-    """
-    mesh = interpret_mesh(mesh)
-    submesh_mapping = fit_mesh_split(
-        mesh, vertex_threshold=vertex_threshold, max_rounds=max_rounds
-    )
-    submeshes = apply_mesh_split(mesh, submesh_mapping)
-    for submesh in submeshes:
-        poly = mesh_to_poly(submesh)
-        assert poly.n_points == poly.extract_largest().n_points
-
-    adjacency = mesh_to_adjacency(mesh)
-    new_indices_by_submesh = []
-
-    for i, submesh in enumerate(submeshes):
-        # border_indices = get_submesh_borders(submesh)
-        submesh_to_original_mapping = np.where(submesh_mapping == i)[0]
-        # border_indices = submesh_to_original_mapping[border_indices]
-        neighbor_dists = dijkstra(
-            adjacency,
-            directed=False,
-            indices=submesh_to_original_mapping,
-            unweighted=False,
-            limit=overlap_distance,
-            min_only=True,
-        )
-        neighbor_mask = np.isfinite(neighbor_dists)
-        indices = np.arange(adjacency.shape[0])
-        indices = indices[neighbor_mask | (submesh_mapping == i)]
-        new_indices_by_submesh.append(indices)
-        assert connected_components(adjacency[indices][:, indices])[0] == 1
-    return new_indices_by_submesh
-
-
-# def apply_overlapping_mesh_split(mesh, indices_by_submesh):
-#     poly = mesh_to_poly(mesh)
-#     submeshes = []
-#     for indices in indices_by_submesh:
-#         sub_poly = (
-#             poly.extract_points(indices, adjacent_cells=False)
-#             .triangulate()
-#             .extract_surface()
-#         )
-#         submeshes.append(poly_to_mesh(sub_poly))
-#     return submeshes
-
-
 class MeshStitcher:
     """Split a mesh into overlapping chunks and apply functions across them.
 
@@ -646,10 +556,12 @@ class MeshStitcher:
         max_rounds: int = 100000,
         max_overlap_neighbors: Optional[int] = None,
         verify_connected: bool = True,
+        method: str = "spectral",
+        target_vertices: int = 10_000,
     ) -> list[Mesh]:
         """Partition the mesh and build overlapping submesh chunks.
 
-        Calls [fit_mesh_split][meshmash.split.fit_mesh_split] to produce non-overlapping core
+        Calls one of the fitting functions to produce non-overlapping core
         chunks, then expands each chunk by including all vertices
         reachable within ``overlap_distance`` along mesh edges.  The
         resulting submeshes, their overlap vertex indices, and the
@@ -661,7 +573,7 @@ class MeshStitcher:
         ----------
         max_vertex_threshold :
             Maximum vertices per non-overlapping core chunk; passed to
-            [fit_mesh_split][meshmash.split.fit_mesh_split].
+            the fitting function.
         min_vertex_threshold :
             Minimum connected-component size; smaller components are
             discarded.
@@ -669,7 +581,7 @@ class MeshStitcher:
             Maximum geodesic edge distance used to expand each core chunk
             into its overlapping neighbourhood.
         max_rounds :
-            Maximum bisection rounds; passed to [fit_mesh_split][meshmash.split.fit_mesh_split].
+            Maximum number of cuts; passed to the fitting function.
         max_overlap_neighbors :
             If set, limits each chunk's overlap to at most this many
             additional vertices (ranked by distance).  ``None`` keeps
@@ -677,6 +589,16 @@ class MeshStitcher:
         verify_connected :
             If ``True``, assert that every overlapping submesh forms a
             single connected component.
+        method :
+            Which routine to use to cut the mesh. ``"spectral"`` uses recursive
+            spectral bisection
+            ([fit_mesh_split_spectral][meshmash.split.fit_mesh_split_spectral]).
+            ``"geodesic"`` uses geodesic Voronoi cells
+            ([fit_mesh_split_geodesic][meshmash.split.fit_mesh_split_geodesic]),
+            which is cheaper, reproducible, and gives connected chunks.
+        target_vertices :
+            The number of vertices to aim for in each chunk. Only used when ``method``
+            is ``"geodesic"``, where it must be a positive integer.
 
         Returns
         -------
@@ -684,6 +606,9 @@ class MeshStitcher:
             List of overlapping submeshes as ``(vertices, faces)``
             tuples, one per chunk.
         """
+        if method not in ("spectral", "geodesic"):
+            raise ValueError(f"method must be 'spectral' or 'geodesic', got {method!r}")
+
         if max_vertex_threshold is None:
             max_vertex_threshold = len(self.mesh[0])
         if min_vertex_threshold is None:
@@ -693,13 +618,23 @@ class MeshStitcher:
             currtime = time.time()
             print("Subdividing mesh...")
 
-        submesh_mapping = fit_mesh_split(
-            self.mesh,
-            max_vertex_threshold=max_vertex_threshold,
-            min_vertex_threshold=min_vertex_threshold,
-            max_rounds=max_rounds,
-            verbose=self.verbose,
-        )
+        if method == "geodesic":
+            submesh_mapping = fit_mesh_split_geodesic(
+                self.mesh,
+                max_vertex_threshold=max_vertex_threshold,
+                min_vertex_threshold=min_vertex_threshold,
+                target_vertices=target_vertices,
+                max_rounds=max_rounds,
+                verbose=self.verbose,
+            )
+        else:
+            submesh_mapping = fit_mesh_split_spectral(
+                self.mesh,
+                max_vertex_threshold=max_vertex_threshold,
+                min_vertex_threshold=min_vertex_threshold,
+                max_rounds=max_rounds,
+                verbose=self.verbose,
+            )
 
         if self.verbose >= 2:
             print(f"Subdivision took {time.time() - currtime:.3f} seconds.")
@@ -724,14 +659,14 @@ class MeshStitcher:
         on its own: given the non-overlapping core chunks, expand each one
         along mesh edges into its overlap region and store the submeshes,
         their overlap vertex indices, and ``submesh_mapping`` on ``self``.
-        [split_mesh][meshmash.split.MeshStitcher.split_mesh] is exactly
-        [fit_mesh_split][meshmash.split.fit_mesh_split] followed by this.
+        [split_mesh][meshmash.split.MeshStitcher.split_mesh] is exactly one of the
+        fitting functions followed by this.
 
         The split of the two matters because only the first half is
-        expensive and only the first half is irreproducible: the recursive
-        Fiedler bisection partitions on the sign of an eigenvector that
-        converges to a tolerance, while this expansion is a deterministic
-        traversal.  A caller that has stored a partition can rebuild the
+        expensive, and under ``method="spectral"`` only the first half is
+        irreproducible: the spectral bisection partitions on the sign of an
+        eigenvector that converges to a tolerance, while this expansion is a
+        deterministic traversal.  A caller that has stored a partition can rebuild the
         same stitcher from it as many times as it likes, and two callers
         that rebuild from the same partition agree by construction.
 
@@ -740,8 +675,10 @@ class MeshStitcher:
         submesh_mapping :
             Per-vertex integer array of length ``V`` naming each vertex's
             core chunk, as returned by
-            [fit_mesh_split][meshmash.split.fit_mesh_split].  ``-1`` for a
-            vertex in no chunk.
+            [fit_mesh_split_spectral][meshmash.split.fit_mesh_split_spectral] or
+            [fit_mesh_split_geodesic][meshmash.split.fit_mesh_split_geodesic].  ``-1``
+            for a vertex in no chunk. The other labels must run from 0 to K-1, since chunk
+            i of the returned list is the chunk with label i.
         overlap_distance :
             Maximum geodesic edge distance used to expand each core chunk
             into its overlapping neighbourhood.
@@ -758,6 +695,12 @@ class MeshStitcher:
         :
             List of overlapping submeshes as ``(vertices, faces)``
             tuples, one per chunk.
+
+        Raises
+        ------
+        ValueError
+            If ``submesh_mapping`` is the wrong length, or if its labels do not run
+            from 0 to K-1.
         """
         submesh_mapping = np.asarray(submesh_mapping)
         if len(submesh_mapping) != len(self.mesh[0]):
@@ -767,12 +710,19 @@ class MeshStitcher:
             )
 
         self.submesh_mapping = submesh_mapping
-        temp_submeshes = apply_mesh_split(self.mesh, submesh_mapping)
 
-        # # check if all submeshes are one connected component
-        # for submesh in temp_submeshes:
-        #     poly = mesh_to_poly(submesh)
-        #     assert poly.n_points == poly.extract_largest().n_points
+        # The chunks come from the partition itself, not from a face-derived
+        # submesh list: a cell one vertex wide owns no face whose three
+        # vertices share its label, so it would drop out of such a list and
+        # take the position of every chunk after it with it.
+        labels = np.unique(submesh_mapping)
+        labels = labels[labels >= 0]
+        n_chunks = len(labels)
+        if n_chunks > 0 and not np.array_equal(labels, np.arange(n_chunks)):
+            raise ValueError(
+                "submesh_mapping labels must run 0, 1, ..., K-1, because the "
+                f"chunk at position i is the chunk labelled i; got {labels}"
+            )
 
         adjacency = mesh_to_adjacency(self.mesh)
 
@@ -782,7 +732,7 @@ class MeshStitcher:
         if self.verbose:
             currtime = time.time()
             print("Finding overlapping submeshes...")
-        for i, submesh in enumerate(temp_submeshes):
+        for i in range(n_chunks):
             submesh_to_original_mapping = np.where(submesh_mapping == i)[0]
             neighbor_dists = dijkstra(
                 adjacency,

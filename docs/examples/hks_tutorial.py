@@ -14,7 +14,7 @@
 # 4. Visualizing a single HKS feature on the mesh
 
 # %%
-import base64
+import html
 import warnings
 
 import pyvista as pv
@@ -63,14 +63,16 @@ scalars = result.condensed_features[col].reindex(result.simple_labels).values
 plotter = pv.Plotter(off_screen=True, window_size=(800, 500))
 plotter.add_mesh(poly, scalars=scalars, cmap="coolwarm", show_scalar_bar=False)
 plotter.view_isometric()
-plotter.export_html("hks_feature.html")
+# The scene goes in the ``srcdoc`` attribute, which is what PyVista itself does for a
+# notebook. A ``data:`` URL is the other way to carry it, but Chrome drops any URL over
+# 2 MB, and a scene this size passes that.
+scene = html.escape(plotter.export_html(filename=None).getvalue(), quote=True)
 
-b64 = base64.b64encode(open("hks_feature.html", "rb").read()).decode()
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", UserWarning)
     display(
         HTML(
-            f'<iframe src="data:text/html;base64,{b64}" style="width:100%;height:500px;border:none;"></iframe>'
+            f'<iframe srcdoc="{scene}" style="width:100%;height:500px;border:none;"></iframe>'
         )
     )
 
