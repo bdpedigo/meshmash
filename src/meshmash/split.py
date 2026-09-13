@@ -347,26 +347,6 @@ def fit_mesh_split(
     )
 
 
-# def laplacian_split(L: csr_array, M):
-#     # TODO normed didn't seem to make much of a difference here; perhaps just because
-#     # degrees are fairly homogeneous?
-#     # lap, degrees = laplacian(adj, normed=False, symmetrized=True, return_diag=True)
-
-#     # NOTE: tried this as initialization, but it also didn't seem to make a difference
-#     # maybe overhead is all in the LU decomposition?
-#     # n = adj.shape[0]
-#     # v0 = np.full(n, 1 / np.sqrt(n))
-#     eigenvalues, eigenvectors = eigsh(
-#         L,
-
-#         k=2,
-#         sigma=-1e-10,
-#     )
-#     indices1 = np.nonzero(eigenvectors[:, 1] >= 0)[0]
-#     indices2 = np.nonzero(eigenvectors[:, 1] < 0)[0]
-#     return indices1, indices2
-
-
 def subset_diags(matrix: sparse.sparray, indices: np.ndarray) -> diags_array:
     return diags_array(matrix.diagonal()[indices], shape=(len(indices), len(indices)))
 
@@ -412,14 +392,6 @@ def bisect_laplacian(
     # get the sub-adjacencies
     sub_adj1 = L[indices1][:, indices1]
     sub_adj2 = L[indices2][:, indices2]
-
-    # make sure we didn't disconnect any nodes
-    # degrees1 = np.sum(sub_adj1, axis=1) + np.sum(sub_adj1, axis=0)
-    # degrees2 = np.sum(sub_adj2, axis=1) + np.sum(sub_adj2, axis=0)
-    # if np.any(degrees1 == 0):
-    #     raise RuntimeError("Some nodes were disconnected in the split.")
-    # if np.any(degrees2 == 0):
-    #     raise RuntimeError("Some nodes were disconnected in the split.")
 
     sub_laps = (
         (sub_adj1, subset_diags(M, indices1)),
@@ -794,19 +766,6 @@ def fit_overlapping_mesh_split(
         new_indices_by_submesh.append(indices)
         assert connected_components(adjacency[indices][:, indices])[0] == 1
     return new_indices_by_submesh
-
-
-# def apply_overlapping_mesh_split(mesh, indices_by_submesh):
-#     poly = mesh_to_poly(mesh)
-#     submeshes = []
-#     for indices in indices_by_submesh:
-#         sub_poly = (
-#             poly.extract_points(indices, adjacent_cells=False)
-#             .triangulate()
-#             .extract_surface()
-#         )
-#         submeshes.append(poly_to_mesh(sub_poly))
-#     return submeshes
 
 
 class MeshStitcher:
