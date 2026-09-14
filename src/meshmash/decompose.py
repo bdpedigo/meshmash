@@ -419,6 +419,7 @@ def spectral_geometry_filter(
     point_laplacian: bool = False,
     n_neighbors: int = 30,
     verbose: Union[bool, int] = False,
+    overlap_target: Optional[int] = None,
     profile: Optional[dict] = None,
 ) -> Union[np.ndarray, tuple[np.ndarray, np.ndarray]]:
     """Apply a spectral filter to the geometry of a mesh.
@@ -453,6 +454,17 @@ def spectral_geometry_filter(
     verbose :
         If >0, print out additional information about the computation. Higher values
         give more information.
+    overlap_target :
+        ``None`` keeps the original placement heuristic (next shift 0.4
+        bandwidths past the frontier), which re-solves roughly a quarter
+        of every band at the seam. An integer switches to predicted
+        placement: the eigenvalue density observed so far (flat for a 2-D
+        surface, by Weyl's law) places the next shift so the seam overlap
+        lands near this many pairs, and shrinks the final band to the
+        predicted remainder instead of overshooting the cutoff by up to a
+        whole band. The eigenpairs kept are the same; only the redundant
+        solves shrink. Must be at least 1 — the band-continuity check
+        needs a nonempty seam.
     profile :
         Optional dict that accumulates the band loop's cost breakdown and
         does not change the result. Seconds: ``"factor"``, ``"arpack"``
@@ -522,11 +534,19 @@ def spectral_geometry_filter(
     else:
         raise ValueError(f"Unknown decomposition_dtype: {decomposition_dtype}")
 
+    if overlap_target is not None and overlap_target < 1:
+        raise ValueError(
+            "overlap_target must be at least 1: the band-continuity check "
+            "needs the new band to reach back over the frontier"
+        )
+
     eigenvalues = []
     band_max_eigenvalue = 0
     sigma = -1e-10
     last_eigenvalue = 0
     eigenvalue_bandwidth = 0
+    band_k = band_size
+    place_next = False
 
     if filter is not None:
         # HACK: get the number of features for the filter
@@ -542,12 +562,36 @@ def spectral_geometry_filter(
     timing["sum"] = 0
     pbar = tqdm(total=max_eigenvalue, disable=not verbose)
     while band_max_eigenvalue < max_eigenvalue:
+        if place_next:
+            # Predicted placement (overlap_target set): the density seen so
+            # far — flat in eigenvalue for a 2-D surface, by Weyl's law —
+            # converts pair counts to shifts. The next band of k pairs
+            # centers on sigma, so putting sigma (k/2 - target) pairs past
+            # the frontier lands the seam near `overlap_target` pairs.
+            density = len(eigenvalues) / band_max_eigenvalue
+            remaining = (max_eigenvalue - band_max_eigenvalue) * density
+            margin = max(8.0, 0.25 * remaining)
+            if remaining + overlap_target + margin < band_size:
+                # Final band: solve the predicted remainder, not a full band.
+                # Floor at 2*target+2 so sigma stays past the frontier.
+                band_k = int(
+                    max(
+                        np.ceil(remaining + overlap_target + margin),
+                        2 * overlap_target + 2,
+                        8,
+                    )
+                )
+            else:
+                band_k = band_size
+            sigma = band_max_eigenvalue + (0.5 * band_k - overlap_target) / density
+            place_next = False
+
         if verbose >= 2:
             print(f"Computing band with sigma={sigma:.3g}")
 
         currtime = time.time()
         band_eigenvalues, band_eigenvectors = decompose_laplacian(
-            L, M, n_components=band_size, sigma=sigma, tol=eigen_tol, profile=profile
+            L, M, n_components=band_k, sigma=sigma, tol=eigen_tol, profile=profile
         )
         timing["decompose"] += time.time() - currtime
 
@@ -626,7 +670,10 @@ def spectral_geometry_filter(
         band_max_eigenvalue = np.max(band_eigenvalues)
         band_min_eigenvalue = np.min(band_eigenvalues)
         eigenvalue_bandwidth = band_max_eigenvalue - band_min_eigenvalue
-        sigma = band_max_eigenvalue + 0.4 * eigenvalue_bandwidth
+        if overlap_target is None:
+            sigma = band_max_eigenvalue + 0.4 * eigenvalue_bandwidth
+        else:
+            place_next = True
 
         # update by the amount the max eigenvalue increased
         pbar.update(band_max_eigenvalue - last_eigenvalue)
