@@ -13,11 +13,20 @@ area folded in.  That is what makes them diffusible.  Dividing a measure by the
 vertex area recovers the pointwise field, and
 [compute_diffused_curvature][meshmash.curvature.compute_diffused_curvature] does
 exactly that on the way into the filter.
+
+Everything this module computes at several scales comes back as one flat
+``(V, F)`` table of named columns, the same shape
+[compute_hks][meshmash.decompose.compute_hks] returns, so that it passes
+through [MeshStitcher][meshmash.split.MeshStitcher] and
+[aggregate_features][meshmash.agglomerate.aggregate_features] unchanged.  See
+[diffused_curvature_feature_names][meshmash.curvature.diffused_curvature_feature_names]
+for the column names and their order.
 """
 
-from typing import Callable, NamedTuple, Optional, Union
+from typing import Callable, Optional, Union
 
 import numpy as np
+import pandas as pd
 from point_cloud_utils import estimate_mesh_vertex_normals
 from scipy.sparse import dia_array, sparray
 
@@ -476,18 +485,73 @@ def normal_tensor_invariants(tensor: ArrayLike) -> np.ndarray:
     return out
 
 
-class DiffusedCurvatureResult(NamedTuple):
-    """What [compute_diffused_curvature][meshmash.curvature.compute_diffused_curvature] returns."""
+def diffused_curvature_feature_names(
+    n_scales: int, n_diagonal: Optional[int] = None
+) -> list[str]:
+    """The columns
+    [compute_diffused_curvature][meshmash.curvature.compute_diffused_curvature]
+    emits, in the order it emits them.
 
-    #: Filtered kernel diagonal, shape ``(V, D)``.  The heat kernel signature
-    #: at ``scales`` when no ``diagonal_filter`` was given.
-    diagonal: np.ndarray
-    #: Undiffused curvature invariants, shape ``(V, 6)``.
-    raw_curvature: np.ndarray
-    #: Diffused curvature invariants, shape ``(V, n_scales, 6)``.
-    curvature: np.ndarray
-    #: Diffused normal-tensor invariants, shape ``(V, n_scales, 4)``.
-    normal_tensor: np.ndarray
+    Every name is ``family_channel_scale``.  The family says which group the
+    column came from, the channel is the named invariant inside that group,
+    and the scale is the index into ``scales``.  A caller selects one family
+    with a prefix, which matters because the families want different handling
+    downstream: ``hks_`` and ``curvature_`` span orders of magnitude and are
+    usually logged before agglomeration, while the ``normal_`` shape fractions
+    already sit in ``[0, 1]`` and must not be.
+
+    The four blocks, in order, are
+
+    - ``hks_{i}``, the filtered kernel diagonal, which is the heat kernel
+      signature when no ``diagonal_filter`` was given.  Named to match the
+      columns [compute_hks][meshmash.decompose.compute_hks] feeds the
+      pipelines, so the two are directly comparable.
+    - ``curvature_{channel}_raw``, the undiffused curvature invariants.
+    - ``curvature_{channel}_{i}``, the diffused curvature invariants, with
+      the channels from
+      [CURVATURE_INVARIANT_NAMES][meshmash.curvature.CURVATURE_INVARIANT_NAMES].
+    - ``normal_{channel}_{i}``, the diffused normal-tensor invariants, with
+      the channels from
+      [NORMAL_TENSOR_INVARIANT_NAMES][meshmash.curvature.NORMAL_TENSOR_INVARIANT_NAMES].
+
+    The two diffused blocks run scale-major: every channel at scale ``0``,
+    then every channel at scale ``1``.  That is the order a C-contiguous
+    ``(V, n_scales, n_channels)`` array flattens in, so a caller holding one
+    can reshape it to these columns without a transpose.
+
+    Parameters
+    ----------
+    n_scales :
+        Number of diffusion timescales.
+    n_diagonal :
+        Number of kernel-diagonal columns.  Equal to ``n_scales`` when
+        ``None``, which is what a call with no ``diagonal_filter`` produces.
+
+    Returns
+    -------
+    :
+        Column names, of length ``n_diagonal + 6 + n_scales * 10``.
+    """
+    if n_scales < 0:
+        raise ValueError(f"n_scales must be non-negative, got {n_scales}")
+    if n_diagonal is None:
+        n_diagonal = n_scales
+    if n_diagonal < 0:
+        raise ValueError(f"n_diagonal must be non-negative, got {n_diagonal}")
+    return (
+        [f"hks_{i}" for i in range(n_diagonal)]
+        + [f"curvature_{name}_raw" for name in CURVATURE_INVARIANT_NAMES]
+        + [
+            f"curvature_{name}_{scale}"
+            for scale in range(n_scales)
+            for name in CURVATURE_INVARIANT_NAMES
+        ]
+        + [
+            f"normal_{name}_{scale}"
+            for scale in range(n_scales)
+            for name in NORMAL_TENSOR_INVARIANT_NAMES
+        ]
+    )
 
 
 def compute_diffused_curvature(
@@ -503,7 +567,7 @@ def compute_diffused_curvature(
     decomposition_dtype: Optional[np.dtype] = np.float64,
     signal_dtype: np.dtype = np.float64,
     verbose: Union[bool, int] = False,
-) -> DiffusedCurvatureResult:
+) -> pd.DataFrame:
     """Curvature and normal-tensor descriptors at several scales, off one solve.
 
     Smoothing a curvature estimate is the point, not a cleanup step: a mesh has
@@ -556,10 +620,27 @@ def compute_diffused_curvature(
     Returns
     -------
     :
-        A [DiffusedCurvatureResult][meshmash.curvature.DiffusedCurvatureResult].
+        One ``(V, F)`` table of named columns, with ``F`` equal to
+        ``n_diagonal + 6 + len(scales) * 10``.  The columns and their order
+        are described by
+        [diffused_curvature_feature_names][meshmash.curvature.diffused_curvature_feature_names].
+        This is the flat shape [compute_hks][meshmash.decompose.compute_hks]
+        returns, so ``.to_numpy()`` passes straight through
+        [MeshStitcher.apply][meshmash.split.MeshStitcher.apply] and the frame
+        itself through
+        [aggregate_features][meshmash.agglomerate.aggregate_features].
 
     Notes
     -----
+    **The families are not on one scale.**  This returns them in one table
+    because the pipelines want one table, not because the columns are alike.
+    ``hks_`` and ``curvature_`` span orders of magnitude and take a log before
+    agglomeration; ``normal_`` fractions are already bounded and would go
+    non-finite under one.  ``curvature_mean_*`` and ``curvature_k*`` are signed
+    and cannot be logged at all.  Select a family by its prefix before handing
+    the columns to anything that assumes positivity, such as
+    [condense_features][meshmash.agglomerate.condense_features].
+
     **Measures in, fields across the boundary.**  Both families are built as
     measures, and are divided by the vertex areas before they are handed to
     [spectral_geometry_filter][meshmash.decompose.spectral_geometry_filter],
@@ -654,9 +735,18 @@ def compute_diffused_curvature(
         ],
         axis=1,
     )
-    return DiffusedCurvatureResult(
-        diagonal=diagonal[:, :n_diagonal],
-        raw_curvature=raw,
-        curvature=curvature,
-        normal_tensor=normal_tensor,
+    # Concatenated block by block rather than through one hstack, so that a
+    # float32 diagonal is not widened to the float64 the invariants come back
+    # as.  The reshapes are the C-order flattening the column names assume.
+    n_vertices = len(vertices)
+    frame = pd.concat(
+        [
+            pd.DataFrame(diagonal[:, :n_diagonal]),
+            pd.DataFrame(raw),
+            pd.DataFrame(curvature.reshape(n_vertices, -1)),
+            pd.DataFrame(normal_tensor.reshape(n_vertices, -1)),
+        ],
+        axis=1,
     )
+    frame.columns = diffused_curvature_feature_names(len(scales), n_diagonal)
+    return frame

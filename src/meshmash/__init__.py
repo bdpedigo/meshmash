@@ -29,9 +29,9 @@ from .clean import (
 from .curvature import (
     CURVATURE_INVARIANT_NAMES,
     NORMAL_TENSOR_INVARIANT_NAMES,
-    DiffusedCurvatureResult,
     compute_diffused_curvature,
     curvature_invariants,
+    diffused_curvature_feature_names,
     gaussian_curvature_measure,
     mean_curvature_measure,
     normal_tensor_invariants,
@@ -118,7 +118,6 @@ from .wrap import wrap_mesh
 
 __all__ = [
     "CURVATURE_INVARIANT_NAMES",
-    "DiffusedCurvatureResult",
     "MeshStitcher",
     "NORMAL_TENSOR_INVARIANT_NAMES",
     "agglomerate_mesh",
@@ -153,6 +152,7 @@ __all__ = [
     "decompose_laplacian",
     "decompose_laplacian_by_bands",
     "decompose_mesh",
+    "diffused_curvature_feature_names",
     "edges_to_lines",
     "fetch_sample_mesh",
     "find_nucleus_point",

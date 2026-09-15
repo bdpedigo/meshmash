@@ -8,6 +8,7 @@ assert against.
 """
 
 import numpy as np
+import pandas as pd
 import pytest
 import pyvista as pv
 from scipy.linalg import eigh
@@ -18,6 +19,7 @@ from meshmash import (
     boundary_vertices,
     compute_diffused_curvature,
     curvature_invariants,
+    diffused_curvature_feature_names,
     gaussian_curvature_measure,
     mean_curvature_measure,
     normal_tensor_invariants,
@@ -299,13 +301,15 @@ def test_the_diffusion_is_the_truncated_spectral_diffusion(small_sphere):
     for index, scale in enumerate(scales):
         expected = keep @ (np.exp(-scale * kept_eigenvalues) * (keep.T @ measure))
         np.testing.assert_allclose(
-            result.curvature[:, index, 0],
+            result[f"curvature_mean_{index}"],
             expected,
             rtol=1e-8,
             atol=1e-10 * np.abs(expected).max(),
         )
     # The raw column is the undiffused field, not a diffused one.
-    np.testing.assert_allclose(result.raw_curvature[:, 0], measure / areas, rtol=1e-10)
+    np.testing.assert_allclose(
+        result["curvature_mean_raw"], measure / areas, rtol=1e-10
+    )
 
 
 def test_dropping_the_constant_mode_leaves_the_fields_alone(small_sphere):
@@ -316,9 +320,14 @@ def test_dropping_the_constant_mode_leaves_the_fields_alone(small_sphere):
     dropped = compute_diffused_curvature(
         small_sphere, scales, drop_first=True, **kwargs
     )
-    np.testing.assert_allclose(dropped.curvature, kept.curvature, rtol=1e-5)
     np.testing.assert_allclose(
-        dropped.normal_tensor, kept.normal_tensor, rtol=1e-5, atol=1e-6
+        dropped.filter(like="curvature_"), kept.filter(like="curvature_"), rtol=1e-5
+    )
+    np.testing.assert_allclose(
+        dropped.filter(like="normal_"),
+        kept.filter(like="normal_"),
+        rtol=1e-5,
+        atol=1e-6,
     )
 
 
@@ -327,25 +336,27 @@ def test_the_tensor_trace_is_conserved_on_a_closed_mesh(sphere):
     result = compute_diffused_curvature(
         sphere, np.geomspace(1e4, 2.5e5, 4), max_eigenvalue=MAX_EIGENVALUE
     )
-    np.testing.assert_allclose(result.normal_tensor[:, :, 3], 1.0, atol=1e-3)
+    np.testing.assert_allclose(result.filter(like="normal_trace_"), 1.0, atol=1e-3)
 
 
 def test_the_shape_fractions_sum_to_one(sphere):
     result = compute_diffused_curvature(
         sphere, np.geomspace(1e4, 2.5e5, 4), max_eigenvalue=MAX_EIGENVALUE
     )
-    np.testing.assert_allclose(
-        result.normal_tensor[:, :, :3].sum(axis=-1), 1.0, atol=1e-6
-    )
+    for index in range(4):
+        fractions = result[
+            [f"normal_{name}_{index}" for name in ("sheet", "tube", "blob")]
+        ]
+        np.testing.assert_allclose(fractions.sum(axis=1), 1.0, atol=1e-6)
 
 
 def test_a_sphere_reads_sheet_then_blob(sphere):
     """Scale reads size. A small patch of a sphere is flat, the whole of it is not."""
     scales = np.array([1e4, 2.5e5])
     result = compute_diffused_curvature(sphere, scales, max_eigenvalue=MAX_EIGENVALUE)
-    assert np.median(result.normal_tensor[:, 0, 0]) > 0.9
-    assert np.median(result.normal_tensor[:, 1, 2]) > 0.7
-    assert np.median(result.normal_tensor[:, 1, 0]) < 0.3
+    assert np.median(result["normal_sheet_0"]) > 0.9
+    assert np.median(result["normal_blob_1"]) > 0.7
+    assert np.median(result["normal_sheet_1"]) < 0.3
 
 
 def test_a_tube_reads_sheet_then_tube_at_its_own_caliber(tube):
@@ -366,8 +377,8 @@ def test_a_tube_reads_sheet_then_tube_at_its_own_caliber(tube):
     for index, scale in enumerate(scales):
         expected = np.exp(-4.0 * scale / TUBE_RADIUS**2)
         sheet, tube_fraction, blob = (
-            np.median(result.normal_tensor[mid_shaft, index, column])
-            for column in range(3)
+            np.median(result.loc[mid_shaft, f"normal_{name}_{index}"])
+            for name in ("sheet", "tube", "blob")
         )
         assert sheet == pytest.approx(expected, abs=0.005)
         assert tube_fraction == pytest.approx(1.0 - expected, abs=0.005)
@@ -382,8 +393,8 @@ def test_a_tube_keeps_its_mean_curvature_under_diffusion(tube):
         tube, np.array([112.0, 800.0]) ** 2, max_eigenvalue=MAX_EIGENVALUE
     )
     for index in range(2):
-        mean = np.median(result.curvature[mid_shaft, index, 0])
-        gauss = np.median(result.curvature[mid_shaft, index, 1])
+        mean = np.median(result.loc[mid_shaft, f"curvature_mean_{index}"])
+        gauss = np.median(result.loc[mid_shaft, f"curvature_gauss_{index}"])
         assert mean * TUBE_RADIUS == pytest.approx(0.5, abs=0.005)
         assert abs(gauss) * TUBE_RADIUS**2 < 0.005
 
@@ -409,14 +420,100 @@ def test_the_diagonal_is_the_heat_kernel_signature(sphere):
         **kwargs,
     )
     expected = compute_hks(jittered, t_min=1e4, t_max=2.5e5, n_components=6, **kwargs)
-    assert result.diagonal.shape == expected.shape
-    np.testing.assert_allclose(result.diagonal, expected, rtol=1e-8)
+    diagonal = result.filter(like="hks_")
+    assert diagonal.shape == expected.shape
+    np.testing.assert_allclose(diagonal, expected, rtol=1e-8)
 
 
 def test_without_a_diagonal_filter_the_diagonal_comes_back_at_the_scales(sphere):
     scales = np.geomspace(1e4, 2.5e5, 5)
     result = compute_diffused_curvature(sphere, scales, max_eigenvalue=MAX_EIGENVALUE)
-    assert result.diagonal.shape == (len(sphere[0]), len(scales))
-    assert result.curvature.shape == (len(sphere[0]), len(scales), 6)
-    assert result.normal_tensor.shape == (len(sphere[0]), len(scales), 4)
-    assert result.raw_curvature.shape == (len(sphere[0]), 6)
+    assert list(result.columns) == diffused_curvature_feature_names(len(scales))
+    assert result.shape == (len(sphere[0]), len(scales) * 10 + len(scales) + 6)
+
+
+# --- the flat feature table -----------------------------------------------
+
+
+def test_the_feature_names_come_from_the_exported_constants():
+    """Names, not positions.  A reordered channel has to move its own name."""
+    names = diffused_curvature_feature_names(2)
+
+    assert len(names) == 2 + 6 + 2 * 6 + 2 * 4
+    assert names[:2] == ["hks_0", "hks_1"]
+    assert names[2:8] == [f"curvature_{name}_raw" for name in CURVATURE_INVARIANT_NAMES]
+    # Scale-major: every channel at scale 0, then every channel at scale 1.
+    assert names[8:14] == [f"curvature_{name}_0" for name in CURVATURE_INVARIANT_NAMES]
+    assert names[14:20] == [f"curvature_{name}_1" for name in CURVATURE_INVARIANT_NAMES]
+    assert names[20:24] == [
+        f"normal_{name}_0" for name in NORMAL_TENSOR_INVARIANT_NAMES
+    ]
+    assert names[24:] == [f"normal_{name}_1" for name in NORMAL_TENSOR_INVARIANT_NAMES]
+
+
+def test_a_longer_diagonal_lengthens_only_the_diagonal_block():
+    """`diagonal_filter` decouples the diagonal's length from the scales."""
+    names = diffused_curvature_feature_names(2, n_diagonal=5)
+
+    assert names[:5] == [f"hks_{i}" for i in range(5)]
+    assert names[5:] == diffused_curvature_feature_names(2)[2:]
+
+
+def test_the_diffused_block_flattens_scale_major(sphere):
+    """The claim the column names make about the memory layout.
+
+    `compute_diffused_curvature` builds the diffused families as
+    ``(V, n_scales, n_channels)`` and reshapes them.  Reshaping the columns
+    back has to recover a per-scale block, which it only does if the flattening
+    ran scale-major.
+    """
+    scales = np.geomspace(1e4, 2.5e5, 3)
+    result = compute_diffused_curvature(sphere, scales, max_eigenvalue=MAX_EIGENVALUE)
+
+    block = result.filter(regex=r"^normal_\w+_\d+$").to_numpy()
+    reshaped = block.reshape(len(sphere[0]), len(scales), 4)
+    for scale in range(len(scales)):
+        for channel, name in enumerate(NORMAL_TENSOR_INVARIANT_NAMES):
+            np.testing.assert_array_equal(
+                reshaped[:, scale, channel], result[f"normal_{name}_{scale}"]
+            )
+
+
+def test_the_table_survives_the_chunked_path(tube):
+    """The reason for the flat shape: `MeshStitcher` takes `(V, F)` and nothing else.
+
+    Stitched per-chunk curvature is not the whole-mesh curvature, because a
+    chunk's diffusion sees a boundary the whole mesh does not.  What this
+    asserts is the plumbing: every vertex gets filled, the column names survive
+    the round trip, and `aggregate_features` takes the result.
+    """
+    from meshmash import MeshStitcher, aggregate_features
+
+    scales = np.array([112.0, 224.0]) ** 2
+    names = diffused_curvature_feature_names(len(scales))
+
+    stitcher = MeshStitcher(tube, n_jobs=1)
+    stitcher.split_mesh(
+        max_vertex_threshold=1500,
+        target_vertices=1200,
+        method="geodesic",
+        overlap_distance=200.0,
+    )
+    assert len(stitcher.submeshes) > 1
+
+    stitched = stitcher.apply(
+        lambda submesh: compute_diffused_curvature(
+            submesh, scales, max_eigenvalue=MAX_EIGENVALUE
+        ).to_numpy()
+    )
+
+    assert stitched.shape == (len(tube[0]), len(names))
+    assert np.isfinite(stitched).all()
+
+    features = pd.DataFrame(stitched, columns=names)
+    labels = np.zeros(len(tube[0]), dtype=int)
+    labels[np.asarray(tube[0])[:, 2] > 0] = 1
+    aggregated = aggregate_features(features, labels)
+
+    assert list(aggregated.columns) == names
+    assert list(aggregated.index) == [-1, 0, 1]
