@@ -206,13 +206,19 @@ def test_the_undiffused_normal_tensor_is_rank_one(sphere):
 def test_the_normal_tensor_ignores_the_winding(tube):
     """The outer product erases the normal's sign, so no orientation vote is needed.
 
-    To rounding rather than to the bit: reversing the winding negates each
-    face's cross product, and the normals are summed in the same order but with
-    the opposite sign, which is not the same floating-point sum.
+    To rounding rather than to the bit: reversing the winding negates the
+    normals, and the outer products are then accumulated from the opposite
+    sign, which is not the same floating-point sum.  The off-diagonal entries
+    that are mathematically zero land on either side of zero, so this needs an
+    absolute tolerance and not a relative one alone.
     """
     flipped = (np.asarray(tube[0]), np.asarray(tube[1])[:, ::-1])
+    expected = normal_tensor_measure(tube)
     np.testing.assert_allclose(
-        normal_tensor_measure(flipped), normal_tensor_measure(tube), rtol=1e-12
+        normal_tensor_measure(flipped),
+        expected,
+        rtol=1e-12,
+        atol=1e-12 * np.abs(expected).max(),
     )
 
 

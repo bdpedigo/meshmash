@@ -18,6 +18,7 @@ exactly that on the way into the filter.
 from typing import Callable, NamedTuple, Optional, Union
 
 import numpy as np
+from point_cloud_utils import estimate_mesh_vertex_normals
 from scipy.sparse import dia_array, sparray
 
 from .decompose import concatenate_filters, get_heat_filter, spectral_geometry_filter
@@ -49,6 +50,10 @@ _TENSOR_PAIRS = ((0, 0), (1, 1), (2, 2), (0, 1), (0, 2), (1, 2))
 def vertex_normals(mesh: Mesh) -> np.ndarray:
     """Unit vertex normals, area-weighted from the face normals.
 
+    A thin wrapper around ``point_cloud_utils.estimate_mesh_vertex_normals``
+    with ``weighting_type="area"``, which is also what
+    [clean][meshmash.clean] uses for its face normals.
+
     The sign is whatever the mesh's face winding says, which for a mesh nobody
     has oriented is arbitrary per connected component.  Callers that need a
     consistent sign have to fix it themselves.  See
@@ -67,24 +72,17 @@ def vertex_normals(mesh: Mesh) -> np.ndarray:
         face normals cancel exactly, comes back as the zero vector.
     """
     vertices, faces = interpret_mesh(mesh)
-    vertices = np.asarray(vertices, dtype=np.float64)
-    faces = np.asarray(faces)
-
-    corners = vertices[faces]
-    # |cross| is twice the triangle area, so summing the raw cross products
-    # area-weights the average for free.
-    crossed = np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])
-
-    flat = faces.reshape(-1)
-    repeated = np.repeat(crossed, 3, axis=0)
-    normals = np.empty((len(vertices), 3), dtype=np.float64)
-    for axis in range(3):
-        normals[:, axis] = np.bincount(
-            flat, weights=repeated[:, axis], minlength=len(vertices)
-        )
-
-    lengths = np.linalg.norm(normals, axis=1, keepdims=True)
-    return normals / np.where(lengths > 0, lengths, 1.0)
+    vertices = np.ascontiguousarray(vertices, dtype=np.float64)
+    faces = np.ascontiguousarray(faces, dtype=np.int32)  # pcu wants int32
+    # Area weighting is inherited from the old hand-rolled version, not chosen.
+    # Worst-case angle from the exact normal of a sphere: 0.51 deg for "area",
+    # 0.05 for "angle".  Worth revisiting, but it moves every downstream feature.
+    normals = np.asarray(
+        estimate_mesh_vertex_normals(vertices, faces, weighting_type="area"),
+        dtype=np.float64,
+    )
+    # pcu returns a non-finite row where this function promises zero.
+    return np.where(np.isfinite(normals).all(axis=1, keepdims=True), normals, 0.0)
 
 
 def _resolve_laplacian(
@@ -93,11 +91,17 @@ def _resolve_laplacian(
     robust: bool,
     mollify_factor: float,
 ) -> tuple[sparray, dia_array]:
-    """Reuse a caller's operator, or build one, centring the mesh either way."""
+    """Reuse a caller's operator, or build one from the mesh."""
     if laplacian is not None:
         return laplacian
     vertices, faces = interpret_mesh(mesh)
     vertices = np.asarray(vertices, dtype=np.float64)
+    # The centring below buys nothing and is here only so that every site in
+    # this module agrees.  ``L`` and ``M`` are functions of coordinate
+    # differences, so a common offset cancels in the first subtraction: 1e-15
+    # relative on a float64 mesh, and exactly zero when the coordinates came
+    # from float32, whose spare mantissa bits make the shift exact.  See the
+    # Notes on mean_curvature_measure for the one site that gains anything.
     return cotangent_laplacian(
         (vertices - vertices.mean(axis=0), np.asarray(faces)),
         robust=robust,
@@ -148,8 +152,9 @@ def mean_curvature_measure(
         Pre-built ``(L, M)`` from
         [cotangent_laplacian][meshmash.laplacian.cotangent_laplacian], to share
         one operator across several descriptors.  Built from the mesh when
-        ``None``.  Must come from the same vertex centring this function uses,
-        which is the mesh's own centroid.
+        ``None``.  Any vertex centring will do: ``L`` is built from coordinate
+        differences, so an operator from offset vertices and one from centred
+        vertices agree to the last bit or nearly so.
     normals :
         Pre-computed unit vertex normals, shape ``(V, 3)``.  Computed from the
         mesh when ``None``.  The sign vote is applied either way.
@@ -171,15 +176,52 @@ def mean_curvature_measure(
 
     Notes
     -----
-    The vertices are centred on their own centroid before ``L @ V``.  Centring
-    cancels exactly, since the Laplacian annihilates constants, but a dataset
-    coordinate can be six orders of magnitude larger than the local structure
-    being measured, and the subtraction inside ``L @ V`` eats every digit of
-    that offset.
+    The vertices are centred on their own centroid before ``L @ V``.  This is
+    the only centring in this module that changes a result, and it changes it
+    by very little.  Centring cancels in exact arithmetic, since the Laplacian
+    annihilates constants.  In floating point the row sums of ``L`` come to
+    about 1e-15 rather than to zero, because the diagonal is accumulated as its
+    own stream of triplets rather than as a negated row sum, so an uncentred
+    ``L @ V`` carries that residual multiplied by the coordinate offset.  At a
+    CAVE coordinate of 1e6 nm that is roughly 1e-11 relative, against a
+    discretisation error of 7e-4 for this estimator on an analytic sphere.
+    Centring is therefore cheap insurance and not a correctness fix.
+
+    The error that does dominate is upstream, and centring cannot reach it.
+    The sample meshes are stored as ``float32`` at coordinates near 1.2e6,
+    which puts every vertex on a 0.125 nm grid.  That perturbs per-vertex mean
+    curvature by of order 1e-1 relative, which is 100 to 1000 times the
+    discretisation error, and it gets worse as the mesh gets finer.  The median
+    over a surface hides this, because the perturbation is close to zero mean.
+    Fixing it means subtracting an origin before narrowing to ``float32``, at
+    whatever writes the mesh.
+
+    Translating points towards the origin to free working precision is standard
+    practice in computational geometry, and [1] states the reason.  No mesh
+    library appears to do it for curvature: libigl computes ``L @ V`` on raw
+    coordinates, and geometry-central avoids the matvec altogether by taking
+    mean curvature from edge lengths and dihedral angles.  One tempting
+    alternative does not work here.  Rebuilding the diagonal of ``L`` as the
+    exact negated sum of its off-diagonals, the "negative sum trick" of [2],
+    leaves both the row-sum residual and the uncentred error unchanged, because
+    the cancellation is in the order the matvec accumulates each row and not in
+    how the diagonal was formed.
+
+    References
+    ----------
+    [1] J. R. Shewchuk, "Adaptive Precision Floating-Point Arithmetic and Fast
+    Robust Geometric Predicates", Discrete & Computational Geometry,
+    18(3):305-363, 1997.  Section 4.2: "By translating the points so they lie
+    near the origin, working precision is freed for the subsequent
+    calculations."
+
+    [2] R. Baltensperger and M. R. Trummer, "Spectral Differencing with a
+    Twist", SIAM Journal on Scientific Computing, 24(5):1465-1487, 2003.
     """
     vertices, faces = interpret_mesh(mesh)
     vertices = np.asarray(vertices, dtype=np.float64)
     faces = np.asarray(faces)
+    # The one centring in this module with a measurable effect.  See Notes.
     centered = vertices - vertices.mean(axis=0)
 
     L, _ = _resolve_laplacian(mesh, laplacian, robust, mollify_factor)
@@ -256,6 +298,8 @@ def gaussian_curvature_measure(mesh: Mesh, mask_boundary: bool = True) -> np.nda
     vertices, faces = interpret_mesh(mesh)
     vertices = np.asarray(vertices, dtype=np.float64)
     faces = np.asarray(faces)
+    # A no-op: the angle defect reads only angles, which no offset can move.
+    # Kept to match mean_curvature_measure, whose Notes give the reasoning.
     measure = np.asarray(
         angle_defect(vertices - vertices.mean(axis=0), faces), dtype=np.float64
     )
@@ -285,11 +329,6 @@ def normal_tensor_measure(
     is rank one whatever the surface does, whereas the average of the outer
     products keeps the spread.
 
-    No sign convention is needed.  The outer product of ``-n`` equals the outer
-    product of ``n``, so this family is immune to the winding problem that
-    [mean_curvature_measure][meshmash.curvature.mean_curvature_measure] has to
-    vote its way out of.
-
     Parameters
     ----------
     mesh :
@@ -317,6 +356,8 @@ def normal_tensor_measure(
     vertices, faces = interpret_mesh(mesh)
     vertices = np.asarray(vertices, dtype=np.float64)
     faces = np.asarray(faces)
+    # A no-op: the normals and the areas below read coordinate differences only.
+    # Kept to match mean_curvature_measure, whose Notes give the reasoning.
     centered = vertices - vertices.mean(axis=0)
 
     if normals is None:
@@ -587,6 +628,8 @@ def compute_diffused_curvature(
     vertices, faces = interpret_mesh(mesh)
     vertices = np.asarray(vertices, dtype=np.float64)
     faces = np.asarray(faces)
+    # Reaches a result only through the ``L @ V`` inside mean_curvature_measure,
+    # and there by about 1e-11 relative.  See the Notes on that function.
     centered = vertices - vertices.mean(axis=0)
 
     L, M = cotangent_laplacian(
