@@ -957,11 +957,20 @@ def compute_hks(
         Its contribution to the diagonal is exactly ``1 / total_area`` at every
         vertex and every timescale — the equilibrium the heat kernel relaxes
         to — so keeping it adds a constant that says only how large the mesh
-        is.  It dominates the large timescales, and in a chunked pipeline the
-        constant is each chunk's own area, which writes chunk size into every
-        vertex.  Dropping it is not the same as dividing by a vertex area: the
-        per-vertex areas of a real mesh span more than an order of magnitude,
-        while this is one number.  See
+        is.  It dominates the large timescales, and the constant differs from
+        mesh to mesh, so keeping it writes total area into every vertex of
+        every mesh being compared.  Chunking is the case where that is
+        unavoidable rather than the only case it matters in.
+
+        It has nothing to do with *vertex* area.  The constant eigenvector is
+        M-orthonormal, so its square is ``1 / total_area`` at every vertex
+        alike, measured constant to 5e-15 on a mesh whose vertex areas span a
+        factor of 24.  The claim it once carried here — that the first
+        eigenvector is proportional to vertex areas — is true of the
+        *symmetrized* operator :math:`M^{-1/2} L M^{-1/2}`, whose first
+        eigenvector is :math:`\sqrt{\mathrm{area}}` and whose square is
+        therefore proportional to vertex area exactly.  That is a different
+        normalization from the one solved here.  See
         [compute_diffused_curvature][meshmash.curvature.compute_diffused_curvature],
         which drops the same mode from its diagonal and adds it back to its
         signal channels, where deleting it would delete the field mean.
