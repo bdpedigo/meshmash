@@ -312,6 +312,7 @@ def condense_features(
     mesh,
     features: Union[np.ndarray, pd.DataFrame],
     distance_threshold: float = 3.0,
+    cluster_features: Optional[Union[np.ndarray, pd.DataFrame]] = None,
 ) -> tuple[pd.DataFrame, np.ndarray]:
     """Agglomerate a mesh on its per-vertex features and aggregate them per domain.
 
@@ -326,21 +327,30 @@ def condense_features(
     The log is the HKS recipe rather than a generic step: heat kernel
     signatures span orders of magnitude across timescales, so the Ward
     distances are only meaningful on the log, while the aggregation is a mean
-    of the physical values.  **Features must therefore be positive.**  A
+    of the physical values.  **What is cut on must therefore be positive.**  A
     non-positive column makes its log non-finite, and
     [agglomerate_mesh][meshmash.agglomerate.agglomerate_mesh] drops
-    non-finite vertices from the clustering entirely.
+    non-finite vertices from the clustering entirely.  ``cluster_features``
+    exists so that a caller holding more than the HKS can obey that without
+    dropping the rest: it cuts on the columns that can take a log and
+    aggregates every column it has.
 
     Parameters
     ----------
     mesh :
         Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
     features :
-        Per-vertex feature matrix of shape ``(V, F)``.  A DataFrame keeps its
-        column names on the output; an array gets positional ones.
+        Per-vertex feature matrix of shape ``(V, F)`` to aggregate.  A
+        DataFrame keeps its column names on the output; an array gets
+        positional ones.
     distance_threshold :
         Ward linkage-distance threshold used to cut the agglomeration tree
         into domains.
+    cluster_features :
+        Per-vertex feature matrix of shape ``(V, C)`` to cut on, logged the
+        same way.  ``None`` cuts on ``features``, which is the single-family
+        case.  Only the domains change with this argument; every column of
+        ``features`` is aggregated either way.
 
     Returns
     -------
@@ -355,9 +365,21 @@ def condense_features(
     """
     if not isinstance(features, pd.DataFrame):
         features = pd.DataFrame(features)
+    if cluster_features is None:
+        cluster_features = features
+    cluster_values = np.asarray(
+        cluster_features.to_numpy()
+        if isinstance(cluster_features, pd.DataFrame)
+        else cluster_features
+    )
+    if len(cluster_values) != len(features):
+        raise ValueError(
+            f"`cluster_features` has {len(cluster_values)} rows and `features` "
+            f"has {len(features)}; both are per-vertex and must agree"
+        )
 
     with np.errstate(divide="ignore"):
-        log_features = np.log(features.to_numpy())
+        log_features = np.log(cluster_values)
 
     agg_labels = agglomerate_mesh(
         mesh,

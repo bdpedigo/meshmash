@@ -73,8 +73,11 @@ from .pipelines import (
     chunked_hks_pipeline,
     component_morphometry_pipeline,
     compute_condensed_hks,
+    compute_condensed_spectral,
     compute_split_condensed_hks,
+    compute_split_condensed_spectral,
     condensed_hks_pipeline,
+    hks_column_names,
 )
 from .simplify import simplify_mesh, simplify_to_density
 from .split import (
@@ -133,6 +136,7 @@ __all__ = [
     "component_morphometry_pipeline",
     "component_size_transform",
     "compute_condensed_hks",
+    "compute_condensed_spectral",
     "compute_diffused_curvature",
     "compute_distances_to_point",
     "compute_edge_widths",
@@ -140,6 +144,7 @@ __all__ = [
     "compute_geometry_vectors",
     "compute_hks",
     "compute_split_condensed_hks",
+    "compute_split_condensed_spectral",
     "compute_vertex_areas",
     "concatenate_filters",
     "condense_features",
@@ -171,6 +176,7 @@ __all__ = [
     "get_synapses_at_oldest",
     "graph_to_adjacency",
     "graphcut_face_mask",
+    "hks_column_names",
     "interpret_mesh",
     "interpret_path",
     "label_propagation",

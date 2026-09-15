@@ -1,0 +1,221 @@
+"""The composite pipeline: three families, one eigendecomposition, per chunk.
+
+The band-by-band solve starts ARPACK from a random vector, so two runs of the
+same call agree only to the decomposition dtype — float32 here. Nothing below
+compares two separate featurizations for equality, and the one test that
+compares two of them at all carries a tolerance that says so.
+"""
+
+import numpy as np
+import pandas as pd
+import pytest
+import pyvista as pv
+
+from meshmash import (
+    compute_diffused_curvature,
+    compute_hks,
+    compute_split_condensed_spectral,
+    condense_features,
+    diffused_curvature_feature_names,
+)
+from meshmash.decompose import get_hks_filter
+from meshmash.pipelines.condensed_spectral import (
+    compute_condensed_spectral,
+    hks_column_names,
+)
+from meshmash.utils import poly_to_mesh
+
+N_COMPONENTS = 4
+N_SCALES = 3
+MAX_EIGENVALUE = 1e-4
+SCALES = np.geomspace(1e4, 2.5e5, N_SCALES)
+
+#: Passed to both featurizers wherever they are compared, because their
+#: defaults disagree: `compute_hks` truncates and drops nothing, while
+#: `compute_diffused_curvature` does both (TASK-9.1). The pipelines pass these
+#: explicitly for the same reason, so this is the configuration under test.
+SPECTRUM_FLAGS = dict(truncate_extra=True, drop_first=True)
+
+
+@pytest.fixture(scope="module")
+def sphere():
+    """Jittered, because a round sphere cannot be compared against itself.
+
+    A round sphere's eigenvalues have multiplicity 2l+1, and the band-by-band
+    solve cuts a degenerate eigenspace wherever its random start vector lands.
+    Two runs then truncate a different set of modes, which moves the kernel
+    diagonal by tens of percent rather than by rounding.
+    """
+    poly = pv.Sphere(radius=1000.0, theta_resolution=24, phi_resolution=24)
+    vertices, faces = poly_to_mesh(poly.triangulate())
+    rng = np.random.default_rng(3)
+    scaling = 1.0 + 0.05 * rng.normal(size=(len(vertices), 1))
+    return (np.asarray(vertices) * scaling, np.asarray(faces))
+
+
+@pytest.fixture(scope="module")
+def sphere_features(sphere):
+    """One featurization, reused: a second call would differ at float32."""
+    return compute_diffused_curvature(
+        sphere,
+        SCALES,
+        diagonal_filter=get_hks_filter(
+            SCALES[-1], SCALES[0], N_COMPONENTS, dtype=np.float32
+        ),
+        max_eigenvalue=MAX_EIGENVALUE,
+        decomposition_dtype=np.float32,
+        **SPECTRUM_FLAGS,
+    )
+
+
+@pytest.fixture(scope="module")
+def condensed(mesh):
+    """One run of the whole chunked pipeline on the sample dendrite."""
+    return compute_split_condensed_spectral(
+        mesh,
+        n_components=N_COMPONENTS,
+        n_scales=N_SCALES,
+        max_eigenvalue=1e-8,
+        max_vertex_threshold=5000,
+        n_jobs=1,
+        verbose=False,
+    )
+
+
+# --- cutting on one block, aggregating every block ------------------------
+
+
+def test_cluster_features_moves_the_cut_and_not_the_columns(sphere, sphere_features):
+    """The mechanism the composite is built on.
+
+    Cutting on the HKS block alone has to give the domains that block alone
+    would give, while the aggregated table still carries all three families.
+    """
+    hks_block = sphere_features[hks_column_names(N_COMPONENTS)]
+
+    both, labels = condense_features(
+        sphere, sphere_features, cluster_features=hks_block
+    )
+    _, hks_only_labels = condense_features(sphere, hks_block)
+
+    np.testing.assert_array_equal(labels, hks_only_labels)
+    assert list(both.columns) == list(sphere_features.columns)
+
+
+def test_cluster_features_defaults_to_the_aggregated_features(sphere, sphere_features):
+    """Passing the same block both ways is the single-family call."""
+    hks_block = sphere_features[hks_column_names(N_COMPONENTS)]
+
+    explicit, explicit_labels = condense_features(
+        sphere, hks_block, cluster_features=hks_block
+    )
+    implied, implied_labels = condense_features(sphere, hks_block)
+
+    np.testing.assert_array_equal(explicit_labels, implied_labels)
+    pd.testing.assert_frame_equal(explicit, implied)
+
+
+def test_cluster_features_rejects_a_mismatched_length(sphere, sphere_features):
+    with pytest.raises(ValueError, match="per-vertex"):
+        condense_features(
+            sphere, sphere_features, cluster_features=sphere_features.to_numpy()[:-1]
+        )
+
+
+# --- one decomposition, three families ------------------------------------
+
+
+def test_the_fused_diagonal_is_the_heat_kernel_signature(sphere, sphere_features):
+    """What makes the second and third families free.
+
+    If the diagonal half of the concatenated bank were not the HKS, the
+    composite would be computing a different first family than the pipeline it
+    is meant to stay comparable with. The tolerance is the float32
+    decomposition's, not the method's: two band-by-band solves of the same
+    operator start from different random vectors.
+    """
+    expected = compute_hks(
+        sphere,
+        t_min=SCALES[0],
+        t_max=SCALES[-1],
+        n_components=N_COMPONENTS,
+        max_eigenvalue=MAX_EIGENVALUE,
+        decomposition_dtype=np.float32,
+        **SPECTRUM_FLAGS,
+    )
+    diagonal = sphere_features[hks_column_names(N_COMPONENTS)].to_numpy()
+
+    np.testing.assert_allclose(diagonal, expected, rtol=1e-4)
+
+
+def test_the_two_grids_are_independent(sphere):
+    """`n_scales` buys more curvature columns and leaves the HKS block alone."""
+    coarse = compute_condensed_spectral(
+        sphere, n_components=N_COMPONENTS, n_scales=2, max_eigenvalue=MAX_EIGENVALUE
+    )[0]
+    fine = compute_condensed_spectral(
+        sphere, n_components=N_COMPONENTS, n_scales=6, max_eigenvalue=MAX_EIGENVALUE
+    )[0]
+
+    assert list(coarse.columns) == diffused_curvature_feature_names(2, N_COMPONENTS)
+    assert list(fine.columns) == diffused_curvature_feature_names(6, N_COMPONENTS)
+    assert hks_column_names(N_COMPONENTS) == list(coarse.columns[:N_COMPONENTS])
+
+
+# --- the chunked pipeline -------------------------------------------------
+
+
+def test_the_pipeline_returns_one_named_table_per_domain(mesh, condensed):
+    features, labels, stitcher = condensed
+
+    assert list(features.columns) == diffused_curvature_feature_names(
+        N_SCALES, N_COMPONENTS
+    )
+    assert len(stitcher.submeshes) > 1, "the point is that it ran on chunks"
+    assert len(labels) == len(mesh[0])
+    assert labels.max() == features.index.max()
+    assert list(features.index) == [-1] + list(range(labels.max() + 1))
+    assert features.loc[-1].isna().all()
+
+
+def test_every_domain_has_finite_features(condensed):
+    """A domain no chunk could featurize would be NaN across the board."""
+    features = condensed[0].drop(index=-1)
+
+    assert np.isfinite(features.to_numpy()).all()
+
+
+def test_only_the_hks_block_is_logged(condensed):
+    """The families are aggregated on different terms, and that has to show.
+
+    The shape fractions sum to one per vertex, and an area-weighted mean of
+    values summing to one still sums to one. A log anywhere in that block
+    would destroy it. The curvature columns are the other direction: a
+    dendrite has saddles, so Gaussian curvature and the smaller principal
+    curvature come out negative on some domains, and a logged column could not
+    hold both signs. Mean curvature is not the column to check — a dendrite is
+    convex on average, so its domain means are all positive either way.
+    """
+    features = condensed[0].drop(index=-1)
+
+    for scale in range(N_SCALES):
+        fractions = features[
+            [f"normal_{name}_{scale}" for name in ("sheet", "tube", "blob")]
+        ]
+        np.testing.assert_allclose(fractions.sum(axis=1), 1.0, atol=1e-6)
+
+    for column in ("curvature_gauss_raw", "curvature_k2_0"):
+        values = features[column]
+        assert (values > 0).any() and (values < 0).any(), column
+
+
+def test_the_hks_block_is_logged(condensed):
+    """The half of the same claim that keeps the columns drop-in comparable.
+
+    `compute_split_condensed_hks` logs what it emits, so anything reading its
+    output reads a log. These HKS values sit near 1e-8, whose log is about
+    -18, and no unlogged HKS is negative.
+    """
+    hks = condensed[0].drop(index=-1)[hks_column_names(N_COMPONENTS)]
+
+    assert (hks < 0).all().all()
