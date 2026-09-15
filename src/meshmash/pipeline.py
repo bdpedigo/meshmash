@@ -13,13 +13,12 @@ from .agglomerate import (
 from .decompose import compute_hks
 from .graph import condense_mesh_to_graph
 from .laplacian import compute_vertex_areas
-from .simplify import simplify_mesh
+from .simplify import simplify_mesh, simplify_to_density
 from .split import MeshStitcher
 from .types import interpret_mesh
 from .utils import (
     compute_distances_to_point,
     expand_labels,
-    simplify_to_density,
     threshold_mesh_by_component_size,
 )
 
@@ -604,7 +603,7 @@ def condensed_hks_pipeline(
         set this to ``None``.
     simplify_target_density :
         Target vertex density (vertices per unit surface area) for
-        [simplify_to_density][meshmash.utils.simplify_to_density].  Unlike
+        [simplify_to_density][meshmash.simplify.simplify_to_density].  Unlike
         the relative ``simplify_target_reduction``, this yields the same
         physical mesh resolution regardless of dataset units or size.  Only
         one of ``simplify_target_reduction`` / ``simplify_target_density``

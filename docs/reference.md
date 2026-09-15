@@ -18,6 +18,8 @@ title: API Reference
 
 ::: meshmash.agglomerate
 
+::: meshmash.simplify
+
 ::: meshmash.utils
 
 ::: meshmash.io

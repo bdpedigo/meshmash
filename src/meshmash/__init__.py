@@ -76,7 +76,7 @@ from .pipeline import (
     compute_split_condensed_hks,
     condensed_hks_pipeline,
 )
-from .simplify import simplify_mesh
+from .simplify import simplify_mesh, simplify_to_density
 from .split import (
     MeshStitcher,
     apply_mesh_split,
@@ -107,7 +107,6 @@ from .utils import (
     rough_subset_mesh_by_indices,
     scale_mesh,
     shuffle_label_mapping,
-    simplify_to_density,
     subset_mesh_by_indices,
     surface_area,
     threshold_mesh_by_component_size,
