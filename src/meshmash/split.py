@@ -80,13 +80,15 @@ def spectral_bisect(
 
     index = np.argmax(eigenvalues)
     eigenvector = eigenvectors[:, index]
-    # Anchored on the largest entry rather than on vertex 0.  The sign of the
-    # Fiedler vector is arbitrary, and fixing it decides which side is called
-    # "1"; anchoring on an arbitrary vertex reads a number that can sit
-    # anywhere, including at the cut, where its sign is noise and flips the two
-    # sides between runs.  The largest entry is the one furthest from the cut,
-    # so its sign is the one the solver is surest of.  A zero anchor would have
-    # zeroed the whole vector and sent every vertex to one side.
+    # Anchored on the largest entry rather than on vertex 0, which is what
+    # sklearn's `_deterministic_vector_sign_flip` does and what
+    # `spectral_embedding` uses.  The sign of the Fiedler vector is arbitrary,
+    # and fixing it decides which side is called "1"; anchoring on an arbitrary
+    # vertex reads a number that can sit anywhere, including at the cut, where
+    # its sign is noise and flips the two sides between runs.  The largest
+    # entry is the one furthest from the cut, so its sign is the one the solver
+    # is surest of.  A zero anchor would have zeroed the whole vector and sent
+    # every vertex to one side.
     anchor = np.argmax(np.abs(eigenvector))
     if eigenvector[anchor] < 0:
         eigenvector = -eigenvector

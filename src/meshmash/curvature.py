@@ -680,14 +680,18 @@ def compute_diffused_curvature(
     # and there by about 1e-11 relative.  See the Notes on that function.
     centered = vertices - vertices.mean(axis=0)
 
+    # NOTE this was previously "centered" but it does not seem to help so doing it with
+    # the original vertices for simplicity
     L, M = cotangent_laplacian(
-        (centered, faces), robust=robust, mollify_factor=mollify_factor
+        (vertices, faces), robust=robust, mollify_factor=mollify_factor
     )
     areas = np.asarray(M.diagonal(), dtype=np.float64)
     safe_areas = np.where(areas > 0, areas, 1.0)
 
     # One normal field and one boundary mask, shared by both families.
     normals = vertex_normals((centered, faces))
+
+    # TODO not sure I want this step, for some cases this is a signal
     normals = orient_normals_by_curvature(normals, L.astype(np.float64) @ centered)
     measures = np.column_stack(
         [

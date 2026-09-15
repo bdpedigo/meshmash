@@ -557,7 +557,7 @@ def spectral_geometry_filter(
     profile: Optional[dict] = None,
     seed: Optional[int] = None,
 ) -> Union[np.ndarray, tuple[np.ndarray, np.ndarray]]:
-    """Apply a spectral filter to the geometry of a mesh.
+    r"""Apply a spectral filter to the geometry of a mesh.
 
     Parameters
     ----------
@@ -579,8 +579,10 @@ def spectral_geometry_filter(
         band-by-band algorithm, the filter may overshoot the max_eigenvalue by at most
         one band.
     drop_first :
-        If True, drop the first eigenvalue and eigenvector. This should be 0 and the
-        constant eigenvector scaled by vertex areas, so it is often not useful.
+        If True, drop the constant eigenpair before applying the filter. It is
+        dropped from both the kernel diagonal and any ``signals``. Its
+        contribution to the diagonal is ``1 / total_area`` at every vertex and
+        timescale; to a signal ``b`` it is ``b.sum() / total_area``.
     robust :
         If True, use the robust laplacian computation described in [2].
     mollify_factor :
@@ -820,6 +822,12 @@ def spectral_geometry_filter(
 
         currtime = time.time()
 
+        # NOTE: both contributions of this mode are closed forms (see the
+        # drop_first docstring), so this flag could be retired: always keep the
+        # mode, and let an HKS caller subtract 1 / total_area downstream. That
+        # would also drop the add-back in compute_diffused_curvature, which
+        # exists only to undo this. Not done because it moves every existing
+        # HKS caller's numbers.
         if drop_first and len(eigenvalues) == 0:
             first_idx = 1
         else:
@@ -925,7 +933,7 @@ def compute_hks(
     verbose: Union[bool, int] = False,
     seed: Optional[int] = None,
 ) -> np.ndarray:
-    """Compute the Heat Kernel Signature (HKS) for each vertex of a mesh.
+    r"""Compute the Heat Kernel Signature (HKS) for each vertex of a mesh.
 
     The HKS is a multi-scale, intrinsic shape descriptor based on the
     diagonal of the heat kernel at a set of diffusion timescales.  It
@@ -954,26 +962,9 @@ def compute_hks(
         Whether to discard eigenpairs that overshoot ``max_eigenvalue``.
     drop_first :
         If ``True``, drop the constant eigenpair before applying the filter.
-        Its contribution to the diagonal is exactly ``1 / total_area`` at every
-        vertex and every timescale — the equilibrium the heat kernel relaxes
-        to — so keeping it adds a constant that says only how large the mesh
-        is.  It dominates the large timescales, and the constant differs from
-        mesh to mesh, so keeping it writes total area into every vertex of
-        every mesh being compared.  Chunking is the case where that is
-        unavoidable rather than the only case it matters in.
-
-        It has nothing to do with *vertex* area.  The constant eigenvector is
-        M-orthonormal, so its square is ``1 / total_area`` at every vertex
-        alike, measured constant to 5e-15 on a mesh whose vertex areas span a
-        factor of 24.  The claim it once carried here — that the first
-        eigenvector is proportional to vertex areas — is true of the
-        *symmetrized* operator :math:`M^{-1/2} L M^{-1/2}`, whose first
-        eigenvector is :math:`\sqrt{\mathrm{area}}` and whose square is
-        therefore proportional to vertex area exactly.  That is a different
-        normalization from the one solved here.  See
-        [compute_diffused_curvature][meshmash.curvature.compute_diffused_curvature],
-        which drops the same mode from its diagonal and adds it back to its
-        signal channels, where deleting it would delete the field mean.
+        Its contribution is ``1 / total_area`` at every vertex and every
+        timescale, the equilibrium the heat kernel relaxes to, so keeping it
+        adds a constant carrying only the total area of the mesh.
     robust :
         If ``True``, use the robust Laplacian (see
         [cotangent_laplacian][meshmash.laplacian.cotangent_laplacian]).
