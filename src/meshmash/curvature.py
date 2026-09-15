@@ -173,55 +173,15 @@ def mean_curvature_measure(
     -------
     :
         Mean-curvature measure of shape ``(V,)``.
-
-    Notes
-    -----
-    The vertices are centred on their own centroid before ``L @ V``.  This is
-    the only centring in this module that changes a result, and it changes it
-    by very little.  Centring cancels in exact arithmetic, since the Laplacian
-    annihilates constants.  In floating point the row sums of ``L`` come to
-    about 1e-15 rather than to zero, because the diagonal is accumulated as its
-    own stream of triplets rather than as a negated row sum, so an uncentred
-    ``L @ V`` carries that residual multiplied by the coordinate offset.  At a
-    CAVE coordinate of 1e6 nm that is roughly 1e-11 relative, against a
-    discretisation error of 7e-4 for this estimator on an analytic sphere.
-    Centring is therefore cheap insurance and not a correctness fix.
-
-    The error that does dominate is upstream, and centring cannot reach it.
-    The sample meshes are stored as ``float32`` at coordinates near 1.2e6,
-    which puts every vertex on a 0.125 nm grid.  That perturbs per-vertex mean
-    curvature by of order 1e-1 relative, which is 100 to 1000 times the
-    discretisation error, and it gets worse as the mesh gets finer.  The median
-    over a surface hides this, because the perturbation is close to zero mean.
-    Fixing it means subtracting an origin before narrowing to ``float32``, at
-    whatever writes the mesh.
-
-    Translating points towards the origin to free working precision is standard
-    practice in computational geometry, and [1] states the reason.  No mesh
-    library appears to do it for curvature: libigl computes ``L @ V`` on raw
-    coordinates, and geometry-central avoids the matvec altogether by taking
-    mean curvature from edge lengths and dihedral angles.  One tempting
-    alternative does not work here.  Rebuilding the diagonal of ``L`` as the
-    exact negated sum of its off-diagonals, the "negative sum trick" of [2],
-    leaves both the row-sum residual and the uncentred error unchanged, because
-    the cancellation is in the order the matvec accumulates each row and not in
-    how the diagonal was formed.
-
-    References
-    ----------
-    [1] J. R. Shewchuk, "Adaptive Precision Floating-Point Arithmetic and Fast
-    Robust Geometric Predicates", Discrete & Computational Geometry,
-    18(3):305-363, 1997.  Section 4.2: "By translating the points so they lie
-    near the origin, working precision is freed for the subsequent
-    calculations."
-
-    [2] R. Baltensperger and M. R. Trummer, "Spectral Differencing with a
-    Twist", SIAM Journal on Scientific Computing, 24(5):1465-1487, 2003.
     """
     vertices, faces = interpret_mesh(mesh)
     vertices = np.asarray(vertices, dtype=np.float64)
     faces = np.asarray(faces)
-    # The one centring in this module with a measurable effect.  See Notes.
+    # Centring cancels in exact arithmetic, but the row sums of L land near
+    # 1e-15 rather than zero, so an uncentred L @ V carries that residual times
+    # the coordinate offset: ~1e-11 relative at a CAVE coordinate of 1e6 nm,
+    # against 7e-4 discretisation error on an analytic sphere.  Cheap
+    # insurance, not a correctness fix.
     centered = vertices - vertices.mean(axis=0)
 
     L, _ = _resolve_laplacian(mesh, laplacian, robust, mollify_factor)

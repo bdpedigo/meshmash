@@ -550,7 +550,10 @@ def combine_meshes(meshes: list[Mesh]) -> Mesh:
     meshes = [interpret_mesh(mesh) for mesh in meshes]
     n_vertices_per_mesh = [mesh[0].shape[0] for mesh in meshes]
     cumulative_n_vertices = list(np.cumsum(n_vertices_per_mesh))
-    shifts = [0] + cumulative_n_vertices[:-1]
+    # Plain Python ints, so that the shift does not widen an unsigned face
+    # index array.  A numpy int64 out of cumsum promotes uint32 faces to int64,
+    # which the concatenate below then refuses to cast back down.
+    shifts = [0] + [int(n) for n in cumulative_n_vertices[:-1]]
     vertices = []
     faces = []
     for i, (v, f) in enumerate(meshes):
