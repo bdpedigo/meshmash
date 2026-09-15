@@ -22,6 +22,7 @@ def decompose_laplacian(
     tol: float = 1e-10,
     ncv: Optional[int] = None,
     prefactor: Optional[str] = None,
+    profile: Optional[dict] = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Solve the generalised eigenvalue problem for a mesh Laplacian.
 
@@ -52,6 +53,12 @@ def decompose_laplacian(
     prefactor :
         Pre-factorisation strategy.  Currently only ``'lu'`` (sparse LU
         via [splu][scipy.sparse.linalg.splu]) is supported.
+    profile :
+        Optional dict that accumulates solver cost: seconds under
+        ``"factor"`` (the shift-invert LU) and ``"arpack"`` (the Lanczos
+        iteration), or ``"dense"`` for the small-matrix path. Passing it
+        does not change the result: the same LU ``eigsh`` builds
+        internally is built here so the two phases time apart.
 
     Returns
     -------
@@ -78,11 +85,26 @@ def decompose_laplacian(
     # ncv_factor = 1.5
     # ncv = min(n, max(ncv_factor * k + 1, 20))
     if n_components >= L.shape[0]:
+        currtime = time.time()
         eigenvalues, eigenvectors = eigh(L.toarray(), M.toarray())
+        if profile is not None:
+            profile["dense"] = profile.get("dense", 0.0) + time.time() - currtime
     else:
+        if profile is not None and op_inv is None:
+            # The same splu eigsh would build internally, done here so the
+            # factorization is timed apart from the Lanczos iteration.
+            currtime = time.time()
+            lu = sparse.linalg.splu((L - sigma * M).tocsc())
+            op_inv = sparse.linalg.LinearOperator(
+                matvec=lu.solve, shape=L.shape, dtype=L.dtype
+            )
+            profile["factor"] = profile.get("factor", 0.0) + time.time() - currtime
+        currtime = time.time()
         eigenvalues, eigenvectors = sparse.linalg.eigsh(
             L, k=n_components, M=M, sigma=sigma, OPinv=op_inv, tol=tol, ncv=ncv
         )
+        if profile is not None:
+            profile["arpack"] = profile.get("arpack", 0.0) + time.time() - currtime
     indices = np.argsort(eigenvalues)
     eigenvalues = eigenvalues[indices]
     eigenvectors = eigenvectors[:, indices]
@@ -475,6 +497,8 @@ def spectral_geometry_filter(
     verbose: Union[bool, int] = False,
     signals: Optional[np.ndarray] = None,
     signal_dtype: np.dtype = np.float64,
+    overlap_target: Optional[int] = None,
+    profile: Optional[dict] = None,
 ) -> Union[np.ndarray, tuple[np.ndarray, np.ndarray]]:
     """Apply a spectral filter to the geometry of a mesh.
 
@@ -521,6 +545,26 @@ def spectral_geometry_filter(
         asymmetry: the decomposition tolerates float32, but a projection sums
         over every vertex of the mesh and a caller differencing two filtered
         signals needs the digits that float32 does not carry.
+    overlap_target :
+        ``None`` keeps the original placement heuristic (next shift 0.4
+        bandwidths past the frontier), which re-solves roughly a quarter
+        of every band at the seam. An integer switches to predicted
+        placement: the eigenvalue density observed so far (flat for a 2-D
+        surface, by Weyl's law) places the next shift so the seam overlap
+        lands near this many pairs, and shrinks the final band to the
+        predicted remainder instead of overshooting the cutoff by up to a
+        whole band. The eigenpairs kept are the same; only the redundant
+        solves shrink. Must be at least 1 — the band-continuity check
+        needs a nonempty seam.
+    profile :
+        Optional dict that accumulates the band loop's cost breakdown and
+        does not change the result. Seconds: ``"factor"``, ``"arpack"``
+        (from [decompose_laplacian][meshmash.decompose.decompose_laplacian]),
+        plus this loop's ``"decompose"``, ``"filter"``, ``"sum"``. Counters:
+        ``"n_bands"``, ``"n_eigenpairs"``, and the redundancy the sigma
+        heuristic pays — ``"n_retries"``/``"retry_pairs"`` (bands thrown
+        away whole), ``"overlap_pairs"`` (re-solved at seams),
+        ``"overshoot_pairs"`` (truncated past ``max_eigenvalue``).
 
     Returns
     -------
@@ -598,11 +642,19 @@ def spectral_geometry_filter(
     else:
         raise ValueError(f"Unknown decomposition_dtype: {decomposition_dtype}")
 
+    if overlap_target is not None and overlap_target < 1:
+        raise ValueError(
+            "overlap_target must be at least 1: the band-continuity check "
+            "needs the new band to reach back over the frontier"
+        )
+
     eigenvalues = []
     band_max_eigenvalue = 0
     sigma = -1e-10
     last_eigenvalue = 0
     eigenvalue_bandwidth = 0
+    band_k = band_size
+    place_next = False
 
     if filter is not None:
         # HACK: get the number of features for the filter
@@ -628,12 +680,36 @@ def spectral_geometry_filter(
     timing["sum"] = 0
     pbar = tqdm(total=max_eigenvalue, disable=not verbose)
     while band_max_eigenvalue < max_eigenvalue:
+        if place_next:
+            # Predicted placement (overlap_target set): the density seen so
+            # far — flat in eigenvalue for a 2-D surface, by Weyl's law —
+            # converts pair counts to shifts. The next band of k pairs
+            # centers on sigma, so putting sigma (k/2 - target) pairs past
+            # the frontier lands the seam near `overlap_target` pairs.
+            density = len(eigenvalues) / band_max_eigenvalue
+            remaining = (max_eigenvalue - band_max_eigenvalue) * density
+            margin = max(8.0, 0.25 * remaining)
+            if remaining + overlap_target + margin < band_size:
+                # Final band: solve the predicted remainder, not a full band.
+                # Floor at 2*target+2 so sigma stays past the frontier.
+                band_k = int(
+                    max(
+                        np.ceil(remaining + overlap_target + margin),
+                        2 * overlap_target + 2,
+                        8,
+                    )
+                )
+            else:
+                band_k = band_size
+            sigma = band_max_eigenvalue + (0.5 * band_k - overlap_target) / density
+            place_next = False
+
         if verbose >= 2:
             print(f"Computing band with sigma={sigma:.3g}")
 
         currtime = time.time()
         band_eigenvalues, band_eigenvectors = decompose_laplacian(
-            L, M, n_components=band_size, sigma=sigma, tol=eigen_tol
+            L, M, n_components=band_k, sigma=sigma, tol=eigen_tol, profile=profile
         )
         timing["decompose"] += time.time() - currtime
 
@@ -643,6 +719,9 @@ def spectral_geometry_filter(
         if (np.min(diffs)) > tol and (len(eigenvalues) > 0):  # ignore if 1st
             # retry with a smaller sigma
             sigma = sigma - 0.2 * eigenvalue_bandwidth
+            if profile is not None:
+                profile["n_retries"] = profile.get("n_retries", 0) + 1
+                profile["retry_pairs"] = profile.get("retry_pairs", 0) + band_size
             if verbose >= 2:
                 print(f"Will retry band with sigma={sigma:.3g}")
             band_eigenvalues = None
@@ -654,12 +733,20 @@ def spectral_geometry_filter(
         else:
             # get the non-overlapping part of this band
             closest_idx = np.argmin(diffs)
+            if profile is not None:
+                profile["overlap_pairs"] = (
+                    profile.get("overlap_pairs", 0) + int(closest_idx) + 1
+                )
             band_eigenvalues = band_eigenvalues[closest_idx + 1 :]
             band_eigenvectors = band_eigenvectors[:, closest_idx + 1 :]
 
         if truncate_extra and (band_eigenvalues[-1] > max_eigenvalue):
             # Truncate to the max_eigenvalue
             truncation_idx = np.searchsorted(band_eigenvalues, max_eigenvalue)
+            if profile is not None:
+                profile["overshoot_pairs"] = profile.get("overshoot_pairs", 0) + max(
+                    len(band_eigenvalues) - int(truncation_idx) - 1, 0
+                )
             band_eigenvalues = band_eigenvalues[: truncation_idx + 1]
             band_eigenvectors = band_eigenvectors[:, : truncation_idx + 1]
 
@@ -712,17 +799,27 @@ def spectral_geometry_filter(
             features.append(band_eigenvectors)
 
         # update values for next iteration
+        if profile is not None:
+            profile["n_bands"] = profile.get("n_bands", 0) + 1
         eigenvalues.extend(band_eigenvalues)
         band_max_eigenvalue = np.max(band_eigenvalues)
         band_min_eigenvalue = np.min(band_eigenvalues)
         eigenvalue_bandwidth = band_max_eigenvalue - band_min_eigenvalue
-        sigma = band_max_eigenvalue + 0.4 * eigenvalue_bandwidth
+        if overlap_target is None:
+            sigma = band_max_eigenvalue + 0.4 * eigenvalue_bandwidth
+        else:
+            place_next = True
 
         # update by the amount the max eigenvalue increased
         pbar.update(band_max_eigenvalue - last_eigenvalue)
         last_eigenvalue = band_eigenvalues[-1]
 
     pbar.close()
+
+    if profile is not None:
+        profile["n_eigenpairs"] = profile.get("n_eigenpairs", 0) + len(eigenvalues)
+        for key, value in timing.items():
+            profile[key] = profile.get(key, 0.0) + value
 
     if verbose >= 2:
         print("Timing:")
