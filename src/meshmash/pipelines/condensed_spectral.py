@@ -78,6 +78,7 @@ def compute_condensed_spectral(
     decomposition_dtype=np.float32,
     compute_diffused_curvature_kwargs: dict = {},
     distance_threshold: float = 3.0,
+    seed: Optional[int] = None,
 ) -> tuple[pd.DataFrame, np.ndarray]:
     """Featurize and condense a single (unsplit) mesh, three families at once.
 
@@ -119,6 +120,13 @@ def compute_condensed_spectral(
         [compute_diffused_curvature][meshmash.curvature.compute_diffused_curvature].
     distance_threshold :
         Ward linkage-distance threshold for the agglomeration.
+    seed :
+        Seed for the ARPACK starting vector.  ``None`` lets ARPACK draw its
+        own, so two runs of this pipeline on the same mesh differ at
+        ``decomposition_dtype`` — and Ward flips merges on those ties, so the
+        domain count moves too.  An integer makes the whole pipeline
+        reproducible.  Every chunk is seeded alike, which is harmless: the
+        starting vector only has to overlap the wanted subspace.
 
     Returns
     -------
@@ -144,6 +152,7 @@ def compute_condensed_spectral(
         robust=robust,
         mollify_factor=mollify_factor,
         decomposition_dtype=decomposition_dtype,
+        seed=seed,
         **compute_diffused_curvature_kwargs,
     )
 
@@ -175,6 +184,7 @@ def compute_split_condensed_spectral(
     distance_threshold: float = 3.0,
     n_jobs: Optional[int] = -1,
     verbose: bool = False,
+    seed: Optional[int] = None,
 ) -> tuple[pd.DataFrame, np.ndarray, MeshStitcher]:
     """Split a mesh into chunks and condense all three families on each chunk.
 
@@ -237,6 +247,13 @@ def compute_split_condensed_spectral(
         Number of parallel workers for [Parallel][joblib.Parallel].
     verbose :
         Verbosity level.
+    seed :
+        Seed for the ARPACK starting vector.  ``None`` lets ARPACK draw its
+        own, so two runs of this pipeline on the same mesh differ at
+        ``decomposition_dtype`` — and Ward flips merges on those ties, so the
+        domain count moves too.  An integer makes the whole pipeline
+        reproducible.  Every chunk is seeded alike, which is harmless: the
+        starting vector only has to overlap the wanted subspace.
 
     Returns
     -------
@@ -263,6 +280,7 @@ def compute_split_condensed_spectral(
         min_vertex_threshold=min_vertex_threshold,
         max_overlap_neighbors=max_overlap_neighbors,
         verify_connected=False,
+        seed=seed,
     )
 
     if verbose:
@@ -283,6 +301,7 @@ def compute_split_condensed_spectral(
         decomposition_dtype=decomposition_dtype,
         compute_diffused_curvature_kwargs=compute_diffused_curvature_kwargs,
         distance_threshold=distance_threshold,
+        seed=seed,
         stitch=False,
     )
 

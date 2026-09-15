@@ -1,5 +1,6 @@
 import logging
 import time
+from functools import partial
 from typing import Any, Callable, Optional, Sequence, Union
 
 import numpy as np
@@ -12,6 +13,7 @@ from scipy.stats import rankdata
 from tqdm.auto import tqdm
 from tqdm_joblib import tqdm_joblib
 
+from .decompose import arpack_start_vector
 from .types import Mesh, interpret_mesh
 from .utils import (
     mesh_to_adjacency,
@@ -22,7 +24,7 @@ from .utils import (
 
 
 def spectral_bisect(
-    adj: csr_array, dtype: type = np.float32
+    adj: csr_array, dtype: type = np.float32, seed: Optional[int] = None
 ) -> tuple[np.ndarray, np.ndarray]:
     """Cut a mesh graph in two along the Fiedler vector of the graph Laplacian.
 
@@ -36,6 +38,19 @@ def spectral_bisect(
         The sparse adjacency matrix of the mesh graph.
     dtype :
         The floating-point dtype to use for the eigensolver.
+    seed :
+        Seed for the ARPACK starting vector.  ``None`` lets ARPACK draw its own,
+        which is what makes this cut move from run to run: ARPACK's generator
+        carries state across calls within a process, so the second cut in a
+        session starts somewhere else.  An integer makes the cut reproducible.
+
+        A *constant* starting vector does not work here, and an earlier attempt
+        at one is why this was left unseeded.  The constant vector is the
+        eigenvector of the graph Laplacian's zero eigenvalue, so it is
+        orthogonal to the Fiedler vector in exact arithmetic — the one starting
+        vector Lanczos cannot build the wanted subspace from.  A random vector
+        has no such structure, which is why
+        [arpack_start_vector][meshmash.decompose.arpack_start_vector] draws one.
 
     Returns
     -------
@@ -48,19 +63,16 @@ def spectral_bisect(
     # TODO normed didn't seem to make much of a difference here; perhaps just because
     # degrees are fairly homogeneous?
     lap = laplacian(adj, normed=False, symmetrized=True, return_diag=False, dtype=dtype)
-    if dtype == np.float32 or dtype == "float32":
-        eigen_tol = 1e-7
-    elif dtype == np.float64 or dtype == "float64":
+    if np.dtype(dtype) == np.float64:
         eigen_tol = 1e-10
+    else:
+        eigen_tol = 1e-7
 
-    # TODO cannot figure out why this isn't deterministic
-    # or if the random errors are from some other part of the pipeline
-    # v0 = np.full(n, 1 / np.sqrt(n), dtype=dtype)
     eigenvalues, eigenvectors = eigsh(
         lap,
         k=2,
         sigma=-1e-10,
-        # v0=v0, # dropped this to see if it fixes the issue with failing splits
+        v0=arpack_start_vector(lap.shape[0], seed),
         tol=eigen_tol,
         maxiter=20,
         ncv=20,  # TODO revisit this sensitivity to NCV for speed
@@ -68,7 +80,16 @@ def spectral_bisect(
 
     index = np.argmax(eigenvalues)
     eigenvector = eigenvectors[:, index]
-    eigenvector *= np.sign(eigenvector[0]) * 1
+    # Anchored on the largest entry rather than on vertex 0.  The sign of the
+    # Fiedler vector is arbitrary, and fixing it decides which side is called
+    # "1"; anchoring on an arbitrary vertex reads a number that can sit
+    # anywhere, including at the cut, where its sign is noise and flips the two
+    # sides between runs.  The largest entry is the one furthest from the cut,
+    # so its sign is the one the solver is surest of.  A zero anchor would have
+    # zeroed the whole vector and sent every vertex to one side.
+    anchor = np.argmax(np.abs(eigenvector))
+    if eigenvector[anchor] < 0:
+        eigenvector = -eigenvector
     indices1 = np.nonzero(eigenvector >= 0)[0]
     indices2 = np.nonzero(eigenvector < 0)[0]
 
@@ -76,7 +97,10 @@ def spectral_bisect(
 
 
 def spectral_bisect_adjacency(
-    adj: csr_array, n_retries: int = 7, check: bool = True
+    adj: csr_array,
+    n_retries: int = 7,
+    check: bool = True,
+    seed: Optional[int] = None,
 ) -> tuple[tuple[csr_array, csr_array], tuple[np.ndarray, np.ndarray]]:
     """Cut a mesh graph in two with [spectral_bisect][meshmash.split.spectral_bisect].
 
@@ -92,6 +116,15 @@ def spectral_bisect_adjacency(
     check :
         Whether to check that the cut leaves no vertex isolated (zero-degree), and
         retry if one is.
+    seed :
+        Seed for the ARPACK starting vector, forwarded to
+        [spectral_bisect][meshmash.split.spectral_bisect].  ``None`` leaves the
+        cut non-reproducible.
+
+        Each retry draws from ``seed`` offset by its attempt number, so a retry
+        is a genuinely different starting vector while the whole sequence of
+        attempts is reproducible.  Retrying under one fixed seed would repeat
+        the identical failing cut until the attempts ran out.
 
     Returns
     -------
@@ -110,13 +143,19 @@ def spectral_bisect_adjacency(
         logging.info("Adjacency nnz: %s", adj.nnz)
         raise RuntimeError("Split failed to divide mesh.")
 
+    # Offset by the attempt, which is what makes a retry a different draw.
+    # `n_retries` counts down, so each attempt reaches a distinct vector.
+    attempt_seed = None if seed is None else seed + n_retries
+
     # get the split indices
-    indices1, indices2 = spectral_bisect(adj)
+    indices1, indices2 = spectral_bisect(adj, seed=attempt_seed)
 
     if len(indices1) == 0 or len(indices2) == 0:
         # print(adj.shape)
         logging.info("Split failed to divide mesh, retrying.")
-        return spectral_bisect_adjacency(adj, n_retries=n_retries - 1)
+        return spectral_bisect_adjacency(
+            adj, n_retries=n_retries - 1, check=check, seed=seed
+        )
 
     # get the sub-adjacencies
     sub_adj1 = adj[indices1][:, indices1]
@@ -127,10 +166,14 @@ def spectral_bisect_adjacency(
         degrees1 = np.sum(sub_adj1, axis=1) + np.sum(sub_adj1, axis=0)
         degrees2 = np.sum(sub_adj2, axis=1) + np.sum(sub_adj2, axis=0)
         if np.any(degrees1 == 0) or np.any(degrees2 == 0):
-            # TODO no idea why retrying here helps almost always after one go...
-            # did not think randomness should have that much of an effect?
+            # Retrying works because the next attempt starts ARPACK somewhere
+            # else and lands on a slightly different cut, not because the cut
+            # is random in any deeper sense.  That is also why the retry has to
+            # change the seed: repeating one draw repeats the same bad cut.
             logging.info("Some nodes were disconnected in the split, retrying.")
-            return spectral_bisect_adjacency(adj, n_retries=n_retries - 1)
+            return spectral_bisect_adjacency(
+                adj, n_retries=n_retries - 1, check=check, seed=seed
+            )
 
     sub_adjs = (sub_adj1, sub_adj2)
     submesh_indices = (indices1, indices2)
@@ -274,6 +317,7 @@ def fit_mesh_split_spectral(
     min_vertex_threshold: int = 100,
     max_rounds: int = 100_000,
     verbose: Union[bool, int] = False,
+    seed: Optional[int] = None,
 ) -> np.ndarray:
     """Partition a mesh into non-overlapping chunks by recursive spectral bisection.
 
@@ -297,6 +341,12 @@ def fit_mesh_split_spectral(
         of the remaining chunks.
     verbose :
         Whether to print the number of pieces in the queue every 50 rounds.
+    seed :
+        Seed for the ARPACK starting vector used by each bisection.  ``None``
+        leaves the partition non-reproducible: ARPACK draws its own vector and
+        carries generator state across calls, so two runs on the same mesh cut
+        in different places.  An integer makes the whole partition
+        reproducible, retries included.
 
     Returns
     -------
@@ -306,9 +356,13 @@ def fit_mesh_split_spectral(
     """
     whole_adj = _interpret_adjacency(mesh)
 
+    # Every cut in the queue takes the same seed.  They act on different
+    # sub-adjacencies, so they still draw different vectors wherever the piece
+    # sizes differ, and two pieces of equal size sharing a vector is harmless:
+    # the vector only has to overlap the wanted subspace of its own matrix.
     return _fit_split_by_queue(
         whole_adj,
-        spectral_bisect_adjacency,
+        partial(spectral_bisect_adjacency, seed=seed),
         max_vertex_threshold=max_vertex_threshold,
         min_vertex_threshold=min_vertex_threshold,
         max_rounds=max_rounds,
@@ -558,6 +612,7 @@ class MeshStitcher:
         verify_connected: bool = True,
         method: str = "spectral",
         target_vertices: int = 10_000,
+        seed: Optional[int] = None,
     ) -> list[Mesh]:
         """Partition the mesh and build overlapping submesh chunks.
 
@@ -599,6 +654,12 @@ class MeshStitcher:
         target_vertices :
             The number of vertices to aim for in each chunk. Only used when ``method``
             is ``"geodesic"``, where it must be a positive integer.
+        seed :
+            Seed for the ARPACK starting vector used by each spectral bisection.
+            ``None`` leaves the partition non-reproducible, so two runs on the
+            same mesh cut in different places and everything downstream moves
+            with them. Ignored by ``method="geodesic"``, which is already
+            deterministic.
 
         Returns
         -------
@@ -634,6 +695,7 @@ class MeshStitcher:
                 min_vertex_threshold=min_vertex_threshold,
                 max_rounds=max_rounds,
                 verbose=self.verbose,
+                seed=seed,
             )
 
         if self.verbose >= 2:

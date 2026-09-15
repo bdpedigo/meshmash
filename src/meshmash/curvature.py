@@ -567,6 +567,7 @@ def compute_diffused_curvature(
     decomposition_dtype: Optional[np.dtype] = np.float64,
     signal_dtype: np.dtype = np.float64,
     verbose: Union[bool, int] = False,
+    seed: Optional[int] = None,
 ) -> pd.DataFrame:
     """Curvature and normal-tensor descriptors at several scales, off one solve.
 
@@ -616,6 +617,12 @@ def compute_diffused_curvature(
         Dtype for the signal accumulation.
     verbose :
         If >0, print progress.  Higher values give more.
+    seed :
+        Seed for the ARPACK starting vector, forwarded to
+        [spectral_geometry_filter][meshmash.decompose.spectral_geometry_filter].
+        ``None`` lets ARPACK draw its own, so two runs of the same call agree
+        only to ``decomposition_dtype``.  An integer makes the result
+        reproducible.
 
     Returns
     -------
@@ -712,6 +719,7 @@ def compute_diffused_curvature(
         signals=fields,
         signal_dtype=signal_dtype,
         verbose=verbose,
+        seed=seed,
     )
     diffused = filtered[:, -len(scales) :, :]
     if drop_first:

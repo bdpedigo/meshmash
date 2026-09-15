@@ -13,6 +13,41 @@ from .laplacian import cotangent_laplacian
 from .types import ArrayLike, Mesh
 
 
+def arpack_start_vector(n: int, seed: Optional[int]) -> Optional[np.ndarray]:
+    """The starting residual vector for an ARPACK solve, drawn reproducibly.
+
+    ARPACK draws its own when none is given, and that is the whole source of
+    run-to-run variation in every spectral routine here.  Its generator lives
+    in Fortran ``SAVE`` state, so the seed is not per call: the first solve in
+    a process gets one vector and the second gets another, and two identical
+    calls in one session disagree at the decomposition dtype.  Near a
+    degenerate eigenvalue, or at the band truncation edge, that is enough to
+    return a different basis or a different mode count.
+
+    The distribution here is ARPACK's own — ``dgetv0`` fills the vector with
+    ``dlarnv(idist=2)``, which is uniform on ``(-1, 1)`` — so seeding changes
+    which vector is drawn and not the kind of vector.  Any vector with a
+    component along the wanted invariant subspace converges to the same
+    eigenpairs, so this is a reproducibility control and not an accuracy one.
+
+    Parameters
+    ----------
+    n :
+        Length of the vector, which is the matrix dimension.
+    seed :
+        Seed for [default_rng][numpy.random.default_rng].  ``None`` returns
+        ``None``, which leaves ARPACK to draw its own as before.
+
+    Returns
+    -------
+    :
+        A vector of shape ``(n,)`` uniform on ``(-1, 1)``, or ``None``.
+    """
+    if seed is None:
+        return None
+    return np.random.default_rng(seed).uniform(-1.0, 1.0, size=n)
+
+
 def decompose_laplacian(
     L: sparray,
     M: sparray,
@@ -23,6 +58,7 @@ def decompose_laplacian(
     ncv: Optional[int] = None,
     prefactor: Optional[str] = None,
     profile: Optional[dict] = None,
+    seed: Optional[int] = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Solve the generalised eigenvalue problem for a mesh Laplacian.
 
@@ -48,6 +84,13 @@ def decompose_laplacian(
         ensures the solver targets the smallest non-negative eigenvalues.
     tol :
         Convergence tolerance passed to [eigsh][scipy.sparse.linalg.eigsh].
+    seed :
+        Seed for the ARPACK starting vector.  ``None`` lets ARPACK draw its
+        own, which is why two runs of the same call do not agree bit for bit:
+        ARPACK's generator carries state across calls within a process, so the
+        second call in a process starts somewhere else.  An integer draws the
+        vector here instead, from the same distribution ARPACK uses, and makes
+        the result reproducible.  See Notes.
     ncv :
         Number of Lanczos vectors.  ``None`` lets ARPACK choose.
     prefactor :
@@ -101,7 +144,14 @@ def decompose_laplacian(
             profile["factor"] = profile.get("factor", 0.0) + time.time() - currtime
         currtime = time.time()
         eigenvalues, eigenvectors = sparse.linalg.eigsh(
-            L, k=n_components, M=M, sigma=sigma, OPinv=op_inv, tol=tol, ncv=ncv
+            L,
+            k=n_components,
+            M=M,
+            sigma=sigma,
+            OPinv=op_inv,
+            tol=tol,
+            ncv=ncv,
+            v0=arpack_start_vector(L.shape[0], seed),
         )
         if profile is not None:
             profile["arpack"] = profile.get("arpack", 0.0) + time.time() - currtime
@@ -173,6 +223,7 @@ def decompose_laplacian_by_bands(
     band_size: int = 50,
     truncate_extra: bool = True,
     verbose: Union[bool, int] = False,
+    seed: Optional[int] = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute eigenpairs of a mesh Laplacian up to a maximum eigenvalue
     using a band-by-band approach.
@@ -202,6 +253,11 @@ def decompose_laplacian_by_bands(
     verbose :
         Verbosity level.  ``0`` or ``False`` is silent; ``>=1`` shows a
         progress bar; ``>=2`` also prints per-band diagnostics.
+    seed :
+        Seed for the ARPACK starting vector, forwarded to
+        [decompose_laplacian][meshmash.decompose.decompose_laplacian].  ``None``
+        lets ARPACK draw its own, so two runs of the same call agree only to
+        the decomposition dtype.  An integer makes the result reproducible.
 
     Returns
     -------
@@ -237,7 +293,7 @@ def decompose_laplacian_by_bands(
         if verbose >= 2:
             print(f"Computing band with sigma={sigma:.3g}")
         band_eigenvalues, band_eigenvectors = decompose_laplacian(
-            L, M, n_components=band_size, sigma=sigma
+            L, M, n_components=band_size, sigma=sigma, seed=seed
         )
         band_max_eigenvalue = np.max(band_eigenvalues)
         band_min_eigenvalue = np.min(band_eigenvalues)
@@ -499,6 +555,7 @@ def spectral_geometry_filter(
     signal_dtype: np.dtype = np.float64,
     overlap_target: Optional[int] = None,
     profile: Optional[dict] = None,
+    seed: Optional[int] = None,
 ) -> Union[np.ndarray, tuple[np.ndarray, np.ndarray]]:
     """Apply a spectral filter to the geometry of a mesh.
 
@@ -532,6 +589,11 @@ def spectral_geometry_filter(
     verbose :
         If >0, print out additional information about the computation. Higher values
         give more information.
+    seed :
+        Seed for the ARPACK starting vector, forwarded to
+        [decompose_laplacian][meshmash.decompose.decompose_laplacian].  ``None``
+        lets ARPACK draw its own, so two runs of the same call agree only to
+        the decomposition dtype.  An integer makes the result reproducible.
     signals :
         Optional per-vertex signals to filter, shape ``(V, S)``. Where the
         default path filters the *diagonal* of the heat kernel -- one scalar
@@ -709,7 +771,13 @@ def spectral_geometry_filter(
 
         currtime = time.time()
         band_eigenvalues, band_eigenvectors = decompose_laplacian(
-            L, M, n_components=band_k, sigma=sigma, tol=eigen_tol, profile=profile
+            L,
+            M,
+            n_components=band_k,
+            sigma=sigma,
+            tol=eigen_tol,
+            profile=profile,
+            seed=seed,
         )
         timing["decompose"] += time.time() - currtime
 
@@ -844,8 +912,8 @@ def compute_hks(
     t_min: Optional[float] = None,
     n_components: int = 32,
     band_size: int = 50,
-    truncate_extra: bool = False,
-    drop_first: bool = False,
+    truncate_extra: bool = True,
+    drop_first: bool = True,
     robust: bool = True,
     mollify_factor: float = 1e-5,
     decomposition_dtype: Optional[np.dtype] = np.float64,
@@ -855,6 +923,7 @@ def compute_hks(
     boundary_weight: float = 0.5,
     boundary_indices: Optional[np.ndarray] = None,
     verbose: Union[bool, int] = False,
+    seed: Optional[int] = None,
 ) -> np.ndarray:
     """Compute the Heat Kernel Signature (HKS) for each vertex of a mesh.
 
@@ -884,9 +953,18 @@ def compute_hks(
     truncate_extra :
         Whether to discard eigenpairs that overshoot ``max_eigenvalue``.
     drop_first :
-        If ``True``, drop the first (near-zero) eigenpair before applying
-        the filter.  The first eigenvector is proportional to vertex areas
-        and is typically uninformative.
+        If ``True``, drop the constant eigenpair before applying the filter.
+        Its contribution to the diagonal is exactly ``1 / total_area`` at every
+        vertex and every timescale — the equilibrium the heat kernel relaxes
+        to — so keeping it adds a constant that says only how large the mesh
+        is.  It dominates the large timescales, and in a chunked pipeline the
+        constant is each chunk's own area, which writes chunk size into every
+        vertex.  Dropping it is not the same as dividing by a vertex area: the
+        per-vertex areas of a real mesh span more than an order of magnitude,
+        while this is one number.  See
+        [compute_diffused_curvature][meshmash.curvature.compute_diffused_curvature],
+        which drops the same mode from its diagonal and adds it back to its
+        signal channels, where deleting it would delete the field mean.
     robust :
         If ``True``, use the robust Laplacian (see
         [cotangent_laplacian][meshmash.laplacian.cotangent_laplacian]).
@@ -915,6 +993,12 @@ def compute_hks(
         [get_submesh_borders][meshmash.split.get_submesh_borders].
     verbose :
         Verbosity level passed to [spectral_geometry_filter][meshmash.decompose.spectral_geometry_filter].
+    seed :
+        Seed for the ARPACK starting vector, forwarded to
+        [spectral_geometry_filter][meshmash.decompose.spectral_geometry_filter].
+        ``None`` lets ARPACK draw its own, so two runs of the same call agree
+        only to ``decomposition_dtype``.  An integer makes the result
+        reproducible.
 
     Returns
     -------
@@ -963,6 +1047,7 @@ def compute_hks(
         point_laplacian=point_laplacian,
         n_neighbors=n_neighbors,
         verbose=verbose,
+        seed=seed,
     )
     return out
 

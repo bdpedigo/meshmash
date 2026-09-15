@@ -14,8 +14,10 @@ import pyvista as pv
 from meshmash import (
     compute_diffused_curvature,
     compute_hks,
+    compute_split_condensed_hks,
     compute_split_condensed_spectral,
     condense_features,
+    cotangent_laplacian,
     diffused_curvature_feature_names,
 )
 from meshmash.decompose import get_hks_filter
@@ -219,3 +221,101 @@ def test_the_hks_block_is_logged(condensed):
     hks = condensed[0].drop(index=-1)[hks_column_names(N_COMPONENTS)]
 
     assert (hks < 0).all().all()
+
+
+# --- reproducibility and parity with the HKS pipeline ---------------------
+
+
+def test_a_seed_makes_the_pipeline_reproducible(mesh):
+    """Without one, ARPACK draws its own start vector and Ward flips merges.
+
+    The variation is not in the method. ARPACK's generator carries state
+    across calls inside a process, so the second run of a call starts
+    somewhere else, and at float32 the resulting HKS differ by about 1e-6 —
+    enough for connectivity-constrained Ward to merge a near-tie the other
+    way and return a different number of domains.
+
+    The chunking is held out of this. `spectral_bisect` calls ARPACK with no
+    start vector of its own (split.py carries a standing TODO about it), so
+    the chunk boundaries move run to run whatever `seed` says, and the domains
+    move with them. `max_vertex_threshold` above the vertex count leaves one
+    chunk and no bisection, which is what isolates the featurizing.
+    """
+    kwargs = dict(
+        n_components=N_COMPONENTS,
+        n_scales=N_SCALES,
+        max_eigenvalue=1e-8,
+        max_vertex_threshold=len(mesh[0]) + 1,
+        n_jobs=1,
+        seed=0,
+    )
+    first, first_labels, _ = compute_split_condensed_spectral(mesh, **kwargs)
+    second, second_labels, _ = compute_split_condensed_spectral(mesh, **kwargs)
+
+    np.testing.assert_array_equal(first_labels, second_labels)
+    np.testing.assert_array_equal(first.to_numpy(), second.to_numpy())
+
+
+def test_the_composite_reproduces_the_hks_pipeline_exactly(mesh):
+    """Parity, at the dtype where parity is available.
+
+    Adding two families must not move the domains the HKS alone would have
+    found, and at float64 with a shared seed it does not: the ``hks_`` block
+    is bit-identical and every vertex lands in the same domain. The centering
+    the curvature module applies before building the operator is the reason
+    this needs saying, and the reason it is exact: ``L`` and ``M`` are built
+    from coordinate differences, so a common offset cancels.
+
+    At float32 the same comparison moves 2 vertices of 32441. That is the
+    dtype, not the method, so it is not asserted here.
+
+    The chunking is held out of this. `spectral_bisect` calls ARPACK with no
+    start vector of its own (split.py carries a standing TODO about it), so
+    the chunk boundaries move run to run whatever `seed` says, and the domains
+    move with them. `max_vertex_threshold` above the vertex count leaves one
+    chunk and no bisection, which is what isolates the featurizing.
+    """
+    kwargs = dict(
+        n_components=N_COMPONENTS,
+        max_eigenvalue=1e-8,
+        max_vertex_threshold=len(mesh[0]) + 1,
+        n_jobs=1,
+        seed=0,
+        decomposition_dtype="float64",
+    )
+    composite, composite_labels, _ = compute_split_condensed_spectral(
+        mesh, n_scales=N_SCALES, **kwargs
+    )
+    hks_only, hks_labels, _ = compute_split_condensed_hks(mesh, **kwargs)
+
+    np.testing.assert_array_equal(composite_labels, hks_labels)
+    np.testing.assert_array_equal(
+        composite[hks_column_names(N_COMPONENTS)].to_numpy(), hks_only.to_numpy()
+    )
+
+
+def test_dropping_the_constant_mode_removes_one_number(sphere):
+    """What `drop_first` actually does, against what its old docstring claimed.
+
+    The constant eigenpair contributes ``1 / total_area`` to the kernel
+    diagonal at every vertex and every timescale, so dropping it subtracts one
+    number everywhere. It is not a per-vertex area normalization: the vertex
+    areas of this sphere span more than an order of magnitude, and none of
+    that spread appears in the difference.
+    """
+    _, M = cotangent_laplacian(sphere, robust=True, mollify_factor=1e-5)
+    areas = np.asarray(M.diagonal())
+    kwargs = dict(
+        t_min=SCALES[0],
+        t_max=SCALES[-1],
+        n_components=N_COMPONENTS,
+        max_eigenvalue=MAX_EIGENVALUE,
+        truncate_extra=True,
+        seed=0,
+    )
+
+    kept = compute_hks(sphere, drop_first=False, **kwargs)
+    dropped = compute_hks(sphere, drop_first=True, **kwargs)
+
+    assert areas.max() / areas.min() > 10, "a flat sphere would prove nothing"
+    np.testing.assert_allclose(kept - dropped, 1.0 / areas.sum(), rtol=1e-9)

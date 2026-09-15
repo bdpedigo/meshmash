@@ -45,6 +45,7 @@ def compute_condensed_hks(
     decomposition_dtype=np.float32,
     compute_hks_kwargs: dict = {},
     distance_threshold=3.0,
+    seed=None,
 ) -> tuple[pd.DataFrame, np.ndarray]:
     """Compute HKS features and aggregate them on a single (unsplit) mesh.
 
@@ -79,6 +80,12 @@ def compute_condensed_hks(
         [compute_hks][meshmash.decompose.compute_hks].
     distance_threshold :
         Ward linkage-distance threshold for agglomeration.
+    seed :
+        Seed for the ARPACK starting vector, forwarded to
+        [compute_hks][meshmash.decompose.compute_hks].  ``None`` lets ARPACK
+        draw its own, so two runs on the same mesh differ at
+        ``decomposition_dtype``, and Ward flips merges on those ties.  An
+        integer makes the result reproducible.
 
     Returns
     -------
@@ -99,6 +106,7 @@ def compute_condensed_hks(
         truncate_extra=truncate_extra,
         drop_first=drop_first,
         decomposition_dtype=decomposition_dtype,
+        seed=seed,
         **compute_hks_kwargs,
     )
 
@@ -128,6 +136,7 @@ def compute_split_condensed_hks(
     distance_threshold=3.0,
     n_jobs: Optional[int] = -1,
     verbose=False,
+    seed=None,
 ) -> tuple[pd.DataFrame, np.ndarray, MeshStitcher]:
     """Split a mesh into chunks, and condense each chunk's HKS onto local domains.
 
@@ -191,6 +200,12 @@ def compute_split_condensed_hks(
         Number of parallel workers for [Parallel][joblib.Parallel].
     verbose :
         Verbosity level.
+    seed :
+        Seed for the ARPACK starting vector, forwarded to
+        [compute_hks][meshmash.decompose.compute_hks].  ``None`` lets ARPACK
+        draw its own, so two runs on the same mesh differ at
+        ``decomposition_dtype``, and Ward flips merges on those ties.  An
+        integer makes the result reproducible.
 
     Returns
     -------
@@ -211,6 +226,7 @@ def compute_split_condensed_hks(
         min_vertex_threshold=min_vertex_threshold,
         max_overlap_neighbors=max_overlap_neighbors,
         verify_connected=False,
+        seed=seed,
     )
 
     if verbose:
@@ -229,6 +245,7 @@ def compute_split_condensed_hks(
         decomposition_dtype=decomposition_dtype,
         compute_hks_kwargs=compute_hks_kwargs,
         distance_threshold=distance_threshold,
+        seed=seed,
         stitch=False,
     )
     sub_agg_labels = stitcher.stitch_features(
