@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 
 from meshmash import simplify_to_density, surface_area, vertex_density
-from meshmash.pipeline import condensed_hks_pipeline
+from meshmash.pipelines import condensed_hks_pipeline
 
 
 def test_condensed_hks_pipeline_result_type(pipeline_result):

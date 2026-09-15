@@ -316,7 +316,7 @@ def condense_features(
     """Agglomerate a mesh on its per-vertex features and aggregate them per domain.
 
     The second half of
-    [compute_condensed_hks][meshmash.pipeline.compute_condensed_hks], on its
+    [compute_condensed_hks][meshmash.pipelines.condensed_hks.compute_condensed_hks], on its
     own: connectivity-constrained Ward on the *log* of the features, then an
     area-weighted mean of the features themselves over each resulting domain.
     Separated out so a caller holding per-vertex features already computed —
@@ -348,7 +348,7 @@ def condense_features(
         Area-weighted mean of ``features`` per domain, indexed by domain
         label and including a row for the null label ``-1``.  Not logged —
         the caller decides, as
-        [compute_split_condensed_hks][meshmash.pipeline.compute_split_condensed_hks]
+        [compute_split_condensed_hks][meshmash.pipelines.condensed_hks.compute_split_condensed_hks]
         does after it has stitched every chunk together.
     labels :
         Per-vertex domain label array of length ``V``.

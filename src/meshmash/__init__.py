@@ -69,9 +69,9 @@ from .io import (
 )
 from .label_propagation import label_propagation
 from .laplacian import area_matrix, compute_vertex_areas, cotangent_laplacian
-from .morphometry_pipeline import component_morphometry_pipeline
-from .pipeline import (
+from .pipelines import (
     chunked_hks_pipeline,
+    component_morphometry_pipeline,
     compute_condensed_hks,
     compute_split_condensed_hks,
     condensed_hks_pipeline,

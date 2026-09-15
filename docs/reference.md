@@ -2,9 +2,11 @@
 title: API Reference
 ---
 
-::: meshmash.pipeline
+::: meshmash.pipelines.chunked_hks
 
-::: meshmash.morphometry_pipeline
+::: meshmash.pipelines.condensed_hks
+
+::: meshmash.pipelines.morphometry
 
 ::: meshmash.decompose
 

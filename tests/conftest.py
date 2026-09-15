@@ -1,7 +1,7 @@
 import pytest
 
 from meshmash import fetch_sample_mesh
-from meshmash.pipeline import condensed_hks_pipeline
+from meshmash.pipelines import condensed_hks_pipeline
 
 _FAST_PIPELINE_KWARGS = dict(
     n_components=4,

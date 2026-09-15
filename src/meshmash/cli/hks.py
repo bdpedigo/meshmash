@@ -7,7 +7,7 @@ from typing import Annotated, Optional
 import typer
 
 from meshmash.io import save_condensed_features
-from meshmash.pipeline import condensed_hks_pipeline
+from meshmash.pipelines import condensed_hks_pipeline
 
 
 def _load_config(ctx: typer.Context, param: typer.CallbackParam, value: Optional[Path]):

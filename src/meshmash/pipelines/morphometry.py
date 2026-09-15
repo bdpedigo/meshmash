@@ -18,8 +18,8 @@ from sklearn.decomposition import PCA
 from sklearn.metrics import pairwise_distances
 from tqdm import tqdm
 
-from .laplacian import compute_vertex_areas
-from .utils import get_label_components, mesh_to_adjacency, subset_mesh_by_indices
+from ..laplacian import compute_vertex_areas
+from ..utils import get_label_components, mesh_to_adjacency, subset_mesh_by_indices
 
 
 def component_morphometry_pipeline(
