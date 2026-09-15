@@ -360,9 +360,15 @@ def fit_mesh_split_spectral(
     # sub-adjacencies, so they still draw different vectors wherever the piece
     # sizes differ, and two pieces of equal size sharing a vector is harmless:
     # the vector only has to overlap the wanted subspace of its own matrix.
+    # Bound only when asked for, so that the unseeded path hands the queue the
+    # bare function it always did.
+    cut = spectral_bisect_adjacency
+    if seed is not None:
+        cut = partial(cut, seed=seed)
+
     return _fit_split_by_queue(
         whole_adj,
-        partial(spectral_bisect_adjacency, seed=seed),
+        cut,
         max_vertex_threshold=max_vertex_threshold,
         min_vertex_threshold=min_vertex_threshold,
         max_rounds=max_rounds,

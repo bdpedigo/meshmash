@@ -235,17 +235,14 @@ def test_a_seed_makes_the_pipeline_reproducible(mesh):
     enough for connectivity-constrained Ward to merge a near-tie the other
     way and return a different number of domains.
 
-    The chunking is held out of this. `spectral_bisect` calls ARPACK with no
-    start vector of its own (split.py carries a standing TODO about it), so
-    the chunk boundaries move run to run whatever `seed` says, and the domains
-    move with them. `max_vertex_threshold` above the vertex count leaves one
-    chunk and no bisection, which is what isolates the featurizing.
+    The same argument seeds the chunking. Without that the cut itself moves,
+    and the domains move with it whatever the featurizing does.
     """
     kwargs = dict(
         n_components=N_COMPONENTS,
         n_scales=N_SCALES,
         max_eigenvalue=1e-8,
-        max_vertex_threshold=len(mesh[0]) + 1,
+        max_vertex_threshold=5000,
         n_jobs=1,
         seed=0,
     )
@@ -257,41 +254,43 @@ def test_a_seed_makes_the_pipeline_reproducible(mesh):
 
 
 def test_the_composite_reproduces_the_hks_pipeline_exactly(mesh):
-    """Parity, at the dtype where parity is available.
+    """Adding two families must not move the domains the HKS alone would find.
 
-    Adding two families must not move the domains the HKS alone would have
-    found, and at float64 with a shared seed it does not: the ``hks_`` block
-    is bit-identical and every vertex lands in the same domain. The centering
-    the curvature module applies before building the operator is the reason
-    this needs saying, and the reason it is exact: ``L`` and ``M`` are built
-    from coordinate differences, so a common offset cancels.
+    With the split and the solves both seeded, the two pipelines put every
+    vertex in the same domain at either dtype. The per-vertex HKS underneath is
+    bit-identical: the fused bank's diagonal half is the same arithmetic
+    `compute_hks` does, on the same operator.
 
-    At float32 the same comparison moves 2 vertices of 32441. That is the
-    dtype, not the method, so it is not asserted here.
-
-    The chunking is held out of this. `spectral_bisect` calls ARPACK with no
-    start vector of its own (split.py carries a standing TODO about it), so
-    the chunk boundaries move run to run whatever `seed` says, and the domains
-    move with them. `max_vertex_threshold` above the vertex count leaves one
-    chunk and no bisection, which is what isolates the featurizing.
+    The aggregated values are bit-identical only at float64. At float32 they
+    differ by about 1e-7, which is that dtype's epsilon: the area-weighted mean
+    runs over 40 columns here and 4 there, and a weighted sum rounds by the
+    order it accumulates in. Nothing about the method differs, so at float32
+    only the domains are asserted.
     """
     kwargs = dict(
         n_components=N_COMPONENTS,
         max_eigenvalue=1e-8,
-        max_vertex_threshold=len(mesh[0]) + 1,
+        max_vertex_threshold=5000,
         n_jobs=1,
         seed=0,
-        decomposition_dtype="float64",
     )
-    composite, composite_labels, _ = compute_split_condensed_spectral(
-        mesh, n_scales=N_SCALES, **kwargs
-    )
-    hks_only, hks_labels, _ = compute_split_condensed_hks(mesh, **kwargs)
 
-    np.testing.assert_array_equal(composite_labels, hks_labels)
-    np.testing.assert_array_equal(
-        composite[hks_column_names(N_COMPONENTS)].to_numpy(), hks_only.to_numpy()
-    )
+    for dtype, values_agree in (("float32", False), ("float64", True)):
+        composite, composite_labels, stitcher = compute_split_condensed_spectral(
+            mesh, n_scales=N_SCALES, decomposition_dtype=dtype, **kwargs
+        )
+        hks_only, hks_labels, _ = compute_split_condensed_hks(
+            mesh, decomposition_dtype=dtype, **kwargs
+        )
+
+        assert len(stitcher.submeshes) > 1, "the point is that it ran on chunks"
+        np.testing.assert_array_equal(composite_labels, hks_labels, err_msg=dtype)
+
+        diagonal = composite[hks_column_names(N_COMPONENTS)].to_numpy()
+        if values_agree:
+            np.testing.assert_array_equal(diagonal, hks_only.to_numpy())
+        else:
+            np.testing.assert_allclose(diagonal, hks_only.to_numpy(), rtol=1e-6)
 
 
 def test_dropping_the_constant_mode_removes_one_number(sphere):

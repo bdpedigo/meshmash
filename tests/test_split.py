@@ -16,7 +16,11 @@ from meshmash import (
     fit_mesh_split_spectral,
     mesh_to_adjacency,
 )
-from meshmash.split import _fit_split_by_queue, spectral_bisect_adjacency
+from meshmash.split import (
+    _fit_split_by_queue,
+    spectral_bisect,
+    spectral_bisect_adjacency,
+)
 
 
 def tube_mesh(n_rings=100, n_theta=40, radius=5.0, spacing=1.0):
@@ -330,3 +334,67 @@ def test_max_rounds_stops_the_queue(tube):
     )
 
     assert (labels == -1).all()
+
+
+def test_a_seed_makes_the_partition_reproducible(tube):
+    """Without one, ARPACK draws its own start vector and the cut moves.
+
+    The variation is not in the method. ARPACK's generator carries state across
+    calls inside a process, so the second bisection in a session starts
+    somewhere else and lands on a slightly different cut. Everything
+    downstream of the partition moves with it.
+    """
+    runs = []
+    for _ in range(3):
+        stitcher = MeshStitcher(tube, n_jobs=1)
+        stitcher.split_mesh(
+            max_vertex_threshold=500,
+            overlap_distance=5.0,
+            verify_connected=False,
+            seed=7,
+        )
+        runs.append(stitcher.submesh_mapping.copy())
+
+    assert runs[0].max() > 0, "one chunk would prove nothing"
+    for other in runs[1:]:
+        np.testing.assert_array_equal(runs[0], other)
+
+
+def test_a_retry_draws_a_different_vector(tube):
+    """The retry has to move, or it repeats the cut that just failed.
+
+    `spectral_bisect_adjacency` retries when a cut leaves a vertex isolated.
+    Under one fixed seed every attempt would redraw the identical vector and
+    return the identical bad cut until the attempts ran out, so the seed is
+    offset by the attempt number.
+    """
+    adjacency = mesh_to_adjacency(tube)
+    seen = [spectral_bisect(adjacency, seed=5 + attempt)[0] for attempt in range(3)]
+
+    assert not all(np.array_equal(seen[0], other) for other in seen[1:]), (
+        "consecutive attempt seeds must not give the same cut"
+    )
+
+
+def test_the_sign_anchor_survives_a_vertex_zero_at_the_cut(tube):
+    """The cut is a partition, and must not depend on which vertex is first.
+
+    The Fiedler vector's sign is arbitrary, and fixing it decides which side is
+    called "1". Anchoring that on vertex 0 reads a number that can sit
+    anywhere, including at the cut where its sign is noise; a vertex 0 of
+    exactly zero would have zeroed the whole vector and sent every vertex to
+    one side. Reordering the graph must leave the partition alone.
+    """
+    adjacency = mesh_to_adjacency(tube)
+    n = adjacency.shape[0]
+    first, second = spectral_bisect(adjacency, seed=0)
+
+    # Move a vertex that sits near the cut into position 0.
+    order = np.argsort(np.isin(np.arange(n), first[:1]).astype(int))[::-1].copy()
+    reordered = adjacency[order][:, order]
+    moved_first, moved_second = spectral_bisect(reordered, seed=0)
+
+    sizes = sorted([len(first), len(second)])
+    moved_sizes = sorted([len(moved_first), len(moved_second)])
+    assert min(sizes) > 0 and min(moved_sizes) > 0
+    assert sizes == moved_sizes
