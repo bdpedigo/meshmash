@@ -33,6 +33,18 @@ spectral features already carry.  So they are a fourth column block of the same
 frame, under the ``domain_`` prefix, rather than a second frame a reader has to
 join back on a key it already has.  The edge table is the one thing that does
 not fold in: a domain pair is a different thing from a domain.
+
+**Conditioning is the wrapper's job, not the chunked function's.**
+[compute_split_condensed_spectral][meshmash.pipelines.condensed_spectral.compute_split_condensed_spectral]
+takes the mesh as given, so a caller that has already conditioned its mesh
+gets that and nothing more.
+[condensed_spectral_pipeline][meshmash.pipelines.condensed_spectral.condensed_spectral_pipeline]
+is the layer above it that thresholds small components, simplifies, and maps
+the domain labels back onto the mesh it was handed.  Its simplification
+targets a vertex *density* by default rather than a reduction fraction, so
+the resolution reaching the eigendecomposition does not follow the resolution
+the source mesh happened to arrive at, and the timescale grid means the same
+thing across meshes.
 """
 
 import time
@@ -46,12 +58,23 @@ from ..agglomerate import condense_features, fix_split_labels_and_features
 from ..curvature import compute_diffused_curvature, diffused_curvature_feature_names
 from ..decompose import get_hks_filter
 from ..graph import condense_mesh_to_graph, condensed_node_property_names
+from ..simplify import simplify_mesh, simplify_to_density
 from ..split import MeshStitcher
+from ..types import interpret_mesh
+from ..utils import expand_labels, threshold_mesh_by_component_size
 
 #: How many timescales the curvature and tensor channels are diffused at, when
 #: the caller does not say.  Eight against the HKS's thirty-two: each of these
 #: scales carries ten columns where an HKS scale carries one.
 DEFAULT_N_SCALES = 8
+
+#: Target vertex density, in vertices per unit surface area, that
+#: [condensed_spectral_pipeline][meshmash.pipelines.condensed_spectral.condensed_spectral_pipeline]
+#: simplifies to when the caller does not say.  A density rather than a
+#: reduction fraction, so the physical resolution handed to the
+#: eigendecomposition is the same whatever resolution the source mesh arrives
+#: at.
+DEFAULT_SIMPLIFY_TARGET_DENSITY = 4.5e-5
 
 #: What the condensed graph's node properties are called once they sit in the
 #: same frame as the spectral features.  The three spectral blocks are already
@@ -498,3 +521,280 @@ def compute_split_condensed_spectral(
     condensed = condensed.join(condensed_nodes.reindex(condensed.index))
 
     return CondensedSpectralResult(condensed, condensed_edges, agg_labels, stitcher)
+
+
+class CondensedSpectralPipelineResult(NamedTuple):
+    """What
+    [condensed_spectral_pipeline][meshmash.pipelines.condensed_spectral.condensed_spectral_pipeline]
+    returns.
+
+    Wider than
+    [CondensedSpectralResult][meshmash.pipelines.condensed_spectral.CondensedSpectralResult]
+    by the conditioning the pipeline does: the mesh the featurizing actually
+    ran on, the map from the input mesh onto it, and labels at both
+    resolutions.  Shaped to match
+    [CondensedHKSResult][meshmash.pipelines.condensed_hks.CondensedHKSResult],
+    minus its ``condensed_nodes`` member, which is the ``domain_`` block of
+    ``condensed_features`` here.
+    """
+
+    #: The thresholded and simplified ``(vertices, faces)`` tuple the
+    #: featurizing ran on.
+    simple_mesh: tuple
+    #: Array of length ``V_original`` giving each input vertex its index in
+    #: ``simple_mesh``.  ``-1`` for a vertex dropped by the component
+    #: threshold.
+    mapping: np.ndarray
+    #: The fitted [MeshStitcher][meshmash.split.MeshStitcher], over
+    #: ``simple_mesh``.
+    stitcher: MeshStitcher
+    #: Per-vertex domain label array over ``simple_mesh``.
+    simple_labels: np.ndarray
+    #: Per-vertex domain label array over the *input* mesh, of length
+    #: ``V_original``.
+    labels: np.ndarray
+    #: One row per domain, keyed on the domain label.  Carries the ``hks_``,
+    #: ``curvature_``, ``normal_``, and ``domain_`` blocks side by side, the
+    #: ``domain_`` block measured on the input mesh.
+    condensed_features: pd.DataFrame
+    #: One row per adjacent domain pair, measured on the input mesh.
+    condensed_edges: pd.DataFrame
+    #: Wall-clock seconds per pipeline step.
+    timing_info: dict
+
+
+def condensed_spectral_pipeline(
+    mesh,
+    simplify_agg: int = 7,
+    simplify_target_reduction: Optional[float] = None,
+    simplify_target_density: Optional[float] = DEFAULT_SIMPLIFY_TARGET_DENSITY,
+    overlap_distance: float = 20_000,
+    max_vertex_threshold: int = 20_000,
+    min_vertex_threshold: int = 200,
+    max_overlap_neighbors: int = 60_000,
+    target_vertices: int = 10_000,
+    n_components: int = 32,
+    n_scales: int = DEFAULT_N_SCALES,
+    t_min: float = 5e4,
+    t_max: float = 2e7,
+    max_eigenvalue: float = 1e-5,
+    robust: bool = True,
+    mollify_factor: float = 1e-5,
+    truncate_extra: bool = True,
+    drop_first: bool = True,
+    decomposition_dtype="float32",
+    compute_diffused_curvature_kwargs: dict = {},
+    distance_threshold: float = 3.0,
+    n_jobs: Optional[int] = -1,
+    verbose: bool = False,
+    seed: Optional[int] = None,
+    blas_threads: Optional[int] = 1,
+) -> CondensedSpectralPipelineResult:
+    """Condition a mesh, then featurize and condense it, three families at once.
+
+    The entry point for the composite spectral path, and the counterpart of
+    [condensed_hks_pipeline][meshmash.pipelines.condensed_hks.condensed_hks_pipeline]:
+    component thresholding and simplification, then
+    [compute_split_condensed_spectral][meshmash.pipelines.condensed_spectral.compute_split_condensed_spectral]
+    on what comes out, then the domain labels expanded back onto the input
+    mesh.  Call
+    [compute_split_condensed_spectral][meshmash.pipelines.condensed_spectral.compute_split_condensed_spectral]
+    directly for a mesh the caller has already conditioned.
+
+    Simplification targets a vertex *density* by default, where
+    [condensed_hks_pipeline][meshmash.pipelines.condensed_hks.condensed_hks_pipeline]
+    targets a reduction fraction.  The two knobs are mutually exclusive: to
+    target a reduction fraction here, pass ``simplify_target_density=None``.
+    Passing ``None`` to both skips simplification.
+
+    The ``domain_`` block and the edge table are measured on the *input* mesh
+    under the expanded labels, not on the simplified mesh the features came
+    from.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
+    simplify_agg :
+        Decimation aggressiveness (0-10).  Higher values are faster but
+        reduce mesh quality.
+    simplify_target_reduction :
+        Fraction of triangles to remove, for
+        [simplify_mesh][meshmash.simplify.simplify_mesh].  Mutually exclusive
+        with ``simplify_target_density``.
+    simplify_target_density :
+        Target vertex density (vertices per unit surface area) for
+        [simplify_to_density][meshmash.simplify.simplify_to_density].
+        Defaults to
+        [DEFAULT_SIMPLIFY_TARGET_DENSITY][meshmash.pipelines.condensed_spectral.DEFAULT_SIMPLIFY_TARGET_DENSITY].
+        Mutually exclusive with ``simplify_target_reduction``; providing both
+        raises ``ValueError``.
+    overlap_distance :
+        Geodesic radius used to grow each chunk into its overlap region.
+    max_vertex_threshold :
+        Maximum vertices per core chunk before overlapping.
+    min_vertex_threshold :
+        Minimum connected-component size.  Smaller components are removed
+        from the mesh before simplification, and their vertices come back
+        with label ``-1``.
+    max_overlap_neighbors :
+        Cap on overlap region size (number of nearest neighbours); overrides
+        ``overlap_distance`` when set.
+    target_vertices :
+        Vertices to aim for in each core chunk.
+    n_components :
+        Number of HKS timescales, for the kernel diagonal.
+    n_scales :
+        Number of diffusion timescales, for the curvature and tensor channels.
+    t_min :
+        Smallest diffusion timescale, for both grids.
+    t_max :
+        Largest diffusion timescale, for both grids.
+    max_eigenvalue :
+        Maximum Laplacian eigenvalue to decompose up to.
+    robust :
+        If ``True``, use the robust Laplacian (recommended).
+    mollify_factor :
+        Mollification factor for the robust Laplacian.
+    truncate_extra :
+        If ``True``, discard eigenpairs that overshoot ``max_eigenvalue``.
+    drop_first :
+        If ``True``, drop the constant eigenpair from the kernel diagonal.
+    decomposition_dtype :
+        Floating-point dtype for the eigendecomposition.
+    compute_diffused_curvature_kwargs :
+        Extra keyword arguments forwarded to
+        [compute_diffused_curvature][meshmash.curvature.compute_diffused_curvature].
+    distance_threshold :
+        Ward linkage-distance threshold used to cut the agglomeration tree
+        into local domains.
+    n_jobs :
+        Number of parallel workers for [Parallel][joblib.Parallel].
+    verbose :
+        Verbosity level.
+    seed :
+        Seed for the ARPACK starting vector of the featurizing
+        eigendecomposition.  ``None`` gives up reproducibility, for the
+        reason
+        [compute_split_condensed_spectral][meshmash.pipelines.condensed_spectral.compute_split_condensed_spectral]
+        records.
+    blas_threads :
+        BLAS thread count for the linear algebra, fixed rather than
+        inherited.  ``None`` inherits the ambient count and gives up
+        reproducibility across worker counts.
+
+    Returns
+    -------
+    :
+        A
+        [CondensedSpectralPipelineResult][meshmash.pipelines.condensed_spectral.CondensedSpectralPipelineResult].
+        Its ``condensed_features`` carries the columns
+        [condensed_spectral_column_names][meshmash.pipelines.condensed_spectral.condensed_spectral_column_names]
+        gives, indexed by global domain label and including a NaN row for the
+        null label ``-1``.
+
+    Raises
+    ------
+    ValueError
+        If both ``simplify_target_reduction`` and ``simplify_target_density``
+        are given.
+    """
+    if simplify_target_reduction is not None and simplify_target_density is not None:
+        raise ValueError(
+            "Provide only one of `simplify_target_reduction` or "
+            "`simplify_target_density`, not both. This pipeline targets a "
+            "density by default, so to use reduction-targeted simplification, "
+            "set `simplify_target_density=None`."
+        )
+
+    timing_info = {}
+    starttime = time.time()
+
+    original_mesh = interpret_mesh(mesh)
+
+    currtime = time.time()
+    thresholded_mesh, indices_from_original = threshold_mesh_by_component_size(
+        original_mesh, size_threshold=min_vertex_threshold
+    )
+
+    if simplify_target_density is not None:
+        vertices, faces, thresh_to_simple_mapping = simplify_to_density(
+            thresholded_mesh,
+            target_density=simplify_target_density,
+            simplify_agg=simplify_agg,
+            verbose=verbose,
+        )
+        simple_mesh = (vertices, faces)
+    else:
+        # `simplify_mesh` also covers `target_reduction=None`, which returns
+        # the mesh untouched with an identity mapping.
+        simple_mesh, thresh_to_simple_mapping = simplify_mesh(
+            thresholded_mesh,
+            agg=simplify_agg,
+            target_reduction=simplify_target_reduction,
+        )
+    timing_info["conditioning_time"] = time.time() - currtime
+
+    currtime = time.time()
+    result = compute_split_condensed_spectral(
+        simple_mesh,
+        overlap_distance=overlap_distance,
+        max_vertex_threshold=max_vertex_threshold,
+        min_vertex_threshold=min_vertex_threshold,
+        max_overlap_neighbors=max_overlap_neighbors,
+        target_vertices=target_vertices,
+        n_components=n_components,
+        n_scales=n_scales,
+        t_min=t_min,
+        t_max=t_max,
+        max_eigenvalue=max_eigenvalue,
+        robust=robust,
+        mollify_factor=mollify_factor,
+        truncate_extra=truncate_extra,
+        drop_first=drop_first,
+        decomposition_dtype=decomposition_dtype,
+        compute_diffused_curvature_kwargs=compute_diffused_curvature_kwargs,
+        distance_threshold=distance_threshold,
+        n_jobs=n_jobs,
+        verbose=verbose,
+        seed=seed,
+        blas_threads=blas_threads,
+    )
+    timing_info["spectral_time"] = time.time() - currtime
+
+    mapping = np.full(len(original_mesh[0]), -1, dtype=np.int32)
+    mapping[indices_from_original] = thresh_to_simple_mapping
+
+    labels = expand_labels(result.labels, mapping)
+
+    if verbose:
+        print("Condensing the mesh to a domain graph...")
+    currtime = time.time()
+
+    # Recomputed on `original_mesh`, replacing the block
+    # `compute_split_condensed_spectral` measured on the simplified mesh. An
+    # area or a vertex count is a property of the mesh it is measured on, and
+    # simplification changes both, so the numbers a caller wants are the ones
+    # the input mesh gives.
+    condensed_nodes, condensed_edges = condense_mesh_to_graph(
+        original_mesh, labels, add_component_features=True
+    )
+    condensed_nodes = condensed_nodes.rename(
+        columns=lambda name: DOMAIN_PROPERTY_PREFIX + name
+    )[domain_property_names()]
+    condensed = result.condensed_features.drop(columns=domain_property_names())
+    condensed = condensed.join(condensed_nodes.reindex(condensed.index))
+
+    timing_info["condense_time"] = time.time() - currtime
+    timing_info["pipeline_time"] = time.time() - starttime
+
+    return CondensedSpectralPipelineResult(
+        simple_mesh,
+        mapping,
+        result.stitcher,
+        result.labels,
+        labels,
+        condensed,
+        condensed_edges,
+        timing_info,
+    )

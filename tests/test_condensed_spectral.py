@@ -22,12 +22,14 @@ from meshmash import (
 )
 from meshmash.decompose import get_hks_filter
 from meshmash.pipelines.condensed_spectral import (
+    DEFAULT_SIMPLIFY_TARGET_DENSITY,
     compute_condensed_spectral,
     condensed_spectral_column_names,
+    condensed_spectral_pipeline,
     domain_property_names,
     hks_column_names,
 )
-from meshmash.utils import poly_to_mesh
+from meshmash.utils import poly_to_mesh, vertex_density
 
 N_COMPONENTS = 4
 N_SCALES = 3
@@ -480,3 +482,128 @@ def test_dropping_the_constant_mode_removes_one_number(sphere):
 
     assert areas.max() / areas.min() > 10, "a flat sphere would prove nothing"
     np.testing.assert_allclose(kept - dropped, 1.0 / areas.sum(), rtol=1e-9)
+
+
+# --- the conditioning wrapper ---------------------------------------------
+
+#: What the wrapper is run with wherever it is run below. Small enough to be
+#: quick, chunked enough that the stitching is exercised.
+PIPELINE_KWARGS = dict(
+    n_components=N_COMPONENTS,
+    n_scales=N_SCALES,
+    max_eigenvalue=1e-8,
+    max_vertex_threshold=5000,
+    n_jobs=1,
+    seed=0,
+)
+
+
+@pytest.fixture(scope="module")
+def pipelined(mesh):
+    """One run of the conditioning wrapper at its density default."""
+    return condensed_spectral_pipeline(mesh, **PIPELINE_KWARGS)
+
+
+def test_the_pipeline_simplifies_to_the_default_density(mesh, pipelined):
+    """The default is a density, so the output density is the thing to check.
+
+    `simplify_to_density` stops within 5% above the target, so the assertion
+    is one-sided on that tolerance rather than a two-sided closeness.
+    """
+    assert vertex_density(mesh) > DEFAULT_SIMPLIFY_TARGET_DENSITY, (
+        "a mesh already below the target would not be simplified at all"
+    )
+    density = vertex_density(pipelined.simple_mesh)
+    assert density <= DEFAULT_SIMPLIFY_TARGET_DENSITY * 1.05
+    assert len(pipelined.simple_mesh[0]) < len(mesh[0])
+
+
+def test_the_two_simplification_knobs_are_mutually_exclusive(mesh):
+    """Density is the default here, so a bare reduction argument gives both."""
+    with pytest.raises(ValueError, match="only one of"):
+        condensed_spectral_pipeline(mesh, simplify_target_reduction=0.7)
+
+
+def test_the_pipeline_takes_a_reduction_fraction_instead(mesh):
+    """The other branch, and the one that skips simplification entirely."""
+    reduced = condensed_spectral_pipeline(
+        mesh,
+        simplify_target_density=None,
+        simplify_target_reduction=0.7,
+        **PIPELINE_KWARGS,
+    )
+    untouched = condensed_spectral_pipeline(
+        mesh,
+        simplify_target_density=None,
+        simplify_target_reduction=None,
+        **PIPELINE_KWARGS,
+    )
+
+    assert len(reduced.simple_mesh[0]) < len(mesh[0])
+    assert len(untouched.simple_mesh[0]) == len(mesh[0])
+    np.testing.assert_array_equal(untouched.mapping, np.arange(len(mesh[0])))
+
+
+def test_the_pipeline_labels_the_mesh_it_was_handed(mesh, pipelined):
+    """Two label arrays at two resolutions, and the map between them."""
+    assert len(pipelined.labels) == len(mesh[0])
+    assert len(pipelined.simple_labels) == len(pipelined.simple_mesh[0])
+    assert len(pipelined.mapping) == len(mesh[0])
+
+    kept = pipelined.mapping != -1
+    np.testing.assert_array_equal(
+        pipelined.labels[kept], pipelined.simple_labels[pipelined.mapping[kept]]
+    )
+    assert (pipelined.labels[~kept] == -1).all()
+
+
+def test_the_domain_block_is_measured_on_the_input_mesh(mesh, pipelined):
+    """Not on the simplified mesh the features came from.
+
+    An area or a vertex count is a property of the mesh it is measured on,
+    and simplification moves both. The counts have to add up against the
+    labels over the *input* mesh.
+    """
+    features = pipelined.condensed_features
+    real = features.index[features.index != -1]
+
+    labels, counts = np.unique(pipelined.labels, return_counts=True)
+    expected = pd.Series(counts, index=labels).drop(-1)
+
+    np.testing.assert_array_equal(
+        features.loc[real, "domain_n_vertices"].to_numpy(),
+        expected.loc[real].to_numpy(),
+    )
+    assert (
+        features.loc[real, "domain_n_vertices"].sum() == (pipelined.labels != -1).sum()
+    )
+    assert features.loc[real, "domain_n_vertices"].sum() > len(
+        pipelined.simple_mesh[0]
+    ), "the simplified mesh has fewer vertices, so this would fail if measured there"
+
+
+def test_the_pipeline_keeps_the_column_contract(pipelined):
+    """Same four blocks in the same order as the unconditioned function."""
+    assert list(
+        pipelined.condensed_features.columns
+    ) == condensed_spectral_column_names(N_COMPONENTS, N_SCALES)
+    assert -1 in pipelined.condensed_features.index
+    assert pipelined.condensed_features.loc[-1, domain_property_names()].isna().all()
+    assert list(pipelined.condensed_edges.columns) == [
+        "source",
+        "target",
+        "boundary_length",
+        "count",
+        "edge_length",
+    ]
+
+
+def test_the_pipeline_is_reproducible_at_a_fixed_seed(mesh):
+    """Conditioning adds no nondeterminism of its own."""
+    first = condensed_spectral_pipeline(mesh, **PIPELINE_KWARGS)
+    second = condensed_spectral_pipeline(mesh, **PIPELINE_KWARGS)
+
+    np.testing.assert_array_equal(first.labels, second.labels)
+    np.testing.assert_array_equal(first.mapping, second.mapping)
+    pd.testing.assert_frame_equal(first.condensed_features, second.condensed_features)
+    pd.testing.assert_frame_equal(first.condensed_edges, second.condensed_edges)

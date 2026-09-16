@@ -76,7 +76,9 @@ from .io import (
 from .label_propagation import label_propagation
 from .laplacian import area_matrix, compute_vertex_areas, cotangent_laplacian
 from .pipelines import (
+    DEFAULT_SIMPLIFY_TARGET_DENSITY,
     DOMAIN_PROPERTY_PREFIX,
+    CondensedSpectralPipelineResult,
     CondensedSpectralResult,
     chunked_hks_pipeline,
     component_morphometry_pipeline,
@@ -86,6 +88,7 @@ from .pipelines import (
     compute_split_condensed_spectral,
     condensed_hks_pipeline,
     condensed_spectral_column_names,
+    condensed_spectral_pipeline,
     domain_property_names,
     hks_column_names,
 )
@@ -160,13 +163,16 @@ __all__ = [
     "domain_property_names",
     "CONDENSED_COMPONENT_PROPERTIES",
     "CONDENSED_NODE_PROPERTIES",
+    "CondensedSpectralPipelineResult",
     "CondensedSpectralResult",
+    "DEFAULT_SIMPLIFY_TARGET_DENSITY",
     "DOMAIN_PROPERTY_PREFIX",
     "compute_vertex_areas",
     "concatenate_filters",
     "condense_features",
     "condense_mesh_to_graph",
     "condensed_hks_pipeline",
+    "condensed_spectral_pipeline",
     "construct_bspline_basis",
     "construct_bspline_filter",
     "cotangent_laplacian",

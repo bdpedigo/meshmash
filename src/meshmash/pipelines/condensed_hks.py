@@ -3,6 +3,7 @@ from typing import NamedTuple, Optional
 
 import numpy as np
 import pandas as pd
+from threadpoolctl import threadpool_limits
 
 from ..agglomerate import (
     condense_features,
@@ -46,6 +47,7 @@ def compute_condensed_hks(
     compute_hks_kwargs: dict = {},
     distance_threshold=3.0,
     seed=None,
+    blas_threads: Optional[int] = 1,
 ) -> tuple[pd.DataFrame, np.ndarray]:
     """Compute HKS features and aggregate them on a single (unsplit) mesh.
 
@@ -95,26 +97,32 @@ def compute_condensed_hks(
     labels :
         Per-vertex domain label array of length ``V``.
     """
-    X_hks = compute_hks(
-        mesh,
-        n_components=n_components,
-        t_min=t_min,
-        t_max=t_max,
-        max_eigenvalue=max_eigenvalue,
-        robust=robust,
-        mollify_factor=mollify_factor,
-        truncate_extra=truncate_extra,
-        drop_first=drop_first,
-        decomposition_dtype=decomposition_dtype,
-        seed=seed,
-        **compute_hks_kwargs,
-    )
+    # Fixed rather than inherited, for the reason
+    # [compute_condensed_spectral][meshmash.pipelines.condensed_spectral.compute_condensed_spectral]
+    # gives: the reduction order follows the thread count, which moves the
+    # features in their last bit, and Ward flips a near-tie on that. Both
+    # pipelines pin the same way, so their shared arithmetic stays comparable.
+    with threadpool_limits(limits=blas_threads):
+        X_hks = compute_hks(
+            mesh,
+            n_components=n_components,
+            t_min=t_min,
+            t_max=t_max,
+            max_eigenvalue=max_eigenvalue,
+            robust=robust,
+            mollify_factor=mollify_factor,
+            truncate_extra=truncate_extra,
+            drop_first=drop_first,
+            decomposition_dtype=decomposition_dtype,
+            seed=seed,
+            **compute_hks_kwargs,
+        )
 
-    return condense_features(
-        mesh,
-        pd.DataFrame(X_hks, columns=[f"hks_{i}" for i in range(X_hks.shape[1])]),
-        distance_threshold=distance_threshold,
-    )
+        return condense_features(
+            mesh,
+            pd.DataFrame(X_hks, columns=[f"hks_{i}" for i in range(X_hks.shape[1])]),
+            distance_threshold=distance_threshold,
+        )
 
 
 def compute_split_condensed_hks(
@@ -139,6 +147,7 @@ def compute_split_condensed_hks(
     n_jobs: Optional[int] = -1,
     verbose=False,
     seed=None,
+    blas_threads: Optional[int] = 1,
 ) -> tuple[pd.DataFrame, np.ndarray, MeshStitcher]:
     """Split a mesh into chunks, and condense each chunk's HKS onto local domains.
 
@@ -260,6 +269,7 @@ def compute_split_condensed_hks(
         compute_hks_kwargs=compute_hks_kwargs,
         distance_threshold=distance_threshold,
         seed=seed,
+        blas_threads=blas_threads,
         stitch=False,
     )
     sub_agg_labels = stitcher.stitch_features(
