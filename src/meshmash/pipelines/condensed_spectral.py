@@ -5,9 +5,11 @@ kernel signature.  This computes three — the HKS, the diffused curvature
 invariants, and the diffused normal-tensor invariants — from the *same*
 eigendecomposition, so the second and third families cost another matrix
 product per band rather than another solve.  Everything else is the HKS
-pipeline's shape: spectral bisection into overlapping chunks, per-chunk
-featurizing and agglomeration, then reconciliation of the per-chunk domain
-numbering into one global one.
+pipeline's shape: a cut into overlapping chunks, per-chunk featurizing and
+agglomeration, then reconciliation of the per-chunk domain numbering into one
+global one.  The cut here is the geodesic Voronoi one rather than the spectral
+bisection [condensed_hks][meshmash.pipelines.condensed_hks] uses: it is
+cheaper, deterministic without a seed, and its chunks are connected.
 
 **Two timescale grids, and that is the point of the fusing.**  The kernel
 diagonal is read at the ``n_components`` HKS timescales, while the curvature
@@ -170,6 +172,7 @@ def compute_split_condensed_spectral(
     max_vertex_threshold: int = 20_000,
     min_vertex_threshold: int = 200,
     max_overlap_neighbors: int = 60_000,
+    target_vertices: int = 10_000,
     n_components: int = 32,
     n_scales: int = DEFAULT_N_SCALES,
     t_min: float = 5e4,
@@ -188,12 +191,15 @@ def compute_split_condensed_spectral(
 ) -> tuple[pd.DataFrame, np.ndarray, MeshStitcher]:
     """Split a mesh into chunks and condense all three families on each chunk.
 
-    The chunked middle of the composite path, shaped exactly like
+    The chunked middle of the composite path, shaped like
     [compute_split_condensed_hks][meshmash.pipelines.condensed_hks.compute_split_condensed_hks]:
-    spectral bisection into overlapping chunks, per-chunk
+    a cut into overlapping chunks, per-chunk
     [compute_condensed_spectral][meshmash.pipelines.condensed_spectral.compute_condensed_spectral],
     and reconciliation of the per-chunk domain labels into one global
-    numbering.  Aggregating *within* each chunk before stitching is what keeps
+    numbering.  The cut is
+    [fit_mesh_split_geodesic][meshmash.split.fit_mesh_split_geodesic], not the
+    spectral bisection, so the chunk boundaries depend on the mesh alone and
+    every chunk comes out connected.  Aggregating *within* each chunk before stitching is what keeps
     memory proportional to a chunk rather than to the whole mesh, and it is
     also why the chunking has to happen here rather than around this function:
     one eigendecomposition of the whole mesh is the thing being avoided.
@@ -217,6 +223,10 @@ def compute_split_condensed_spectral(
     max_overlap_neighbors :
         Cap on overlap region size (number of nearest neighbours); overrides
         ``overlap_distance`` when set.
+    target_vertices :
+        Vertices to aim for in each core chunk, which sets how many Voronoi
+        seeds a piece is cut with.  Chunks come out near this size and always
+        under ``max_vertex_threshold``.
     n_components :
         Number of HKS timescales, for the kernel diagonal.
     n_scales :
@@ -248,8 +258,10 @@ def compute_split_condensed_spectral(
     verbose :
         Verbosity level.
     seed :
-        Seed for the ARPACK starting vector.  ``None`` lets ARPACK draw its
-        own, so two runs of this pipeline on the same mesh differ at
+        Seed for the ARPACK starting vector of the featurizing
+        eigendecomposition.  The chunking does not read it: the geodesic cut is
+        deterministic on its own.  ``None`` lets ARPACK draw its own vector, so
+        two runs of this pipeline on the same mesh differ at
         ``decomposition_dtype`` — and Ward flips merges on those ties, so the
         domain count moves too.  An integer makes the whole pipeline
         reproducible.  Every chunk is seeded alike, which is harmless: the
@@ -275,12 +287,13 @@ def compute_split_condensed_spectral(
     """
     stitcher = MeshStitcher(mesh, n_jobs=n_jobs, verbose=verbose)
     stitcher.split_mesh(
+        method="geodesic",
         overlap_distance=overlap_distance,
         max_vertex_threshold=max_vertex_threshold,
         min_vertex_threshold=min_vertex_threshold,
         max_overlap_neighbors=max_overlap_neighbors,
+        target_vertices=target_vertices,
         verify_connected=False,
-        seed=seed,
     )
 
     if verbose:

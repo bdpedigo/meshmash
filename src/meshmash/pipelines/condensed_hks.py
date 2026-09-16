@@ -134,6 +134,8 @@ def compute_split_condensed_hks(
     decomposition_dtype="float32",
     compute_hks_kwargs: dict = {},
     distance_threshold=3.0,
+    method: str = "spectral",
+    target_vertices: int = 10_000,
     n_jobs: Optional[int] = -1,
     verbose=False,
     seed=None,
@@ -196,6 +198,16 @@ def compute_split_condensed_hks(
     distance_threshold :
         Ward linkage-distance threshold used to cut the agglomeration tree
         into local domains.
+    method :
+        Which cut [split_mesh][meshmash.split.MeshStitcher.split_mesh] makes.
+        ``"spectral"`` is recursive spectral bisection.  ``"geodesic"`` is the
+        geodesic Voronoi cut
+        [compute_split_condensed_spectral][meshmash.pipelines.condensed_spectral.compute_split_condensed_spectral]
+        uses, which needs no seed and gives connected chunks.  Pass it to put
+        both pipelines on the same chunking.
+    target_vertices :
+        Vertices to aim for in each core chunk.  Read only when ``method`` is
+        ``"geodesic"``.
     n_jobs :
         Number of parallel workers for [Parallel][joblib.Parallel].
     verbose :
@@ -221,10 +233,12 @@ def compute_split_condensed_hks(
     """
     stitcher = MeshStitcher(mesh, n_jobs=n_jobs, verbose=verbose)
     stitcher.split_mesh(
+        method=method,
         overlap_distance=overlap_distance,
         max_vertex_threshold=max_vertex_threshold,
         min_vertex_threshold=min_vertex_threshold,
         max_overlap_neighbors=max_overlap_neighbors,
+        target_vertices=target_vertices,
         verify_connected=False,
         seed=seed,
     )

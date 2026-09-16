@@ -235,8 +235,8 @@ def test_a_seed_makes_the_pipeline_reproducible(mesh):
     enough for connectivity-constrained Ward to merge a near-tie the other
     way and return a different number of domains.
 
-    The same argument seeds the chunking. Without that the cut itself moves,
-    and the domains move with it whatever the featurizing does.
+    The chunking does not need the seed: the geodesic cut this pipeline makes
+    is deterministic on its own, so only the solves vary between runs.
     """
     kwargs = dict(
         n_components=N_COMPONENTS,
@@ -256,8 +256,15 @@ def test_a_seed_makes_the_pipeline_reproducible(mesh):
 def test_the_composite_reproduces_the_hks_pipeline_exactly(mesh):
     """Adding two families must not move the domains the HKS alone would find.
 
-    With the split and the solves both seeded, the two pipelines put every
-    vertex in the same domain at either dtype. The per-vertex HKS underneath is
+    Both sides are put on the geodesic cut, which is what the composite
+    pipeline uses and what the HKS pipeline takes as an option. The claim is
+    about the featurizing, so the chunking has to be held fixed: on its default
+    spectral cut the HKS pipeline chunks the mesh somewhere else and the domains
+    move with the chunk boundaries, for a reason that has nothing to do with the
+    extra families.
+
+    On one cut, and with the solves seeded, the two pipelines put every vertex
+    in the same domain at either dtype. The per-vertex HKS underneath is
     bit-identical: the fused bank's diagonal half is the same arithmetic
     `compute_hks` does, on the same operator.
 
@@ -271,6 +278,7 @@ def test_the_composite_reproduces_the_hks_pipeline_exactly(mesh):
         n_components=N_COMPONENTS,
         max_eigenvalue=1e-8,
         max_vertex_threshold=5000,
+        target_vertices=2500,
         n_jobs=1,
         seed=0,
     )
@@ -280,7 +288,7 @@ def test_the_composite_reproduces_the_hks_pipeline_exactly(mesh):
             mesh, n_scales=N_SCALES, decomposition_dtype=dtype, **kwargs
         )
         hks_only, hks_labels, _ = compute_split_condensed_hks(
-            mesh, decomposition_dtype=dtype, **kwargs
+            mesh, decomposition_dtype=dtype, method="geodesic", **kwargs
         )
 
         assert len(stitcher.submeshes) > 1, "the point is that it ran on chunks"
