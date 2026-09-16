@@ -6,6 +6,51 @@ from .laplacian import compute_vertex_areas
 from .types import Mesh
 from .utils import connected_components, mesh_to_adjacency, mesh_to_edges
 
+#: The per-region columns
+#: [condense_mesh_to_graph][meshmash.graph.condense_mesh_to_graph] always emits,
+#: in the order it emits them, mapped to how each is aggregated over the
+#: vertices of a region.  ``x``, ``y`` and ``z`` are the centroid, ``area`` is
+#: the summed vertex area, and ``n_vertices`` is the vertex count.
+CONDENSED_NODE_PROPERTIES = {
+    "x": "mean",
+    "y": "mean",
+    "z": "mean",
+    "area": "sum",
+    "n_vertices": "sum",
+}
+
+#: The extra columns
+#: [condense_mesh_to_graph][meshmash.graph.condense_mesh_to_graph] emits under
+#: ``add_component_features``, in order.  Each is a property of the connected
+#: component a region sits in, repeated on every region of that component.
+CONDENSED_COMPONENT_PROPERTIES = ("component_area", "component_n_vertices")
+
+
+def condensed_node_property_names(add_component_features: bool = False) -> list[str]:
+    """The node-table columns
+    [condense_mesh_to_graph][meshmash.graph.condense_mesh_to_graph] emits, in order.
+
+    Derived from
+    [CONDENSED_NODE_PROPERTIES][meshmash.graph.CONDENSED_NODE_PROPERTIES] and
+    [CONDENSED_COMPONENT_PROPERTIES][meshmash.graph.CONDENSED_COMPONENT_PROPERTIES]
+    rather than written out again, so a caller selecting this block by name
+    cannot fall out of step with the function that writes it.
+
+    Parameters
+    ----------
+    add_component_features :
+        Whether the caller passed ``add_component_features=True``.
+
+    Returns
+    -------
+    :
+        Column names, of length ``5`` or ``7``.
+    """
+    names = list(CONDENSED_NODE_PROPERTIES)
+    if add_component_features:
+        names += list(CONDENSED_COMPONENT_PROPERTIES)
+    return names
+
 
 def compute_edge_widths(mesh: Mesh, mollify_factor: float = 0.0) -> csr_array:
     """Compute per-edge width estimates from the incircle radii of adjacent faces.
@@ -91,10 +136,9 @@ def condense_mesh_to_graph(
     Returns
     -------
     node_table :
-        DataFrame indexed by label with columns ``x``, ``y``, ``z``
-        (centroid), ``area`` (summed vertex areas), and ``n_vertices``.  If
-        ``add_component_features=True``, also includes ``component`` and
-        ``component_area``.
+        DataFrame indexed by label, with the columns
+        [condensed_node_property_names][meshmash.graph.condensed_node_property_names]
+        gives for the same ``add_component_features``.
     edge_table :
         DataFrame with columns ``source_group``, ``target_group``,
         ``boundary_length`` (sum of edge-width values), and ``count``
@@ -141,13 +185,7 @@ def condense_mesh_to_graph(
     node_table["group"] = labels
     node_table["area"] = areas
 
-    agg_dict = {
-        "x": "mean",
-        "y": "mean",
-        "z": "mean",
-        "area": "sum",
-        "n_vertices": "sum",
-    }
+    agg_dict = dict(CONDENSED_NODE_PROPERTIES)
 
     if add_component_features:
         adj = mesh_to_adjacency(mesh)

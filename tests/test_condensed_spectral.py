@@ -23,6 +23,8 @@ from meshmash import (
 from meshmash.decompose import get_hks_filter
 from meshmash.pipelines.condensed_spectral import (
     compute_condensed_spectral,
+    condensed_spectral_column_names,
+    domain_property_names,
     hks_column_names,
 )
 from meshmash.utils import poly_to_mesh
@@ -168,10 +170,18 @@ def test_the_two_grids_are_independent(sphere):
 
 
 def test_the_pipeline_returns_one_named_table_per_domain(mesh, condensed):
-    features, labels, stitcher = condensed
+    """One frame, four blocks, and a null row that is NaN across all of them."""
+    features, labels, stitcher = (
+        condensed.condensed_features,
+        condensed.labels,
+        condensed.stitcher,
+    )
 
-    assert list(features.columns) == diffused_curvature_feature_names(
-        N_SCALES, N_COMPONENTS
+    assert list(features.columns) == condensed_spectral_column_names(
+        N_COMPONENTS, N_SCALES
+    )
+    assert list(features.columns[: -len(domain_property_names())]) == (
+        diffused_curvature_feature_names(N_SCALES, N_COMPONENTS)
     )
     assert len(stitcher.submeshes) > 1, "the point is that it ran on chunks"
     assert len(labels) == len(mesh[0])
@@ -182,7 +192,7 @@ def test_the_pipeline_returns_one_named_table_per_domain(mesh, condensed):
 
 def test_every_domain_has_finite_features(condensed):
     """A domain no chunk could featurize would be NaN across the board."""
-    features = condensed[0].drop(index=-1)
+    features = condensed.condensed_features.drop(index=-1)
 
     assert np.isfinite(features.to_numpy()).all()
 
@@ -198,7 +208,7 @@ def test_only_the_hks_block_is_logged(condensed):
     hold both signs. Mean curvature is not the column to check — a dendrite is
     convex on average, so its domain means are all positive either way.
     """
-    features = condensed[0].drop(index=-1)
+    features = condensed.condensed_features.drop(index=-1)
 
     for scale in range(N_SCALES):
         fractions = features[
@@ -218,9 +228,92 @@ def test_the_hks_block_is_logged(condensed):
     output reads a log. These HKS values sit near 1e-8, whose log is about
     -18, and no unlogged HKS is negative.
     """
-    hks = condensed[0].drop(index=-1)[hks_column_names(N_COMPONENTS)]
+    hks = condensed.condensed_features.drop(index=-1)[hks_column_names(N_COMPONENTS)]
 
     assert (hks < 0).all().all()
+
+
+# --- the folded node-property block ---------------------------------------
+
+
+def test_the_domain_block_measures_the_domains_the_labels_name(mesh, condensed):
+    """The fold is only sound if the two blocks describe the same domains.
+
+    The node properties are sums over the vertices of a domain, so they are
+    checkable against the label array directly: the vertex counts have to be
+    the counts of each label, and they have to add up to the number of
+    labeled vertices. A block joined onto the wrong index would fail both.
+    """
+    features = condensed.condensed_features
+    labels = condensed.labels
+    counts = features.loc[features.index != -1, "domain_n_vertices"]
+
+    expected = pd.Series(labels[labels != -1]).value_counts().sort_index()
+    np.testing.assert_array_equal(counts.to_numpy(), expected.to_numpy())
+    assert counts.sum() == (labels != -1).sum()
+
+
+def test_the_domain_block_is_finite_and_null_only_on_the_null_label(condensed):
+    """`condense_mesh_to_graph` emits no row for -1, so the join has to make one."""
+    features = condensed.condensed_features
+    block = features[domain_property_names()]
+
+    assert block.loc[-1].isna().all()
+    assert np.isfinite(block.drop(index=-1).to_numpy()).all()
+
+
+def test_the_component_columns_are_constant_within_a_component(condensed):
+    """A component property repeated on every domain of that component.
+
+    The dendrite sample is one component, so every domain carries the same
+    pair, and that pair is the total over the labeled vertices.
+    """
+    features = condensed.condensed_features.drop(index=-1)
+
+    assert features["domain_component_n_vertices"].nunique() == 1
+    assert (
+        features["domain_component_n_vertices"].iloc[0]
+        == features["domain_n_vertices"].sum()
+    )
+    np.testing.assert_allclose(
+        features["domain_component_area"].iloc[0],
+        features["domain_area"].sum(),
+        rtol=1e-6,
+    )
+
+
+def test_the_edges_keep_their_own_grain(condensed):
+    """A domain pair is not a domain, so it stays a second table.
+
+    Every endpoint has to be a real domain, no pair may repeat, and no domain
+    may be paired with itself. Those three are what make the pair the key.
+    """
+    edges = condensed.condensed_edges
+    features = condensed.condensed_features
+
+    assert list(edges.columns) == [
+        "source",
+        "target",
+        "boundary_length",
+        "count",
+        "edge_length",
+    ]
+    assert edges["source"].isin(features.index).all()
+    assert edges["target"].isin(features.index).all()
+    assert (edges["source"] < edges["target"]).all()
+    assert not edges.duplicated(subset=["source", "target"]).any()
+    assert len(edges) != len(features), "the two grains would be confusable"
+
+
+def test_the_domain_prefix_keeps_the_blocks_apart(condensed):
+    """The prefix is the whole reason the four blocks can share a frame."""
+    columns = list(condensed.condensed_features.columns)
+
+    prefixed = [name for name in columns if name.startswith("domain_")]
+    assert prefixed == domain_property_names()
+    assert not any(
+        name.startswith(("hks_", "curvature_", "normal_")) for name in prefixed
+    )
 
 
 # --- reproducibility and parity with the HKS pipeline ---------------------
@@ -246,11 +339,68 @@ def test_a_seed_makes_the_pipeline_reproducible(mesh):
         n_jobs=1,
         seed=0,
     )
-    first, first_labels, _ = compute_split_condensed_spectral(mesh, **kwargs)
-    second, second_labels, _ = compute_split_condensed_spectral(mesh, **kwargs)
+    first = compute_split_condensed_spectral(mesh, **kwargs)
+    second = compute_split_condensed_spectral(mesh, **kwargs)
 
-    np.testing.assert_array_equal(first_labels, second_labels)
-    np.testing.assert_array_equal(first.to_numpy(), second.to_numpy())
+    np.testing.assert_array_equal(first.labels, second.labels)
+    np.testing.assert_array_equal(
+        first.condensed_features.to_numpy(), second.condensed_features.to_numpy()
+    )
+    pd.testing.assert_frame_equal(first.condensed_edges, second.condensed_edges)
+
+
+def test_the_domain_numbering_does_not_follow_worker_count(mesh):
+    """Domain labels must name the same domains at any ``n_jobs`` (TASK-12).
+
+    The label is the join key between this table and everything derived from
+    the same cut, so a label that moves with worker count cannot be committed.
+    Before `canonicalize_labels`, global labels were handed out in
+    ``(submesh index, local label)`` order, and the local part is not stable:
+    joblib caps its workers' BLAS threads where an in-process run uses every
+    one, and the different reduction order flips Ward's near-ties. The
+    partition that survives overlap trimming was the same, so only the names
+    moved.
+
+    This does not assert the features, because a weighted mean accumulates in
+    a different order per worker count and the columns differ by about 1e-6 at
+    float32. It also stops at two worker counts on purpose: at higher ones the
+    *partition* itself moves, which renumbering cannot fix and TASK-12 records
+    as still open.
+    """
+    kwargs = dict(
+        n_components=N_COMPONENTS,
+        n_scales=N_SCALES,
+        max_eigenvalue=1e-8,
+        max_vertex_threshold=5000,
+        seed=0,
+    )
+    serial = compute_split_condensed_spectral(mesh, n_jobs=1, **kwargs)
+    parallel = compute_split_condensed_spectral(mesh, n_jobs=2, **kwargs)
+
+    np.testing.assert_array_equal(serial.labels, parallel.labels)
+
+
+def test_domain_zero_holds_the_lowest_numbered_vertex(mesh):
+    """The canonical numbering rule, stated as a property.
+
+    Labels run in order of first appearance along the vertex array, so the
+    numbering is a function of the partition and of nothing else. Asserting the
+    rule rather than a recorded label array means the test still means
+    something if the cut changes.
+    """
+    labels = compute_split_condensed_spectral(
+        mesh,
+        n_components=N_COMPONENTS,
+        n_scales=N_SCALES,
+        max_eigenvalue=1e-8,
+        max_vertex_threshold=5000,
+        n_jobs=1,
+        seed=0,
+    ).labels
+    assigned = labels[labels != -1]
+    first_appearance = pd.unique(assigned)
+
+    np.testing.assert_array_equal(first_appearance, np.arange(len(first_appearance)))
 
 
 def test_the_composite_reproduces_the_hks_pipeline_exactly(mesh):
@@ -284,17 +434,21 @@ def test_the_composite_reproduces_the_hks_pipeline_exactly(mesh):
     )
 
     for dtype, values_agree in (("float32", False), ("float64", True)):
-        composite, composite_labels, stitcher = compute_split_condensed_spectral(
+        composite = compute_split_condensed_spectral(
             mesh, n_scales=N_SCALES, decomposition_dtype=dtype, **kwargs
         )
         hks_only, hks_labels, _ = compute_split_condensed_hks(
             mesh, decomposition_dtype=dtype, method="geodesic", **kwargs
         )
 
-        assert len(stitcher.submeshes) > 1, "the point is that it ran on chunks"
-        np.testing.assert_array_equal(composite_labels, hks_labels, err_msg=dtype)
+        assert len(composite.stitcher.submeshes) > 1, (
+            "the point is that it ran on chunks"
+        )
+        np.testing.assert_array_equal(composite.labels, hks_labels, err_msg=dtype)
 
-        diagonal = composite[hks_column_names(N_COMPONENTS)].to_numpy()
+        diagonal = composite.condensed_features[
+            hks_column_names(N_COMPONENTS)
+        ].to_numpy()
         if values_agree:
             np.testing.assert_array_equal(diagonal, hks_only.to_numpy())
         else:

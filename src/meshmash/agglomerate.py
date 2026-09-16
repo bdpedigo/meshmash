@@ -253,9 +253,67 @@ def fix_split_labels_and_features(
     empty_data = pd.DataFrame(columns=data.columns, index=[-1])
     new_data = pd.concat([empty_data] + new_data)
 
+    agg_labels, new_data = canonicalize_labels(agg_labels, new_data)
+
     assert np.isin(np.unique(agg_labels), new_data.index).all()
 
     return agg_labels, new_data
+
+
+def canonicalize_labels(
+    labels: np.ndarray, features: pd.DataFrame
+) -> tuple[np.ndarray, pd.DataFrame]:
+    """Renumber domains by first appearance in vertex order.
+
+    The numbering that
+    [fix_split_labels_and_features][meshmash.agglomerate.fix_split_labels_and_features]
+    produces follows ``(submesh index, local label)``, and the local part of
+    that is not stable across runs.  Under ``n_jobs=1`` the per-submesh work
+    runs in process with every BLAS thread available, while joblib caps its
+    workers at one, and the different reduction order moves Ward's merges.  The
+    cut that survives overlap trimming is the same either way, so only the
+    *names* move, but a name that moves is not a name another table can join on.
+
+    Renumbering by first appearance makes the label a function of the partition
+    alone: domain 0 is the one holding the lowest-numbered vertex, and so on.
+    Two runs that agree on the partition then agree on the labels.
+
+    This does not make the *partition* deterministic. Measured on
+    ``microns_dendrite_sample``, one submesh featurized at one BLAS thread
+    against all of them agrees only to an adjusted Rand index of 0.998330, and
+    the vertices that move sit in the overlap region that trimming discards.
+    Determinism here is therefore conditional on that trimming continuing to
+    absorb the movement.
+
+    Parameters
+    ----------
+    labels :
+        Per-vertex label array of length ``V``, with ``-1`` for a vertex in no
+        domain. Modified in place.
+    features :
+        Per-domain features indexed by label, including the ``-1`` row.
+
+    Returns
+    -------
+    labels :
+        ``labels`` renumbered, same length.
+    features :
+        ``features`` reordered to match, ``-1`` row still first.
+    """
+    valid_mask = labels != -1
+    order = pd.unique(labels[valid_mask])
+    if len(order) == 0:
+        return labels, features
+
+    lookup = np.full(int(order.max()) + 1, -1, dtype=labels.dtype)
+    lookup[order] = np.arange(len(order), dtype=labels.dtype)
+    labels[valid_mask] = lookup[labels[valid_mask]]
+
+    features = features.loc[[-1, *order]]
+    features.index = pd.Index(
+        [-1, *range(len(order))], name=features.index.name
+    )
+    return labels, features
 
 
 def agglomerate_split_mesh(

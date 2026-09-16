@@ -53,7 +53,13 @@ from .decompose import (
     get_hks_filter,
     spectral_geometry_filter,
 )
-from .graph import compute_edge_widths, condense_mesh_to_graph
+from .graph import (
+    CONDENSED_COMPONENT_PROPERTIES,
+    CONDENSED_NODE_PROPERTIES,
+    compute_edge_widths,
+    condense_mesh_to_graph,
+    condensed_node_property_names,
+)
 from .io import (
     interpret_path,
     read_array,
@@ -70,6 +76,8 @@ from .io import (
 from .label_propagation import label_propagation
 from .laplacian import area_matrix, compute_vertex_areas, cotangent_laplacian
 from .pipelines import (
+    DOMAIN_PROPERTY_PREFIX,
+    CondensedSpectralResult,
     chunked_hks_pipeline,
     component_morphometry_pipeline,
     compute_condensed_hks,
@@ -77,6 +85,8 @@ from .pipelines import (
     compute_split_condensed_hks,
     compute_split_condensed_spectral,
     condensed_hks_pipeline,
+    condensed_spectral_column_names,
+    domain_property_names,
     hks_column_names,
 )
 from .simplify import simplify_mesh, simplify_to_density
@@ -145,6 +155,13 @@ __all__ = [
     "compute_hks",
     "compute_split_condensed_hks",
     "compute_split_condensed_spectral",
+    "condensed_node_property_names",
+    "condensed_spectral_column_names",
+    "domain_property_names",
+    "CONDENSED_COMPONENT_PROPERTIES",
+    "CONDENSED_NODE_PROPERTIES",
+    "CondensedSpectralResult",
+    "DOMAIN_PROPERTY_PREFIX",
     "compute_vertex_areas",
     "concatenate_filters",
     "condense_features",

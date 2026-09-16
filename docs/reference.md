@@ -6,6 +6,8 @@ title: API Reference
 
 ::: meshmash.pipelines.condensed_hks
 
+::: meshmash.pipelines.condensed_spectral
+
 ::: meshmash.pipelines.morphometry
 
 ::: meshmash.decompose

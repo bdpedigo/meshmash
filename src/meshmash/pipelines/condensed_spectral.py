@@ -26,23 +26,117 @@ the domains are, which is what makes a run with the extra families comparable
 to a run without them.  The other two families could not cut anyway: Ward runs
 on the log, and ``normal_`` fractions reaching zero and the signed
 ``curvature_mean_`` and ``curvature_k`` columns have no log.
+
+**One key, one table.**  The condensed graph's node properties — the centroid,
+the area, the vertex count — are keyed on the domain, which is the key the
+spectral features already carry.  So they are a fourth column block of the same
+frame, under the ``domain_`` prefix, rather than a second frame a reader has to
+join back on a key it already has.  The edge table is the one thing that does
+not fold in: a domain pair is a different thing from a domain.
 """
 
 import time
-from typing import Optional
+from typing import NamedTuple, Optional
 
 import numpy as np
 import pandas as pd
+from threadpoolctl import threadpool_limits
 
 from ..agglomerate import condense_features, fix_split_labels_and_features
 from ..curvature import compute_diffused_curvature, diffused_curvature_feature_names
 from ..decompose import get_hks_filter
+from ..graph import condense_mesh_to_graph, condensed_node_property_names
 from ..split import MeshStitcher
 
 #: How many timescales the curvature and tensor channels are diffused at, when
 #: the caller does not say.  Eight against the HKS's thirty-two: each of these
 #: scales carries ten columns where an HKS scale carries one.
 DEFAULT_N_SCALES = 8
+
+#: What the condensed graph's node properties are called once they sit in the
+#: same frame as the spectral features.  The three spectral blocks are already
+#: named for what they are, and the node properties were not named at all, so
+#: they take a prefix here rather than arriving as bare ``x``, ``area``, and so
+#: on next to ``hks_0``.
+DOMAIN_PROPERTY_PREFIX = "domain_"
+
+
+class CondensedSpectralResult(NamedTuple):
+    """What
+    [compute_split_condensed_spectral][meshmash.pipelines.condensed_spectral.compute_split_condensed_spectral]
+    returns.
+
+    Three grains, so three members rather than one frame: per domain, per
+    domain pair, and per vertex.  The stitcher is the object that produced
+    them.
+    """
+
+    #: One row per domain, keyed on the domain label.  Carries the ``hks_``,
+    #: ``curvature_``, ``normal_``, and ``domain_`` blocks side by side.
+    condensed_features: pd.DataFrame
+    #: One row per adjacent domain pair, with ``source``, ``target``,
+    #: ``boundary_length``, ``count``, and ``edge_length``.
+    condensed_edges: pd.DataFrame
+    #: Per-vertex domain label array of length ``V``.
+    labels: np.ndarray
+    #: The fitted [MeshStitcher][meshmash.split.MeshStitcher].
+    stitcher: MeshStitcher
+
+
+def domain_property_names(add_component_features: bool = True) -> list[str]:
+    """The ``domain_`` columns of a condensed spectral table, in order.
+
+    The condensed graph's node properties under
+    [DOMAIN_PROPERTY_PREFIX][meshmash.pipelines.condensed_spectral.DOMAIN_PROPERTY_PREFIX].
+    Derived from
+    [condensed_node_property_names][meshmash.graph.condensed_node_property_names]
+    rather than rebuilt, so the two cannot drift apart.
+
+    Parameters
+    ----------
+    add_component_features :
+        Whether the component columns are included, matching the argument of
+        the same name on
+        [condense_mesh_to_graph][meshmash.graph.condense_mesh_to_graph].
+
+    Returns
+    -------
+    :
+        ``["domain_x", "domain_y", "domain_z", ...]``.
+    """
+    return [
+        DOMAIN_PROPERTY_PREFIX + name
+        for name in condensed_node_property_names(add_component_features)
+    ]
+
+
+def condensed_spectral_column_names(n_components: int, n_scales: int) -> list[str]:
+    """Every column of a condensed spectral table, in order.
+
+    The four blocks a caller declaring a schema has to know about: the three
+    spectral families from
+    [diffused_curvature_feature_names][meshmash.curvature.diffused_curvature_feature_names],
+    then the condensed graph's node properties from
+    [domain_property_names][meshmash.pipelines.condensed_spectral.domain_property_names].
+    The column set depends on the parameters, which is why this is a function
+    of them rather than a constant.
+
+    Parameters
+    ----------
+    n_components :
+        Number of HKS timescales.
+    n_scales :
+        Number of diffusion timescales.
+
+    Returns
+    -------
+    :
+        Column names, of length ``n_components + 6 + n_scales * 10 + 7``.
+    """
+    return (
+        diffused_curvature_feature_names(n_scales, n_diagonal=n_components)
+        + domain_property_names()
+    )
 
 
 def hks_column_names(n_components: int) -> list[str]:
@@ -81,6 +175,7 @@ def compute_condensed_spectral(
     compute_diffused_curvature_kwargs: dict = {},
     distance_threshold: float = 3.0,
     seed: Optional[int] = None,
+    blas_threads: Optional[int] = 1,
 ) -> tuple[pd.DataFrame, np.ndarray]:
     """Featurize and condense a single (unsplit) mesh, three families at once.
 
@@ -89,6 +184,12 @@ def compute_condensed_spectral(
     a lightweight helper that
     [compute_split_condensed_spectral][meshmash.pipelines.condensed_spectral.compute_split_condensed_spectral]
     runs on each chunk.  For a large mesh, use that instead.
+
+    No ``domain_`` block comes out of here, unlike the chunked function that
+    calls it.  Its domains are chunk-local and its chunks overlap, so an area
+    or a vertex count measured on one chunk counts the overlap region again on
+    the next.  Those properties are only well defined once the labels are one
+    global numbering over the whole mesh.
 
     Parameters
     ----------
@@ -129,6 +230,15 @@ def compute_condensed_spectral(
         domain count moves too.  An integer makes the whole pipeline
         reproducible.  Every chunk is seeded alike, which is harmless: the
         starting vector only has to overlap the wanted subspace.
+    blas_threads :
+        BLAS thread count for the linear algebra, fixed rather than inherited.
+        The reduction order depends on it, which moves the features in their
+        last float32 bit, and Ward flips a near-tie on that: measured on a
+        jittered sphere the domain count ranges over 527 to 563 purely with
+        worker count, because joblib gives its workers a different thread count
+        than an in-process call. Any fixed value is reproducible, so this is
+        ``1`` rather than tuned. ``None`` inherits the ambient count and gives
+        up reproducibility across worker counts.
 
     Returns
     -------
@@ -142,28 +252,36 @@ def compute_condensed_spectral(
     labels :
         Per-vertex domain label array of length ``V``.
     """
-    features = compute_diffused_curvature(
-        mesh,
-        np.geomspace(t_min, t_max, n_scales),
-        diagonal_filter=get_hks_filter(
-            t_max, t_min, n_components, dtype=decomposition_dtype
-        ),
-        max_eigenvalue=max_eigenvalue,
-        truncate_extra=truncate_extra,
-        drop_first=drop_first,
-        robust=robust,
-        mollify_factor=mollify_factor,
-        decomposition_dtype=decomposition_dtype,
-        seed=seed,
-        **compute_diffused_curvature_kwargs,
-    )
+    # The linear algebra below sums in an order that depends on how many BLAS
+    # threads it gets, which changes the features in their last float32 bit.
+    # Ward is greedy, so a near-tie flips and the domains move: measured on a
+    # jittered sphere, the domain count ranges over 527 to 563 across worker
+    # counts, because joblib gives its workers a different thread count than an
+    # in-process call. Fixing the thread count makes the whole pipeline
+    # reproducible whatever `n_jobs` is. See TASK-12.
+    with threadpool_limits(limits=blas_threads):
+        features = compute_diffused_curvature(
+            mesh,
+            np.geomspace(t_min, t_max, n_scales),
+            diagonal_filter=get_hks_filter(
+                t_max, t_min, n_components, dtype=decomposition_dtype
+            ),
+            max_eigenvalue=max_eigenvalue,
+            truncate_extra=truncate_extra,
+            drop_first=drop_first,
+            robust=robust,
+            mollify_factor=mollify_factor,
+            decomposition_dtype=decomposition_dtype,
+            seed=seed,
+            **compute_diffused_curvature_kwargs,
+        )
 
-    return condense_features(
-        mesh,
-        features,
-        distance_threshold=distance_threshold,
-        cluster_features=features[hks_column_names(n_components)],
-    )
+        return condense_features(
+            mesh,
+            features,
+            distance_threshold=distance_threshold,
+            cluster_features=features[hks_column_names(n_components)],
+        )
 
 
 def compute_split_condensed_spectral(
@@ -188,7 +306,8 @@ def compute_split_condensed_spectral(
     n_jobs: Optional[int] = -1,
     verbose: bool = False,
     seed: Optional[int] = None,
-) -> tuple[pd.DataFrame, np.ndarray, MeshStitcher]:
+    blas_threads: Optional[int] = 1,
+) -> CondensedSpectralResult:
     """Split a mesh into chunks and condense all three families on each chunk.
 
     The chunked middle of the composite path, shaped like
@@ -266,24 +385,42 @@ def compute_split_condensed_spectral(
         domain count moves too.  An integer makes the whole pipeline
         reproducible.  Every chunk is seeded alike, which is harmless: the
         starting vector only has to overlap the wanted subspace.
+    blas_threads :
+        BLAS thread count for the linear algebra, fixed rather than inherited.
+        The reduction order depends on it, which moves the features in their
+        last float32 bit, and Ward flips a near-tie on that: measured on a
+        jittered sphere the domain count ranges over 527 to 563 purely with
+        worker count, because joblib gives its workers a different thread count
+        than an in-process call. Any fixed value is reproducible, so this is
+        ``1`` rather than tuned. ``None`` inherits the ambient count and gives
+        up reproducibility across worker counts.
 
     Returns
     -------
-    condensed_features :
-        Per-domain features indexed by global domain label, including a row
-        for the null label ``-1`` whose values are all NaN.  The ``hks_``
-        columns are the *log* of the area-weighted mean, matching what
+    :
+        A
+        [CondensedSpectralResult][meshmash.pipelines.condensed_spectral.CondensedSpectralResult]
+        of ``condensed_features``, ``condensed_edges``, ``labels``, and
+        ``stitcher``.
+
+        ``condensed_features`` is indexed by global domain label and includes
+        a row for the null label ``-1``, whose values are all NaN.  The
+        ``hks_`` columns are the *log* of the area-weighted mean, matching
+        what
         [compute_split_condensed_hks][meshmash.pipelines.condensed_hks.compute_split_condensed_hks]
         emits, so a model fit on that output reads these columns unchanged.
         The ``curvature_`` and ``normal_`` columns are the area-weighted mean
         itself.  They are not logged and cannot be: the ``normal_`` fractions
         reach zero and the ``curvature_mean_`` and ``curvature_k`` columns are
-        signed.
-    labels :
-        Per-vertex domain label array of length ``V``.  ``-1`` for a vertex in
-        no domain.
-    stitcher :
-        The fitted [MeshStitcher][meshmash.split.MeshStitcher].
+        signed.  The ``domain_`` columns are the condensed graph's node
+        properties, which are sums and centroids rather than means.
+
+        ``condensed_edges`` is one row per adjacent domain pair.  It stays a
+        separate table because a pair is a different thing from a domain, so
+        it has a different key and a different row count.
+
+        ``labels`` is a per-vertex array of length ``V``, ``-1`` for a vertex
+        in no domain.
     """
     stitcher = MeshStitcher(mesh, n_jobs=n_jobs, verbose=verbose)
     stitcher.split_mesh(
@@ -315,6 +452,7 @@ def compute_split_condensed_spectral(
         compute_diffused_curvature_kwargs=compute_diffused_curvature_kwargs,
         distance_threshold=distance_threshold,
         seed=seed,
+        blas_threads=blas_threads,
         stitch=False,
     )
 
@@ -338,4 +476,25 @@ def compute_split_condensed_spectral(
     with np.errstate(divide="ignore"):
         condensed[hks_columns] = np.log(condensed[hks_columns])
 
-    return condensed, agg_labels, stitcher
+    if verbose:
+        print("Condensing the mesh to a domain graph...")
+    currtime = time.time()
+
+    # `stitcher.mesh`, not `mesh`: the argument may be anything
+    # `interpret_mesh` accepts, and the labels index the interpreted arrays.
+    condensed_nodes, condensed_edges = condense_mesh_to_graph(
+        stitcher.mesh, agg_labels, add_component_features=True
+    )
+
+    if verbose:
+        print(f"Condensing took {time.time() - currtime:.3f} seconds.")
+
+    # The node table has no row for the null label and the feature table does,
+    # so reindexing onto the feature index is what fills that row with NaN and
+    # keeps the two blocks in one order.
+    condensed_nodes = condensed_nodes.rename(
+        columns=lambda name: DOMAIN_PROPERTY_PREFIX + name
+    )[domain_property_names()]
+    condensed = condensed.join(condensed_nodes.reindex(condensed.index))
+
+    return CondensedSpectralResult(condensed, condensed_edges, agg_labels, stitcher)
