@@ -67,20 +67,31 @@ def component_morphometry_pipeline(
         elongated / weakly connected component).  ``None`` disables
         splitting.
     split_min_size :
-        Minimum number of vertices each split sub-component must have for\n        the split to be accepted.
+        Minimum number of vertices each split sub-component must have for
+        the split to be accepted.
     bound_volume_threshold :
-        If set, skip components whose axis-aligned bounding-box volume\n        exceeds this value (in μm³).
+        If set, skip components whose axis-aligned bounding-box volume
+        exceeds this value (in μm³).
     verbose :
         If ``True``, display a progress bar.
 
     Returns
     -------
     results :
-        DataFrame indexed by ``component_id`` with morphometric columns:
-        ``size_nm3``, ``area_nm2``, ``sphericity``, ``x``, ``y``, ``z``\n        (medoid), ``pca_val_1/2/3``, ``max_dt_nm``, ``mean_dt_nm``,
-        ``n_vertices``, ``n_faces``, and optionally ``n_post_synapses``.
+        One row per measured component, indexed by ``component_id``.  Columns
+        are ``size_nm3``, ``area_nm2``, ``sphericity``, ``x``, ``y``, ``z``
+        (the medoid), ``pca_val_1``, ``pca_val_2``, ``pca_val_3``,
+        ``max_dt_nm``, ``mean_dt_nm``, ``n_vertices``, ``n_faces``,
+        ``n_interior_samples``, ``n_sampled_points``, ``bound_volume_um3``,
+        and ``time`` (seconds spent on the component).  ``n_post_synapses`` is
+        present only when ``post_synapse_mappings`` is given, and counts the
+        synapses mapping to each component.  Rows carrying any missing value
+        are dropped, so a component measured only in part does not appear.
+        Empty if no component qualified.
     corrected_components :
-        Per-vertex component label array (same length as ``labels``),\n        updated to reflect any splits.  Vertices not in a valid measured\n        component receive label ``-1``.
+        Per-vertex ``int32`` component label array of length ``V``, updated to
+        reflect any splits.  A vertex in no measured component carries ``-1``,
+        including a vertex whose component was dropped from ``results``.
     """
     # TODO would like to generalize this
 
