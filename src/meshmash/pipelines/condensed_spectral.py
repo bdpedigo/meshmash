@@ -679,7 +679,7 @@ def condensed_spectral_pipeline(
         reason
         [compute_split_condensed_spectral][meshmash.pipelines.condensed_spectral.compute_split_condensed_spectral]
         records.  An integer is sufficient for a reproducible run: the
-        simplifier takes no seed but is deterministic, per the note above.
+        simplifier takes no seed and is deterministic on its own.
     blas_threads :
         BLAS thread count for the linear algebra, fixed rather than
         inherited.  ``None`` inherits the ambient count and gives up
