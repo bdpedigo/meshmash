@@ -568,11 +568,13 @@ def test_the_domain_block_is_measured_on_the_input_mesh(mesh, pipelined):
     real = features.index[features.index != -1]
 
     labels, counts = np.unique(pipelined.labels, return_counts=True)
-    expected = pd.Series(counts, index=labels).drop(-1)
+    # Reindexed rather than `.drop(-1)`: on a mesh whose components all clear
+    # the threshold there is no unlabeled vertex, so there is no -1 to drop.
+    expected = pd.Series(counts, index=labels).reindex(real)
 
     np.testing.assert_array_equal(
         features.loc[real, "domain_n_vertices"].to_numpy(),
-        expected.loc[real].to_numpy(),
+        expected.to_numpy(),
     )
     assert (
         features.loc[real, "domain_n_vertices"].sum() == (pipelined.labels != -1).sum()
@@ -598,10 +600,22 @@ def test_the_pipeline_keeps_the_column_contract(pipelined):
     ]
 
 
-def test_the_pipeline_is_reproducible_at_a_fixed_seed(mesh):
-    """Conditioning adds no nondeterminism of its own."""
-    first = condensed_spectral_pipeline(mesh, **PIPELINE_KWARGS)
-    second = condensed_spectral_pipeline(mesh, **PIPELINE_KWARGS)
+def test_the_pipeline_adds_no_nondeterminism_of_its_own(mesh):
+    """Everything the wrapper does itself is reproducible at a fixed seed.
+
+    Simplification is switched off here, and it is the one step that is not:
+    `fast_simplification.simplify` returns a different collapse list on every
+    call, so `simplify_to_density` lands on a slightly different mesh each
+    time and the domain count moves with it. That is a property of the
+    simplifier, not of this wrapper, and `condensed_hks_pipeline` carries it
+    too. Thresholding, label expansion and the recomputed `domain_` block are
+    what is under test.
+    """
+    kwargs = dict(
+        PIPELINE_KWARGS, simplify_target_density=None, simplify_target_reduction=None
+    )
+    first = condensed_spectral_pipeline(mesh, **kwargs)
+    second = condensed_spectral_pipeline(mesh, **kwargs)
 
     np.testing.assert_array_equal(first.labels, second.labels)
     np.testing.assert_array_equal(first.mapping, second.mapping)

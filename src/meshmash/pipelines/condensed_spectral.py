@@ -611,6 +611,15 @@ def condensed_spectral_pipeline(
     under the expanded labels, not on the simplified mesh the features came
     from.
 
+    A fixed ``seed`` does not make this function reproducible, unlike
+    [compute_split_condensed_spectral][meshmash.pipelines.condensed_spectral.compute_split_condensed_spectral].
+    ``fast_simplification.simplify`` returns a different collapse list on
+    every call, so the simplified mesh differs between runs and the domain
+    count moves with it.  Switch simplification off, or simplify once and
+    call
+    [compute_split_condensed_spectral][meshmash.pipelines.condensed_spectral.compute_split_condensed_spectral]
+    on the result, to get a reproducible run.
+
     Parameters
     ----------
     mesh :
@@ -677,7 +686,8 @@ def condensed_spectral_pipeline(
         eigendecomposition.  ``None`` gives up reproducibility, for the
         reason
         [compute_split_condensed_spectral][meshmash.pipelines.condensed_spectral.compute_split_condensed_spectral]
-        records.
+        records.  An integer is necessary for a reproducible run but not
+        sufficient, per the note above: the simplifier is not seeded.
     blas_threads :
         BLAS thread count for the linear algebra, fixed rather than
         inherited.  ``None`` inherits the ambient count and gives up
