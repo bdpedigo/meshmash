@@ -600,23 +600,21 @@ def test_the_pipeline_keeps_the_column_contract(pipelined):
     ]
 
 
-def test_the_pipeline_adds_no_nondeterminism_of_its_own(mesh):
-    """Everything the wrapper does itself is reproducible at a fixed seed.
+def test_the_pipeline_is_reproducible_at_a_fixed_seed(mesh):
+    """Simplification included, at a fixed seed, two runs agree byte for byte.
 
-    Simplification is switched off here, and it is the one step that is not:
-    `fast_simplification.simplify` returns a different collapse list on every
-    call, so `simplify_to_density` lands on a slightly different mesh each
-    time and the domain count moves with it. That is a property of the
-    simplifier, not of this wrapper, and `condensed_hks_pipeline` carries it
-    too. Thresholding, label expansion and the recomputed `domain_` block are
-    what is under test.
+    Simplification used to be the one step that was not reproducible.
+    `fast-simplification` below 0.1.9 let its decimator read state a previous
+    call had left behind, so the simplified mesh moved between runs and the
+    domain count moved with it. The floor in pyproject.toml is what lets this
+    test leave simplification on; `tests/test_simplify.py` guards the
+    simplifier itself from a cold process, which is where the old bug showed.
+    See TASK-15.
     """
-    kwargs = dict(
-        PIPELINE_KWARGS, simplify_target_density=None, simplify_target_reduction=None
-    )
-    first = condensed_spectral_pipeline(mesh, **kwargs)
-    second = condensed_spectral_pipeline(mesh, **kwargs)
+    first = condensed_spectral_pipeline(mesh, **PIPELINE_KWARGS)
+    second = condensed_spectral_pipeline(mesh, **PIPELINE_KWARGS)
 
+    np.testing.assert_array_equal(first.simple_mesh[0], second.simple_mesh[0])
     np.testing.assert_array_equal(first.labels, second.labels)
     np.testing.assert_array_equal(first.mapping, second.mapping)
     pd.testing.assert_frame_equal(first.condensed_features, second.condensed_features)

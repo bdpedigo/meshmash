@@ -4,7 +4,9 @@ dependencies = [
     "chardet>=3.0.4,<6",
     "click==8.2.1",
     "embreex>=4.0",
-    "fast-simplification>=0.1.7",
+    # 0.1.9 is the first release whose decimator does not read stale state
+    # from a previous call, so anything older is nondeterministic
+    "fast-simplification>=0.1.9",
     "fastremap>=1.16.1",
     "gpytoolbox>=0.3.3",
     "meshio>=5.0",

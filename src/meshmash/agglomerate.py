@@ -310,9 +310,7 @@ def canonicalize_labels(
     labels[valid_mask] = lookup[labels[valid_mask]]
 
     features = features.loc[[-1, *order]]
-    features.index = pd.Index(
-        [-1, *range(len(order))], name=features.index.name
-    )
+    features.index = pd.Index([-1, *range(len(order))], name=features.index.name)
     return labels, features
 
 
