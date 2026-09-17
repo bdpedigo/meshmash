@@ -250,8 +250,13 @@ def fix_split_labels_and_features(
         else:
             continue
 
-    empty_data = pd.DataFrame(columns=data.columns, index=[-1])
-    new_data = pd.concat([empty_data] + new_data)
+    if new_data:
+        new_data = pd.concat(new_data)
+    else:
+        new_data = pd.DataFrame(columns=features_by_submesh[0].columns)
+    # add the null-label (-1) row via reindex rather than concat, so pandas
+    # does not have to resolve dtypes across an all-NA entry (avoids FutureWarning)
+    new_data = new_data.reindex(new_data.index.append(pd.Index([-1])))
 
     agg_labels, new_data = canonicalize_labels(agg_labels, new_data)
 
