@@ -52,7 +52,7 @@ def mesh_to_edges(mesh: Mesh) -> np.ndarray:
         Array of edge vertex index pairs, shape ``(E, 2)``.
     """
     poly = mesh_to_poly(mesh)
-    edge_data = poly.extract_all_edges(use_all_points=True, clear_data=True)
+    edge_data = poly.extract_all_edges(clear_data=True)
     lines = edge_data.lines
     edges = lines.reshape(-1, 3)[:, 1:]
     return edges
@@ -117,7 +117,7 @@ def mesh_to_adjacency(mesh: Mesh) -> csr_array:
     # TODO only use here because this is faster than numpy unique for unique extracting
     # edges, should be some other way to do this
     poly = mesh_to_poly(mesh)
-    edge_data = poly.extract_all_edges(use_all_points=True, clear_data=True)
+    edge_data = poly.extract_all_edges(clear_data=True)
     lines = edge_data.lines
     edges = lines.reshape(-1, 3)[:, 1:]
     vertices = poly.points
