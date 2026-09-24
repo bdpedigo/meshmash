@@ -12,7 +12,10 @@ integrated quantity per vertex, in the finite-element sense, with the vertex
 area folded in.  That is what makes them diffusible.  Dividing a measure by the
 vertex area recovers the pointwise field, and
 [compute_diffused_curvature][meshmash.curvature.compute_diffused_curvature] does
-exactly that on the way into the filter.
+exactly that on the way into the filter.  The vertex area it divides by is the
+diagonal of the robust mass matrix, which is what
+[compute_vertex_areas][meshmash.laplacian.compute_vertex_areas] returns by
+default.
 
 Everything this module computes at several scales comes back as one flat
 ``(V, F)`` table of named columns, the same shape
@@ -146,6 +149,11 @@ def mean_curvature_measure(
     area.  Projecting it onto the unit normal and halving gives the signed
     measure, so dividing by the vertex area gives mean curvature itself.
 
+    Divide by the diagonal of the ``M`` that came with ``L``, which is
+    ``compute_vertex_areas(mesh, robust=robust)``.  The two areas agree on a
+    clean mesh and not on a real one: on ``microns_dendrite_sample``, about one
+    interior vertex in fifty differs by more than a factor of three.
+
     The normals are flipped as a group when the median of their agreement with
     the mean-curvature direction comes out negative.  The winding of a mesh
     nobody has oriented is arbitrary, but the mean-curvature direction is not,
@@ -247,6 +255,12 @@ def gaussian_curvature_measure(mesh: Mesh, mask_boundary: bool = True) -> np.nda
     of Gaussian curvature over that vertex's cell, with no discretisation
     choice left open, so dividing by the vertex area gives Gaussian curvature.
 
+    The angle defect uses no operator, so which vertex area is the caller's
+    choice.  [compute_diffused_curvature][meshmash.curvature.compute_diffused_curvature]
+    divides by the robust one, which
+    [compute_vertex_areas][meshmash.laplacian.compute_vertex_areas] returns by
+    default.
+
     Parameters
     ----------
     mesh :
@@ -307,7 +321,8 @@ def normal_tensor_measure(
         when ``None``.  Normalised here either way.
     areas :
         Pre-computed vertex areas, shape ``(V,)``, as the diagonal of the mass
-        matrix.  Computed from the mesh when ``None``.
+        matrix.  Computed from the mesh when ``None``, with ``robust``.  Divide
+        the measure by these same areas to recover the pointwise tensor.
     mask_boundary :
         If ``True``, zero the measure at vertices on an open boundary.
     robust :
