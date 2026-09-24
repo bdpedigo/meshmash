@@ -192,6 +192,13 @@ def test_the_pipeline_returns_one_named_table_per_domain(mesh, condensed):
     assert features.loc[-1].isna().all()
 
 
+def test_the_labels_are_int32(sphere, sphere_features, condensed):
+    hks_block = sphere_features[hks_column_names(N_COMPONENTS)]
+    _, labels = condense_features(sphere, hks_block)
+    assert labels.dtype == np.int32
+    assert condensed.labels.dtype == np.int32
+
+
 def test_every_domain_has_finite_features(condensed):
     """A domain no chunk could featurize would be NaN across the board."""
     features = condensed.condensed_features.drop(index=-1)

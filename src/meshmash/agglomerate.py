@@ -1,10 +1,9 @@
 import logging
 import warnings
-from typing import Optional, Union
 
 import numpy as np
 import pandas as pd
-import scipy.sparse as sparse
+from scipy import sparse
 from sklearn.cluster import ward_tree
 
 # TODO dangerous to import private function here
@@ -18,8 +17,8 @@ from .utils import mesh_to_adjacency, subset_mesh_by_indices
 
 def multicut_ward(
     X: ArrayLike,
-    connectivity: Optional[sparse.sparray] = None,
-    distance_thresholds: Optional[list[float]] = None,
+    connectivity: sparse.sparray | None = None,
+    distance_thresholds: list[float] | None = None,
 ) -> np.ndarray:
     """Compute Ward cluster labels at multiple distance thresholds.
 
@@ -84,7 +83,7 @@ def agglomerate_mesh(mesh, features, distance_thresholds=None) -> np.ndarray:
     Returns
     -------
     :
-        Integer label array of shape ``(V, T)`` where ``T`` is the
+        ``int32`` label array of shape ``(V, T)`` where ``T`` is the
         number of thresholds.  Vertices with non-finite features receive
         label ``-1``.  Returns ``None`` if no vertices have finite
         features or the sub-mesh has no faces.
@@ -94,7 +93,7 @@ def agglomerate_mesh(mesh, features, distance_thresholds=None) -> np.ndarray:
     if not (np.isfinite(features).all(axis=1)).any():
         return None
     elif len(distance_thresholds) == 1 and distance_thresholds[0] is None:
-        return np.arange(len(features)).reshape(-1, 1)
+        return np.arange(len(features), dtype=np.int32).reshape(-1, 1)
     else:
         features = features.copy()
         # features[mask] = 1000000
@@ -122,7 +121,7 @@ def agglomerate_mesh(mesh, features, distance_thresholds=None) -> np.ndarray:
                 distance_thresholds=distance_thresholds,
             )
         labels_by_distance_full = np.full(
-            (len(features), len(distance_thresholds)), -1, dtype=int
+            (len(features), len(distance_thresholds)), -1, dtype=np.int32
         )
         labels_by_distance_full[mask] = labels_by_distance
         return labels_by_distance_full
@@ -322,7 +321,7 @@ def canonicalize_labels(
 def agglomerate_split_mesh(
     splitter: MeshStitcher,
     features: np.ndarray,
-    distance_thresholds: Union[list, int, float],
+    distance_thresholds: list | float,
 ) -> np.ndarray:
     """Apply Ward clustering across submeshes and return globally unique labels.
 
@@ -344,7 +343,7 @@ def agglomerate_split_mesh(
     Returns
     -------
     :
-        Integer label array of shape ``(V,)`` if a single threshold was
+        ``int32`` label array of shape ``(V,)`` if a single threshold was
         given, or ``(V, T)`` for a list of ``T`` thresholds.  Unassigned
         vertices have label ``-1``.
     """
@@ -360,7 +359,7 @@ def agglomerate_split_mesh(
         # add_label_column=True,
         fill_value=-1,
     )
-    agg_labels = agg_labels.astype(int)
+    agg_labels = agg_labels.astype(np.int32)
     agg_labels = fix_split_labels(agg_labels, splitter.submesh_mapping)
 
     if was_single:
@@ -371,9 +370,9 @@ def agglomerate_split_mesh(
 
 def condense_features(
     mesh,
-    features: Union[np.ndarray, pd.DataFrame],
+    features: np.ndarray | pd.DataFrame,
     distance_threshold: float = 3.0,
-    cluster_features: Optional[Union[np.ndarray, pd.DataFrame]] = None,
+    cluster_features: np.ndarray | pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, np.ndarray]:
     """Agglomerate a mesh on its per-vertex features and aggregate them per domain.
 
@@ -462,9 +461,9 @@ def condense_features(
 # TODO there's a working but probably fragile ref to dataframegroupby here
 # i think pandas docs are messed up at time of writing
 def aggregate_features(
-    features: Union[np.ndarray, pd.DataFrame],
-    labels: Optional[np.ndarray] = None,
-    weights: Optional[np.ndarray] = None,
+    features: np.ndarray | pd.DataFrame,
+    labels: np.ndarray | None = None,
+    weights: np.ndarray | None = None,
     func: str = "mean",
 ) -> pd.DataFrame:
     """Aggregate per-vertex features to per-label summaries.

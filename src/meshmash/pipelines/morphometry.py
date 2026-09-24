@@ -85,7 +85,7 @@ def component_morphometry_pipeline(
         ``n_interior_samples``, ``n_sampled_points``, ``bound_volume_um3``,
         and ``time`` (seconds spent on the component).  ``n_post_synapses`` is
         present only when ``post_synapse_mappings`` is given, and counts the
-        synapses mapping to each component.  Rows carrying any missing value
+        synapses mapping to each component as ``int32``.  Rows carrying any missing value
         are dropped, so a component measured only in part does not appear.
         Empty if no component qualified.
     corrected_components :
@@ -313,7 +313,7 @@ def component_morphometry_pipeline(
 
     if post_synapse_mappings is not None:
         post_synapse_components = corrected_components[post_synapse_mappings]
-        results["n_post_synapses"] = np.zeros(len(results), dtype=np.uint16)
+        results["n_post_synapses"] = np.zeros(len(results), dtype=np.int32)
         for component in post_synapse_components:
             if component != -1 and component in results.index:
                 results.loc[component, "n_post_synapses"] += 1

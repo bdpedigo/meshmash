@@ -20,6 +20,11 @@ def test_condensed_hks_pipeline_labels_length(pipeline_result):
     assert len(pipeline_result.simple_labels) == n_simple
 
 
+def test_condensed_hks_pipeline_labels_are_int32(pipeline_result):
+    assert pipeline_result.simple_labels.dtype == np.int32
+    assert pipeline_result.labels.dtype == np.int32
+
+
 def test_pipeline_rejects_both_simplify_targets(mesh):
     with pytest.raises(ValueError):
         condensed_hks_pipeline(
