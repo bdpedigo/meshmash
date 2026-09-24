@@ -15,6 +15,7 @@ from meshmash import (
     get_hks_filter,
     spectral_geometry_filter,
 )
+from meshmash.decompose import filter_width
 from meshmash.laplacian import cotangent_laplacian
 from meshmash.utils import poly_to_mesh
 
@@ -74,6 +75,12 @@ def test_concatenate_filters_skips_none():
     )
     with pytest.raises(ValueError, match="at least one filter"):
         concatenate_filters(None, None)
+
+
+def test_filter_width_counts_the_output_rows():
+    assert filter_width(get_hks_filter(T_MAX, T_MIN, 8)) == 8
+    bank = concatenate_filters(get_heat_filter([1e4, 1e5]), get_heat_filter([1e6]))
+    assert filter_width(bank) == 3
 
 
 def test_signal_filter_matches_a_dense_heat_kernel(jittered_sphere):

@@ -30,11 +30,17 @@ from typing import Callable, Optional, Union
 
 import numpy as np
 import pandas as pd
+from gpytoolbox import angle_defect
 from point_cloud_utils import estimate_mesh_vertex_normals
-from scipy.sparse import dia_array, sparray
+from scipy.sparse import csc_array, dia_array
 
-from .decompose import concatenate_filters, get_heat_filter, spectral_geometry_filter
-from .laplacian import cotangent_laplacian
+from .decompose import (
+    concatenate_filters,
+    filter_width,
+    get_heat_filter,
+    spectral_geometry_filter,
+)
+from .laplacian import compute_vertex_areas, cotangent_laplacian
 from .types import ArrayLike, Mesh, interpret_mesh
 from .utils import boundary_vertices
 
@@ -99,10 +105,10 @@ def vertex_normals(mesh: Mesh) -> np.ndarray:
 
 def _resolve_laplacian(
     mesh: Mesh,
-    laplacian: Optional[tuple[sparray, sparray]],
+    laplacian: Optional[tuple[csc_array, dia_array]],
     robust: bool,
     mollify_factor: float,
-) -> tuple[sparray, dia_array]:
+) -> tuple[csc_array, dia_array]:
     """Reuse a caller's operator, or build one from the mesh."""
     if laplacian is not None:
         return laplacian
@@ -136,7 +142,7 @@ def _mask(measures: np.ndarray, mesh: Mesh, mask_boundary: bool) -> np.ndarray:
 
 def mean_curvature_measure(
     mesh: Mesh,
-    laplacian: Optional[tuple[sparray, sparray]] = None,
+    laplacian: Optional[tuple[csc_array, dia_array]] = None,
     normals: Optional[np.ndarray] = None,
     mask_boundary: bool = True,
     robust: bool = True,
@@ -276,8 +282,6 @@ def gaussian_curvature_measure(mesh: Mesh, mask_boundary: bool = True) -> np.nda
     :
         Gaussian-curvature measure of shape ``(V,)``.
     """
-    from gpytoolbox import angle_defect
-
     vertices, faces = interpret_mesh(mesh)
     vertices = np.asarray(vertices, dtype=np.float64)
     faces = np.asarray(faces)
@@ -322,14 +326,18 @@ def normal_tensor_measure(
     areas :
         Pre-computed vertex areas, shape ``(V,)``, as the diagonal of the mass
         matrix.  Computed from the mesh when ``None``, with ``robust``.  Divide
-        the measure by these same areas to recover the pointwise tensor.
+        the measure by these same areas to recover the pointwise tensor.  This
+        measure reads no stiffness matrix, so it takes the areas rather than
+        the ``(L, M)`` pair that
+        [mean_curvature_measure][meshmash.curvature.mean_curvature_measure]
+        takes.  A caller holding that pair passes ``M.diagonal()``.
     mask_boundary :
         If ``True``, zero the measure at vertices on an open boundary.
     robust :
-        Passed to [cotangent_laplacian][meshmash.laplacian.cotangent_laplacian]
+        Passed to [compute_vertex_areas][meshmash.laplacian.compute_vertex_areas]
         when computing areas.  Ignored when ``areas`` is given.
     mollify_factor :
-        Passed to [cotangent_laplacian][meshmash.laplacian.cotangent_laplacian]
+        Passed to [compute_vertex_areas][meshmash.laplacian.compute_vertex_areas]
         when computing areas.  Ignored when ``areas`` is given.
 
     Returns
@@ -348,10 +356,9 @@ def normal_tensor_measure(
         normals = vertex_normals((centered, faces))
     normals = np.asarray(normals, dtype=np.float64)
     if areas is None:
-        _, M = cotangent_laplacian(
+        areas = compute_vertex_areas(
             (centered, faces), robust=robust, mollify_factor=mollify_factor
         )
-        areas = np.asarray(M.diagonal(), dtype=np.float64)
     areas = np.asarray(areas, dtype=np.float64)
 
     lengths = np.linalg.norm(normals, axis=1)
@@ -361,7 +368,7 @@ def normal_tensor_measure(
         0.0,
     )
     tensor = np.column_stack([unit[:, i] * unit[:, j] for i, j in _TENSOR_PAIRS])
-    return _mask(areas[:, None] * tensor, (centered, faces), mask_boundary)
+    return _mask(areas[:, None] * tensor, (vertices, faces), mask_boundary)
 
 
 def curvature_invariants(mean: ArrayLike, gauss: ArrayLike) -> np.ndarray:
@@ -404,6 +411,10 @@ def curvature_invariants(mean: ArrayLike, gauss: ArrayLike) -> np.ndarray:
     The shape index is written with a two-argument arctangent so that an
     umbilic point, where the denominator is zero, gives the limit rather than
     a division by zero.  For a convex umbilic it returns ``+1``.
+
+    Rows that are not finite come back as ``NaN`` rather than raising, as in
+    [normal_tensor_invariants][meshmash.curvature.normal_tensor_invariants],
+    because a caller stitching chunks together has rows it never computed.
 
     References
     ----------
@@ -643,7 +654,8 @@ def compute_diffused_curvature(
     -------
     :
         One ``(V, F)`` table of named columns, with ``F`` equal to
-        ``n_diagonal + 6 + len(scales) * 10``.  The columns and their order
+        ``n_diagonal + 6 + len(scales) * 10``, every column in the dtype of the
+        decomposition.  The columns and their order
         are described by
         [diffused_curvature_feature_names][meshmash.curvature.diffused_curvature_feature_names].
         This is the flat shape [compute_hks][meshmash.decompose.compute_hks]
@@ -722,9 +734,7 @@ def compute_diffused_curvature(
     scales = np.asarray(scales, dtype=np.float64)
     heat_filter = get_heat_filter(scales, dtype=decomposition_dtype or np.float64)
     n_diagonal = (
-        len(scales)
-        if diagonal_filter is None
-        else np.asarray(diagonal_filter(np.array([1.0]))).shape[0]
+        len(scales) if diagonal_filter is None else filter_width(diagonal_filter)
     )
 
     diagonal, filtered = spectral_geometry_filter(
@@ -762,9 +772,10 @@ def compute_diffused_curvature(
         ],
         axis=1,
     )
-    # Concatenated block by block rather than through one hstack, so that a
-    # float32 diagonal is not widened to the float64 the invariants come back
-    # as.  The reshapes are the C-order flattening the column names assume.
+    # The invariants are computed in float64 because they cancel (H^2 - K, the
+    # tensor eigenvalue spread), but the diffused inputs carry no more than the
+    # decomposition's precision, so every block leaves in the diagonal's dtype.
+    # The reshapes are the C-order flattening the column names assume.
     n_vertices = len(vertices)
     frame = pd.concat(
         [
@@ -774,6 +785,6 @@ def compute_diffused_curvature(
             pd.DataFrame(normal_tensor.reshape(n_vertices, -1)),
         ],
         axis=1,
-    )
+    ).astype(diagonal.dtype)
     frame.columns = diffused_curvature_feature_names(len(scales), n_diagonal)
     return frame

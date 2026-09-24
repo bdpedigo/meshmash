@@ -514,10 +514,12 @@ def compute_split_condensed_spectral(
 
     # The node table has no row for the null label and the feature table does,
     # so reindexing onto the feature index is what fills that row with NaN and
-    # keeps the two blocks in one order.
+    # keeps the two blocks in one order.  The counts join as float32, which is
+    # exact to 2**24 vertices, so the frame stays one float32 matrix with a NaN
+    # row rather than mixing in a nullable integer column.
     condensed_nodes = condensed_nodes.rename(
         columns=lambda name: DOMAIN_PROPERTY_PREFIX + name
-    )[domain_property_names()]
+    )[domain_property_names()].astype(np.float32)
     condensed = condensed.join(condensed_nodes.reindex(condensed.index))
 
     return CondensedSpectralResult(condensed, condensed_edges, agg_labels, stitcher)
@@ -783,7 +785,7 @@ def condensed_spectral_pipeline(
     )
     condensed_nodes = condensed_nodes.rename(
         columns=lambda name: DOMAIN_PROPERTY_PREFIX + name
-    )[domain_property_names()]
+    )[domain_property_names()].astype(np.float32)
     condensed = result.condensed_features.drop(columns=domain_property_names())
     condensed = condensed.join(condensed_nodes.reindex(condensed.index))
 

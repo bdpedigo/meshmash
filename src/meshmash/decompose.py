@@ -413,6 +413,16 @@ def get_heat_filter(
     return heat_filter
 
 
+def filter_width(filter: Callable[[np.ndarray], np.ndarray]) -> int:
+    """The number of output rows ``F`` a spectral filter produces.
+
+    A filter maps a ``(K,)`` eigenvalue array to an ``(F, K)`` coefficient
+    array, and ``F`` does not depend on ``K``, so one probe eigenvalue is
+    enough.
+    """
+    return np.asarray(filter(np.array([1.0]))).shape[0]
+
+
 def concatenate_filters(
     *filters: Optional[Callable[[np.ndarray], np.ndarray]],
 ) -> Callable[[np.ndarray], np.ndarray]:
@@ -721,8 +731,7 @@ def spectral_geometry_filter(
     place_next = False
 
     if filter is not None:
-        # HACK: get the number of features for the filter
-        n_features = filter([1, 2, 3]).shape[0]
+        n_features = filter_width(filter)
         features = np.zeros((L.shape[0], n_features), dtype=decomposition_dtype)
     else:
         # will just store the eigenvectors themselves

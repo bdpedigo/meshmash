@@ -271,6 +271,13 @@ def test_normal_tensor_invariants_pass_non_finite_rows_through():
     assert np.isnan(invariants[1]).all()
 
 
+def test_curvature_invariants_pass_non_finite_rows_through():
+    """The same contract as the normal tensor, for the same caller."""
+    invariants = curvature_invariants([0.5, np.nan], [0.25, np.nan])
+    assert np.isfinite(invariants[0]).all()
+    assert np.isnan(invariants[1]).all()
+
+
 # --- the fused featurizer -------------------------------------------------
 
 

@@ -244,7 +244,7 @@ def fix_split_labels_and_features(
             sub_label_mapping = label_mapping_series.loc[submesh_index]
             data.index = data.index.map(sub_label_mapping)
             data.drop(data.index[data.index.isna()], inplace=True)
-            data.index = data.index.astype(int)
+            data.index = data.index.astype(np.int32)
             new_data.append(data)
         else:
             continue
@@ -255,7 +255,7 @@ def fix_split_labels_and_features(
         new_data = pd.DataFrame(columns=features_by_submesh[0].columns)
     # add the null-label (-1) row via reindex rather than concat, so pandas
     # does not have to resolve dtypes across an all-NA entry (avoids FutureWarning)
-    new_data = new_data.reindex(new_data.index.append(pd.Index([-1])))
+    new_data = new_data.reindex(new_data.index.append(pd.Index([-1], dtype=np.int32)))
 
     agg_labels, new_data = canonicalize_labels(agg_labels, new_data)
 
@@ -314,7 +314,9 @@ def canonicalize_labels(
     labels[valid_mask] = lookup[labels[valid_mask]]
 
     features = features.loc[[-1, *order]]
-    features.index = pd.Index([-1, *range(len(order))], name=features.index.name)
+    features.index = pd.Index(
+        [-1, *range(len(order))], dtype=np.int32, name=features.index.name
+    )
     return labels, features
 
 
@@ -468,11 +470,10 @@ def aggregate_features(
 ) -> pd.DataFrame:
     """Aggregate per-vertex features to per-label summaries.
 
-    Groups vertices by ``labels`` and applies ``func`` (or an
-    area-weighted mean when ``weights`` is provided) to produce one row
-    per unique label.  The result is reindexed to include every integer
-    from ``-1`` to ``labels.max()``, inserting ``NaN`` for any missing
-    labels.
+    Groups vertices by ``labels`` and takes the mean of each group, weighted by
+    ``weights`` when given, or applies another ``func``.  The result is
+    reindexed to include every integer from ``-1`` to ``labels.max()``,
+    inserting ``NaN`` for any missing labels.
 
     Parameters
     ----------
@@ -483,61 +484,65 @@ def aggregate_features(
         Integer label array of length ``V``.  ``-1`` is treated as the
         null label.  If ``None``, the features are returned unchanged.
     weights :
-        Per-vertex weight array of length ``V`` used for area-weighted
-        aggregation when ``func="mean"``.  ``None`` falls back to an
-        unweighted mean.
+        Per-vertex weight array of length ``V`` for ``func="mean"``.  ``None``
+        weights every vertex alike.  A group whose weights sum to zero falls
+        back to its unweighted mean.
     func :
-        Aggregation function name recognised by
-        [DataFrameGroupBy.agg][pandas.api.typing.DataFrameGroupBy.agg] (e.g. ``"mean"``,
-        ``"median"``).  Ignored when ``weights`` is provided.
+        ``"mean"``, or any other aggregation name recognised by
+        [DataFrameGroupBy.agg][pandas.api.typing.DataFrameGroupBy.agg] (e.g.
+        ``"median"``).  Only ``"mean"`` uses ``weights``.
 
     Returns
     -------
     :
-        DataFrame of shape ``(labels.max() + 2, F)`` indexed from
-        ``-1`` to ``labels.max()``, where each row contains the
-        aggregated features for that label.
+        DataFrame of shape ``(labels.max() + 2, F)`` indexed by an ``int32``
+        label from ``-1`` to ``labels.max()``, where each row contains the
+        aggregated features for that label.  A mean is accumulated in float64
+        and returned as float32 whatever the input dtypes, so a frame's result
+        does not depend on what else sits beside a column.  A mean over a
+        group holding a non-finite value is ``NaN``.  Other ``func`` values
+        keep the dtypes pandas gives them.
     """
     if not isinstance(features, pd.DataFrame):
         feature_df = pd.DataFrame(features)
     else:
-        feature_df = features.copy()
-    cols = feature_df.columns
+        feature_df = features
     if labels is None:
-        return feature_df
-    feature_df["label"] = labels
-    if func == "mean" and weights is not None:
-        feature_df["weight"] = weights
+        return feature_df.copy()
+    # agglomerate_mesh hands over a (V, 1) column for a single threshold.
+    labels = np.asarray(labels).reshape(len(feature_df))
+    index = pd.Index(np.arange(-1, labels.max() + 1, dtype=np.int32))
 
-        def _weighted_average(x):
-            weights = feature_df.loc[x.index, "weight"]
-            if weights.sum() == 0:
-                weights = None
-                logging.warning(
-                    "Weights sum to zero for a group, using unweighted average in aggregation."
-                )
-            out = pd.Series(
-                np.average(x, weights=weights, axis=0),
-                index=x.columns,
-            )
-            return out
+    if func != "mean":
+        agg_feature_df = feature_df.groupby(labels).agg(func=func)
+        return agg_feature_df.reindex(index)
 
-        agg_feature_df = (
-            feature_df.groupby("label")
-            .apply(
-                _weighted_average,
-                include_groups=False,
-            )
-            .drop(columns="weight")
+    # Offset by one so the null label -1 lands in bin 0.
+    bins = labels + 1
+    n_bins = len(index)
+    if weights is None:
+        weights = np.ones(len(labels))
+    weights = np.asarray(weights, dtype=np.float64)
+    weight_sums = np.bincount(bins, weights=weights, minlength=n_bins)
+    counts = np.bincount(bins, minlength=n_bins)
+    unweighted = (weight_sums == 0) & (counts > 0)
+    if unweighted.any():
+        logging.warning(
+            f"Weights sum to zero for {unweighted.sum()} groups, using an "
+            "unweighted average for those in aggregation."
         )
-    else:
-        agg_feature_df = feature_df.groupby("label").agg(func=func)
-
-    expected_indices = np.arange(-1, labels.max() + 1)
-    agg_feature_df = agg_feature_df.reindex(expected_indices, copy=False)
-
-    out = agg_feature_df[cols]
-    return out
+    with np.errstate(invalid="ignore", divide="ignore"):
+        means = {}
+        for column in feature_df.columns:
+            values = feature_df[column].to_numpy(dtype=np.float64)
+            mean = np.bincount(bins, weights=weights * values, minlength=n_bins)
+            mean /= weight_sums
+            if unweighted.any():
+                plain = np.bincount(bins, weights=values, minlength=n_bins) / counts
+                mean[unweighted] = plain[unweighted]
+            mean[counts == 0] = np.nan
+            means[column] = mean.astype(np.float32)
+    return pd.DataFrame(means, index=index)
 
 
 def blow_up_features(agg_features_df: pd.DataFrame, labels: np.ndarray) -> pd.DataFrame:

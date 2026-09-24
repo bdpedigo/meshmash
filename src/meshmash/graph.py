@@ -136,13 +136,15 @@ def condense_mesh_to_graph(
     Returns
     -------
     node_table :
-        DataFrame indexed by label, with the columns
+        DataFrame indexed by an ``int32`` label, with the columns
         [condensed_node_property_names][meshmash.graph.condensed_node_property_names]
-        gives for the same ``add_component_features``.
+        gives for the same ``add_component_features``.  Vertex counts are
+        ``int32`` and every other column is ``float32``.
     edge_table :
-        DataFrame with columns ``source_group``, ``target_group``,
-        ``boundary_length`` (sum of edge-width values), and ``count``
-        (number of mesh edges crossing the boundary).
+        DataFrame with ``int32`` columns ``source``, ``target`` and ``count``
+        (number of mesh edges crossing the boundary), and ``float32`` columns
+        ``boundary_length`` (sum of edge-width values) and ``edge_length``
+        (distance between the two centroids).
     """
     edges = mesh_to_edges(mesh)
     edges = np.unique(np.sort(edges, axis=1), axis=0)
@@ -225,5 +227,24 @@ def condense_mesh_to_graph(
         {"source_group": "source", "target_group": "target"}, axis=1, inplace=True
     )
     group_node_table.index.name = None
+
+    # Summed and differenced in float64 above; stored at the precision the
+    # features beside them carry.
+    group_node_table = group_node_table.astype(
+        {
+            name: np.int32 if name.endswith("n_vertices") else np.float32
+            for name in group_node_table.columns
+        }
+    )
+    group_node_table.index = group_node_table.index.astype(np.int32)
+    group_edge_table = group_edge_table.astype(
+        {
+            "source": np.int32,
+            "target": np.int32,
+            "boundary_length": np.float32,
+            "count": np.int32,
+            "edge_length": np.float32,
+        }
+    )
 
     return group_node_table, group_edge_table

@@ -90,3 +90,22 @@ def test_a_domain_of_zero_area_vertices_aggregates_to_a_finite_mean():
     out = aggregate_features(features, labels, func="mean", weights=weights)
     assert out.loc[0, "f"] == pytest.approx(1.75)
     assert out.loc[1, "f"] == pytest.approx(3.5)  # unweighted fallback
+
+
+def test_aggregate_features_does_not_depend_on_neighbouring_column_dtypes():
+    # pandas used to keep float64 for a mixed frame and round an all-float32
+    # one, so the same column aggregated differently depending on its company.
+    rng = np.random.default_rng(0)
+    shared = rng.random(100).astype(np.float32)
+    labels = rng.integers(0, 7, size=100)
+    weights = rng.random(100)
+    alone = pd.DataFrame({"f": shared})
+    mixed = pd.DataFrame({"f": shared, "g": rng.random(100)})
+
+    alone_out = aggregate_features(alone, labels, weights=weights)
+    mixed_out = aggregate_features(mixed, labels, weights=weights)
+
+    assert (alone_out.dtypes == np.float32).all()
+    assert (mixed_out.dtypes == np.float32).all()
+    assert alone_out.index.dtype == np.int32
+    pd.testing.assert_series_equal(alone_out["f"], mixed_out["f"])
