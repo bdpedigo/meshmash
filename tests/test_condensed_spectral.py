@@ -438,6 +438,11 @@ def test_the_composite_reproduces_the_hks_pipeline_exactly(mesh):
         max_eigenvalue=1e-8,
         max_vertex_threshold=5000,
         target_vertices=2500,
+        # The two pipelines' defaults differ here; hold them equal.
+        overlap_distance=10_000,
+        min_vertex_threshold=10,
+        max_overlap_neighbors=50_000,
+        drop_first=False,
         n_jobs=1,
         seed=0,
     )

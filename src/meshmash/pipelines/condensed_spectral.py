@@ -74,7 +74,7 @@ DEFAULT_N_SCALES = 8
 #: reduction fraction, so the physical resolution handed to the
 #: eigendecomposition is the same whatever resolution the source mesh arrives
 #: at.
-DEFAULT_SIMPLIFY_TARGET_DENSITY = 4.5e-5
+DEFAULT_SIMPLIFY_TARGET_DENSITY = 4.25e-5
 
 #: What the condensed graph's node properties are called once they sit in the
 #: same frame as the spectral features.  The three spectral blocks are already
@@ -193,7 +193,7 @@ def compute_condensed_spectral(
     robust: bool = True,
     mollify_factor: float = 1e-5,
     truncate_extra: bool = True,
-    drop_first: bool = True,
+    drop_first: bool = False,
     decomposition_dtype=np.float32,
     compute_diffused_curvature_kwargs: dict = {},
     distance_threshold: float = 3.0,
@@ -309,10 +309,10 @@ def compute_condensed_spectral(
 
 def compute_split_condensed_spectral(
     mesh,
-    overlap_distance: float = 20_000,
+    overlap_distance: float = 10_000,
     max_vertex_threshold: int = 20_000,
-    min_vertex_threshold: int = 200,
-    max_overlap_neighbors: int = 60_000,
+    min_vertex_threshold: int = 10,
+    max_overlap_neighbors: int = 50_000,
     target_vertices: int = 10_000,
     n_components: int = 32,
     n_scales: int = DEFAULT_N_SCALES,
@@ -322,7 +322,7 @@ def compute_split_condensed_spectral(
     robust: bool = True,
     mollify_factor: float = 1e-5,
     truncate_extra: bool = True,
-    drop_first: bool = True,
+    drop_first: bool = False,
     decomposition_dtype="float32",
     compute_diffused_curvature_kwargs: dict = {},
     distance_threshold: float = 3.0,
@@ -570,10 +570,10 @@ def condensed_spectral_pipeline(
     simplify_agg: int = 7,
     simplify_target_reduction: Optional[float] = None,
     simplify_target_density: Optional[float] = DEFAULT_SIMPLIFY_TARGET_DENSITY,
-    overlap_distance: float = 20_000,
+    overlap_distance: float = 10_000,
     max_vertex_threshold: int = 20_000,
-    min_vertex_threshold: int = 200,
-    max_overlap_neighbors: int = 60_000,
+    min_vertex_threshold: int = 10,
+    max_overlap_neighbors: int = 50_000,
     target_vertices: int = 10_000,
     n_components: int = 32,
     n_scales: int = DEFAULT_N_SCALES,
@@ -583,7 +583,7 @@ def condensed_spectral_pipeline(
     robust: bool = True,
     mollify_factor: float = 1e-5,
     truncate_extra: bool = True,
-    drop_first: bool = True,
+    drop_first: bool = False,
     decomposition_dtype="float32",
     compute_diffused_curvature_kwargs: dict = {},
     distance_threshold: float = 3.0,
