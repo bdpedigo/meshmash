@@ -172,6 +172,24 @@ def _crossing_edges(
     return edge_keys // n_vertices, edge_keys % n_vertices, widths
 
 
+def _projection_cosines(
+    edge_vectors: np.ndarray, directions: np.ndarray
+) -> np.ndarray:
+    """``|cos|`` of the angle between each mesh edge and its centroid direction.
+
+    A zero-length mesh edge has no direction and gets ``0``. Two regions with
+    coincident centroids have no direction between them, so their edges keep
+    their full width with ``1``.
+    """
+    edge_norms = np.linalg.norm(edge_vectors, axis=1)
+    direction_norms = np.linalg.norm(directions, axis=1)
+    norms = edge_norms * direction_norms
+    dots = np.abs(np.einsum("ij,ij->i", edge_vectors, directions))
+    cosines = np.divide(dots, norms, out=np.zeros_like(dots), where=norms > 0)
+    cosines[direction_norms == 0] = 1.0
+    return cosines
+
+
 def condense_mesh_to_graph(
     mesh: Mesh, labels: np.ndarray, add_component_features: bool = False
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -179,7 +197,9 @@ def condense_mesh_to_graph(
 
     Each unique label becomes a node; adjacent regions (labels that share at
     least one mesh edge) become connected by an edge.  Edge weights reflect
-    the total boundary length between regions.
+    the boundary between regions: its length, and its length as seen along
+    the line between the two centroids, which over ``edge_length`` is the
+    diffusive conductance between the two regions.
 
     Parameters
     ----------
@@ -203,29 +223,14 @@ def condense_mesh_to_graph(
     edge_table :
         DataFrame with ``int32`` columns ``source``, ``target`` and ``count``
         (number of mesh edges crossing the boundary), and ``float32`` columns
-        ``boundary_length`` (sum of edge-width values) and ``edge_length``
+        ``boundary_length`` (the summed widths of the crossing edges, each the
+        incircle radii of its faces), ``projected_boundary_length`` (the same
+        sum with each width scaled by ``|cos|`` of the angle between its mesh
+        edge and the line between the two centroids) and ``edge_length``
         (distance between the two centroids).
     """
     vertices, faces = interpret_mesh(mesh)
     labels = np.asarray(labels)
-
-    lower, upper, boundary_lengths = _crossing_edges(vertices, faces, labels)
-    source_labels = labels[lower]
-    target_labels = labels[upper]
-
-    group_edge_table = (
-        pd.DataFrame(
-            {
-                "source_group": np.minimum(source_labels, target_labels),
-                "target_group": np.maximum(source_labels, target_labels),
-                "boundary_length": boundary_lengths,
-                "count": np.ones(len(lower), dtype=np.int64),
-            }
-        )
-        .groupby(["source_group", "target_group"])
-        .agg({"boundary_length": "sum", "count": "sum"})
-        .reset_index()
-    )
 
     areas = compute_vertex_areas(mesh, robust=False)
 
@@ -258,6 +263,36 @@ def condense_mesh_to_graph(
         )
         group_node_table.drop("component", axis=1, inplace=True)
 
+    lower, upper, boundary_lengths = _crossing_edges(vertices, faces, labels)
+    source_groups = np.minimum(labels[lower], labels[upper])
+    target_groups = np.maximum(labels[lower], labels[upper])
+    centroids = group_node_table[["x", "y", "z"]].to_numpy()
+    cosines = _projection_cosines(
+        vertices[upper] - vertices[lower],
+        centroids[target_groups] - centroids[source_groups],
+    )
+
+    group_edge_table = (
+        pd.DataFrame(
+            {
+                "source_group": source_groups,
+                "target_group": target_groups,
+                "boundary_length": boundary_lengths,
+                "projected_boundary_length": boundary_lengths * cosines,
+                "count": np.ones(len(lower), dtype=np.int64),
+            }
+        )
+        .groupby(["source_group", "target_group"])
+        .agg(
+            {
+                "boundary_length": "sum",
+                "projected_boundary_length": "sum",
+                "count": "sum",
+            }
+        )
+        .reset_index()
+    )
+
     group_edge_table["edge_length"] = np.linalg.norm(
         group_node_table.loc[group_edge_table["source_group"]][["x", "y", "z"]].values
         - group_node_table.loc[group_edge_table["target_group"]][
@@ -285,6 +320,7 @@ def condense_mesh_to_graph(
             "source": np.int32,
             "target": np.int32,
             "boundary_length": np.float32,
+            "projected_boundary_length": np.float32,
             "count": np.int32,
             "edge_length": np.float32,
         }

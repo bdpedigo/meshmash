@@ -304,6 +304,7 @@ def test_the_edges_keep_their_own_grain(condensed):
         "source",
         "target",
         "boundary_length",
+        "projected_boundary_length",
         "count",
         "edge_length",
     ]
@@ -607,6 +608,7 @@ def test_the_pipeline_keeps_the_column_contract(pipelined):
         "source",
         "target",
         "boundary_length",
+        "projected_boundary_length",
         "count",
         "edge_length",
     ]

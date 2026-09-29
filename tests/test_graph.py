@@ -36,12 +36,6 @@ def _condense_over_every_edge(mesh, labels):
     edge_table = edge_table.assign(
         source_group=groups.min(axis=1), target_group=groups.max(axis=1)
     )
-    group_edges = (
-        edge_table.groupby(["source_group", "target_group"])
-        .agg({"boundary_length": "sum", "count": "sum"})
-        .reset_index()
-    )
-
     node_table = pd.DataFrame(mesh[0], columns=["x", "y", "z"])
     node_table["n_vertices"] = np.ones(len(node_table), dtype=np.int32)
     node_table["group"] = labels
@@ -52,6 +46,26 @@ def _condense_over_every_edge(mesh, labels):
         .groupby("group")
         .agg(agg)
         .loc[np.arange(labels.max() + 1)]
+    )
+    centroids = group_nodes[["x", "y", "z"]].to_numpy()
+    edge_vectors = mesh[0][edge_table["target"]] - mesh[0][edge_table["source"]]
+    directions = (
+        centroids[edge_table["target_group"]] - centroids[edge_table["source_group"]]
+    )
+    cosines = np.abs((edge_vectors * directions).sum(axis=1)) / (
+        np.linalg.norm(edge_vectors, axis=1) * np.linalg.norm(directions, axis=1)
+    )
+    edge_table["projected_boundary_length"] = edge_table["boundary_length"] * cosines
+    group_edges = (
+        edge_table.groupby(["source_group", "target_group"])
+        .agg(
+            {
+                "boundary_length": "sum",
+                "projected_boundary_length": "sum",
+                "count": "sum",
+            }
+        )
+        .reset_index()
     )
     return group_nodes, group_edges
 
@@ -77,6 +91,12 @@ def test_matches_the_table_over_every_mesh_edge(mesh, add_component_features):
         edges["boundary_length"],
         expected_edges["boundary_length"].to_numpy(np.float32),
     )
+    np.testing.assert_allclose(
+        edges["projected_boundary_length"],
+        expected_edges["projected_boundary_length"],
+        rtol=1e-5,
+    )
+    assert (edges["projected_boundary_length"] <= edges["boundary_length"]).all()
     for name in ["x", "y", "z", "area", "n_vertices"]:
         np.testing.assert_array_equal(
             nodes[name], expected_nodes[name].to_numpy(nodes[name].dtype)
@@ -141,3 +161,36 @@ def test_boundary_length_does_not_depend_on_vertex_order(mesh):
     np.testing.assert_allclose(
         renumbered["boundary_length"], edges["boundary_length"], rtol=1e-5
     )
+
+
+
+def test_coincident_centroids_keep_the_full_boundary_length():
+    """Four triangles around a center vertex, center in its own region.
+
+    Both regions are centered on the middle vertex, so there is no direction to
+    project onto.
+    """
+    ring = 1000.0 * np.array([[1, 0, 0], [0, 1, 0], [-1, 0, 0], [0, -1, 0]])
+    vertices = np.vstack([np.zeros((1, 3)), ring])
+    faces = np.array([[0, 1 + i, 1 + (i + 1) % 4] for i in range(4)])
+    labels = np.array([0, 1, 1, 1, 1])
+
+    _, edges = condense_mesh_to_graph((vertices, faces), labels)
+
+    np.testing.assert_array_equal(
+        edges["projected_boundary_length"], edges["boundary_length"]
+    )
+
+
+def test_a_zero_length_crossing_edge_gives_a_finite_projected_length():
+    """Two regions joined across an edge whose two ends are one point."""
+    vertices = np.array(
+        [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [-1000.0, 0.0, 0.0], [1000.0, 0.0, 1.0]]
+    )
+    faces = np.array([[0, 1, 2], [1, 0, 3]])
+    labels = np.array([0, 1, 0, 1])
+
+    _, edges = condense_mesh_to_graph((vertices, faces), labels)
+
+    assert np.isfinite(edges["projected_boundary_length"]).all()
+    assert (edges["projected_boundary_length"] <= edges["boundary_length"]).all()
