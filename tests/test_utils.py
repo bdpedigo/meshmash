@@ -1,6 +1,8 @@
 import numpy as np
+import pytest
 import pyvista as pv
 
+import meshmash.utils
 from meshmash.utils import (
     combine_meshes,
     component_size_transform,
@@ -23,6 +25,45 @@ def test_mesh_to_edges_shape(mesh):
     edges = mesh_to_edges(mesh)
     assert edges.ndim == 2
     assert edges.shape[1] == 2
+
+
+@pytest.mark.parametrize("dtype", [np.int32, np.uint32, np.int64, np.uint64])
+def test_mesh_to_edges_are_the_faces_edges_once_each(mesh, dtype):
+    """uint32 faces are what CloudVolume returns, and an older VTK path got them wrong."""
+    vertices, faces = mesh
+    faces = np.asarray(faces).astype(dtype)
+    corners = np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]])
+    expected = np.unique(np.sort(corners, axis=1), axis=0)
+
+    edges = mesh_to_edges((vertices, faces))
+
+    np.testing.assert_array_equal(edges, expected)
+
+
+def test_mesh_to_edges_refuses_a_mesh_too_large_to_pack(mesh, monkeypatch):
+    monkeypatch.setattr(meshmash.utils, "MAX_PACKED_VERTICES", len(mesh[0]) - 1)
+    with pytest.raises(ValueError, match="int64"):
+        mesh_to_edges(mesh)
+
+
+@pytest.mark.parametrize("vertex_dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("face_dtype", [np.int32, np.uint32, np.int64, np.uint64])
+def test_mesh_to_adjacency_holds_each_edge_once_at_its_length(
+    mesh, vertex_dtype, face_dtype
+):
+    vertices = np.asarray(mesh[0]).astype(vertex_dtype)
+    faces = np.asarray(mesh[1]).astype(face_dtype)
+
+    adjacency = mesh_to_adjacency((vertices, faces)).tocoo()
+
+    edges = mesh_to_edges(mesh)
+    assert adjacency.nnz == len(edges)
+    np.testing.assert_array_equal(
+        adjacency.row < adjacency.col, True
+    )  # upper triangular
+    lengths = np.linalg.norm(vertices[adjacency.row] - vertices[adjacency.col], axis=1)
+    np.testing.assert_allclose(adjacency.data, lengths, rtol=1e-6)
+    assert adjacency.data.dtype == vertex_dtype
 
 
 def test_mesh_to_adjacency_shape(mesh):

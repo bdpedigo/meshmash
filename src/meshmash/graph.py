@@ -81,7 +81,8 @@ def compute_edge_widths(mesh: Mesh, mollify_factor: float = 0.0) -> csr_array:
     """Compute per-edge width estimates from the incircle radii of adjacent faces.
 
     For each face the incircle radius is computed from Heron's formula, then
-    that radius is accumulated onto the three edges of the face.  The
+    that radius is summed onto the three edges of the face, so an interior
+    edge carries the radii of both its faces.  The
     resulting value at each edge is a geometric proxy for the local "width"
     of the surface at that boundary.
 
@@ -96,8 +97,8 @@ def compute_edge_widths(mesh: Mesh, mollify_factor: float = 0.0) -> csr_array:
     Returns
     -------
     :
-        Sparse CSR matrix of shape ``(V, V)`` containing accumulated
-        incircle-radius values on each edge.
+        Symmetric sparse CSR matrix of shape ``(V, V)`` holding, at each edge,
+        the summed incircle radii of the faces that share it.
     """
     vertices, faces = mesh
     radii_by_face = _incircle_radii(vertices, faces, mollify_factor)
@@ -116,7 +117,9 @@ def compute_edge_widths(mesh: Mesh, mollify_factor: float = 0.0) -> csr_array:
     )
     radii_adjacency = r1 + r2 + r3
 
-    return radii_adjacency
+    # Each face writes its edges in its own winding, so the two faces of an
+    # edge land on opposite entries; symmetrizing sums both.
+    return radii_adjacency + radii_adjacency.T
 
 
 def _face_components(n_vertices: int, faces: np.ndarray) -> np.ndarray:
@@ -153,15 +156,9 @@ def _crossing_edges(
         crossing = (
             (start_labels != -1) & (end_labels != -1) & (start_labels != end_labels)
         )
-        starts = starts[crossing]
-        ends = ends[crossing]
-        # NOTE: the width of an edge is read from the (smaller, larger) vertex
-        # entry of the directed width matrix, so a face adds its radius only
-        # when its own edge runs from the smaller to the larger index. On a
-        # consistently oriented surface that is one of the edge's two faces.
-        crossing_widths.append(np.where(starts < ends, radii[crossing], 0))
-        crossing_starts.append(starts)
-        crossing_ends.append(ends)
+        crossing_widths.append(radii[crossing])
+        crossing_starts.append(starts[crossing])
+        crossing_ends.append(ends[crossing])
     # int64 before the key is formed: faces are often uint32, and numpy 1.x
     # keeps uint32 * scalar in uint32, where V * V overflows.
     starts = np.concatenate(crossing_starts).astype(np.int64)

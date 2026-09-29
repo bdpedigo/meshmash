@@ -101,3 +101,43 @@ def test_the_component_columns_follow_the_mesh_components(mesh):
         (first_copy != -1).sum(),
         (second_copy != -1).sum(),
     }
+
+
+def test_a_crossing_edge_sums_the_radii_of_both_its_faces():
+    """Six equilateral triangles around a center vertex, center in its own region.
+
+    Every crossing edge is a spoke with two faces, so the boundary is twelve
+    incircle radii.
+    """
+    side = 1000.0
+    angles = np.arange(6) * np.pi / 3
+    ring = side * np.column_stack([np.cos(angles), np.sin(angles), np.zeros(6)])
+    vertices = np.vstack([np.zeros((1, 3)), ring])
+    faces = np.array([[0, 1 + i, 1 + (i + 1) % 6] for i in range(6)])
+    labels = np.array([0, 1, 1, 1, 1, 1, 1])
+
+    _, edges = condense_mesh_to_graph((vertices, faces), labels)
+
+    # The crossing edges see each side lengthened by a mollify factor of 1.0.
+    radius = (side + 1.0) / (2 * np.sqrt(3))
+    assert edges["count"].tolist() == [6]
+    np.testing.assert_allclose(edges["boundary_length"], 12 * radius, rtol=1e-6)
+
+
+def test_boundary_length_does_not_depend_on_vertex_order(mesh):
+    """Renumbering the vertices moves no edge weight."""
+    vertices, faces = interpret_mesh(mesh)
+    labels = _blocky_labels(vertices, width=2000.0)
+    order = np.random.default_rng(0).permutation(len(vertices))
+    new_index = np.empty_like(order)
+    new_index[order] = np.arange(len(order))
+
+    _, edges = condense_mesh_to_graph((vertices, faces), labels)
+    _, renumbered = condense_mesh_to_graph(
+        (vertices[order], new_index[faces]), labels[order]
+    )
+
+    assert len(edges) > 0
+    np.testing.assert_allclose(
+        renumbered["boundary_length"], edges["boundary_length"], rtol=1e-5
+    )

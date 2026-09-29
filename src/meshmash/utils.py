@@ -1,3 +1,4 @@
+import math
 from typing import Generator, Literal, Optional, Union, overload
 
 import fastremap
@@ -38,24 +39,44 @@ def mesh_to_poly(mesh: Mesh) -> pv.PolyData:
         raise ValueError("Invalid mesh input.")
 
 
+#: Above this many vertices, ``smaller * V + larger`` no longer fits in int64.
+MAX_PACKED_VERTICES = math.isqrt(np.iinfo(np.int64).max)
+
+
 def mesh_to_edges(mesh: Mesh) -> np.ndarray:
-    """Extract all edges from a mesh as vertex index pairs.
+    """Extract every edge of a mesh's faces as a vertex index pair, once.
 
     Parameters
     ----------
     mesh :
-        Input mesh accepted by [mesh_to_poly][meshmash.utils.mesh_to_poly].
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
 
     Returns
     -------
     :
-        Array of edge vertex index pairs, shape ``(E, 2)``.
+        Array of shape ``(E, 2)``, one row per undirected edge with the smaller
+        vertex index first, sorted by that pair.
+
+    Raises
+    ------
+    ValueError
+        If the mesh has more than
+        [MAX_PACKED_VERTICES][meshmash.utils.MAX_PACKED_VERTICES] vertices.
     """
-    poly = mesh_to_poly(mesh)
-    edge_data = poly.extract_all_edges(clear_data=True)
-    lines = edge_data.lines
-    edges = lines.reshape(-1, 3)[:, 1:]
-    return edges
+    vertices, faces = interpret_mesh(mesh)
+    n_vertices = len(vertices)
+    if n_vertices > MAX_PACKED_VERTICES:
+        raise ValueError(
+            f"{n_vertices} vertices is more than the {MAX_PACKED_VERTICES} whose "
+            "edges fit in one int64 key each"
+        )
+    faces = np.asarray(faces).astype(np.int64, copy=False)
+    starts = np.concatenate([faces[:, 0], faces[:, 1], faces[:, 2]])
+    ends = np.concatenate([faces[:, 1], faces[:, 2], faces[:, 0]])
+    # One int64 per edge, so the dedupe is a flat integer sort rather than a
+    # row-wise one: about ten times faster, and it takes no VTK round trip.
+    keys = np.unique(np.minimum(starts, ends) * n_vertices + np.maximum(starts, ends))
+    return np.stack([keys // n_vertices, keys % n_vertices], axis=1)
 
 
 def boundary_vertices(mesh: Mesh) -> np.ndarray:
@@ -106,7 +127,7 @@ def mesh_to_adjacency(mesh: Mesh) -> csr_array:
     Parameters
     ----------
     mesh :
-        Input mesh accepted by [mesh_to_poly][meshmash.utils.mesh_to_poly].
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
 
     Returns
     -------
@@ -114,13 +135,8 @@ def mesh_to_adjacency(mesh: Mesh) -> csr_array:
         Sparse CSR adjacency matrix of shape ``(V, V)`` with edge-length
         weights.
     """
-    # TODO only use here because this is faster than numpy unique for unique extracting
-    # edges, should be some other way to do this
-    poly = mesh_to_poly(mesh)
-    edge_data = poly.extract_all_edges(clear_data=True)
-    lines = edge_data.lines
-    edges = lines.reshape(-1, 3)[:, 1:]
-    vertices = poly.points
+    vertices, _ = interpret_mesh(mesh)
+    edges = mesh_to_edges(mesh)
     n_vertices = len(vertices)
 
     edge_lengths = np.linalg.norm(vertices[edges[:, 0]] - vertices[edges[:, 1]], axis=1)
