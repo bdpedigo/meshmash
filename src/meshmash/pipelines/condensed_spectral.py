@@ -47,7 +47,9 @@ the source mesh happened to arrive at, and the timescale grid means the same
 thing across meshes.
 """
 
+import multiprocessing
 import time
+from concurrent.futures import ProcessPoolExecutor
 from typing import NamedTuple, Optional
 
 import numpy as np
@@ -565,6 +567,58 @@ class CondensedSpectralPipelineResult(NamedTuple):
     timing_info: dict
 
 
+def _condition_mesh(
+    mesh,
+    min_vertex_threshold: int,
+    simplify_target_density: Optional[float],
+    simplify_target_reduction: Optional[float],
+    simplify_agg: int,
+    verbose: bool,
+) -> tuple[tuple[np.ndarray, np.ndarray], np.ndarray]:
+    """Drop small components and simplify, keeping where each input vertex went.
+
+    Returns the simplified mesh and an array of length ``V`` giving each input
+    vertex its index in it, ``-1`` for a vertex the component threshold
+    dropped.
+    """
+    thresholded_mesh, indices_from_original = threshold_mesh_by_component_size(
+        mesh, size_threshold=min_vertex_threshold
+    )
+
+    if simplify_target_density is not None:
+        vertices, faces, thresh_to_simple_mapping = simplify_to_density(
+            thresholded_mesh,
+            target_density=simplify_target_density,
+            simplify_agg=simplify_agg,
+            verbose=verbose,
+        )
+        simple_mesh = (vertices, faces)
+    else:
+        # `simplify_mesh` also covers `target_reduction=None`, which returns
+        # the mesh untouched with an identity mapping.
+        simple_mesh, thresh_to_simple_mapping = simplify_mesh(
+            thresholded_mesh,
+            agg=simplify_agg,
+            target_reduction=simplify_target_reduction,
+        )
+
+    mapping = np.full(len(mesh[0]), -1, dtype=np.int32)
+    mapping[indices_from_original] = thresh_to_simple_mapping
+    return simple_mesh, mapping
+
+
+def _in_subprocess(func, *args):
+    """Call ``func(*args)`` in a fresh spawned process and return its result."""
+    # NOTE: fast-simplification keeps its C++ working arrays in global vectors
+    # that it clears but never frees, one set per extension module, so the
+    # memory of the largest mesh it has seen stays with the process. A process
+    # that exits takes them with it. Spawn rather than fork: the caller may
+    # already run BLAS or other threads, and a fork copies their locks.
+    context = multiprocessing.get_context("spawn")
+    with ProcessPoolExecutor(max_workers=1, mp_context=context) as executor:
+        return executor.submit(func, *args).result()
+
+
 def condensed_spectral_pipeline(
     mesh,
     simplify_agg: int = 7,
@@ -591,6 +645,7 @@ def condensed_spectral_pipeline(
     verbose: bool = False,
     seed: Optional[int] = None,
     blas_threads: Optional[int] = 1,
+    condition_in_subprocess: bool = False,
 ) -> CondensedSpectralPipelineResult:
     """Condition a mesh, then featurize and condense it, three families at once.
 
@@ -686,6 +741,11 @@ def condensed_spectral_pipeline(
         BLAS thread count for the linear algebra, fixed rather than
         inherited.  ``None`` inherits the ambient count and gives up
         reproducibility across worker counts.
+    condition_in_subprocess :
+        If ``True``, threshold and simplify in a separate spawned process, so
+        the memory the simplifier holds on to after it returns goes back to
+        the operating system when that process exits.  The result is the
+        same either way.
 
     Returns
     -------
@@ -717,26 +777,18 @@ def condensed_spectral_pipeline(
     original_mesh = interpret_mesh(mesh)
 
     currtime = time.time()
-    thresholded_mesh, indices_from_original = threshold_mesh_by_component_size(
-        original_mesh, size_threshold=min_vertex_threshold
+    conditioning_args = (
+        original_mesh,
+        min_vertex_threshold,
+        simplify_target_density,
+        simplify_target_reduction,
+        simplify_agg,
+        verbose,
     )
-
-    if simplify_target_density is not None:
-        vertices, faces, thresh_to_simple_mapping = simplify_to_density(
-            thresholded_mesh,
-            target_density=simplify_target_density,
-            simplify_agg=simplify_agg,
-            verbose=verbose,
-        )
-        simple_mesh = (vertices, faces)
+    if condition_in_subprocess:
+        simple_mesh, mapping = _in_subprocess(_condition_mesh, *conditioning_args)
     else:
-        # `simplify_mesh` also covers `target_reduction=None`, which returns
-        # the mesh untouched with an identity mapping.
-        simple_mesh, thresh_to_simple_mapping = simplify_mesh(
-            thresholded_mesh,
-            agg=simplify_agg,
-            target_reduction=simplify_target_reduction,
-        )
+        simple_mesh, mapping = _condition_mesh(*conditioning_args)
     timing_info["conditioning_time"] = time.time() - currtime
 
     currtime = time.time()
@@ -765,9 +817,6 @@ def condensed_spectral_pipeline(
         blas_threads=blas_threads,
     )
     timing_info["spectral_time"] = time.time() - currtime
-
-    mapping = np.full(len(original_mesh[0]), -1, dtype=np.int32)
-    mapping[indices_from_original] = thresh_to_simple_mapping
 
     labels = expand_labels(result.labels, mapping)
 

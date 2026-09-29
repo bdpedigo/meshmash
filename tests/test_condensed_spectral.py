@@ -631,3 +631,25 @@ def test_the_pipeline_is_reproducible_at_a_fixed_seed(mesh):
     np.testing.assert_array_equal(first.mapping, second.mapping)
     pd.testing.assert_frame_equal(first.condensed_features, second.condensed_features)
     pd.testing.assert_frame_equal(first.condensed_edges, second.condensed_edges)
+
+
+def test_conditioning_in_a_subprocess_changes_nothing_in_the_result(mesh, pipelined):
+    """Only where the conditioning runs moves, so the output is byte for byte the same."""
+    in_subprocess = condensed_spectral_pipeline(
+        mesh, condition_in_subprocess=True, **PIPELINE_KWARGS
+    )
+
+    np.testing.assert_array_equal(
+        in_subprocess.simple_mesh[0], pipelined.simple_mesh[0]
+    )
+    np.testing.assert_array_equal(
+        in_subprocess.simple_mesh[1], pipelined.simple_mesh[1]
+    )
+    np.testing.assert_array_equal(in_subprocess.mapping, pipelined.mapping)
+    np.testing.assert_array_equal(in_subprocess.labels, pipelined.labels)
+    pd.testing.assert_frame_equal(
+        in_subprocess.condensed_features, pipelined.condensed_features
+    )
+    pd.testing.assert_frame_equal(
+        in_subprocess.condensed_edges, pipelined.condensed_edges
+    )

@@ -3,8 +3,8 @@ import pandas as pd
 from scipy.sparse import csr_array
 
 from .laplacian import compute_vertex_areas
-from .types import Mesh
-from .utils import connected_components, mesh_to_adjacency, mesh_to_edges
+from .types import Mesh, interpret_mesh
+from .utils import connected_components
 
 #: The per-region columns
 #: [condense_mesh_to_graph][meshmash.graph.condense_mesh_to_graph] always emits,
@@ -52,6 +52,31 @@ def condensed_node_property_names(add_component_features: bool = False) -> list[
     return names
 
 
+def _incircle_radii(
+    vertices: np.ndarray, faces: np.ndarray, mollify_factor: float
+) -> np.ndarray:
+    """Incircle radius of each face, from Heron's formula."""
+    # ref https://en.wikipedia.org/wiki/Law_of_cotangents
+
+    # let a, b, c be the lengths of the edges of each triangle
+    a = (
+        np.linalg.norm(vertices[faces[:, 0]] - vertices[faces[:, 1]], axis=1)
+        + mollify_factor
+    )
+    b = (
+        np.linalg.norm(vertices[faces[:, 1]] - vertices[faces[:, 2]], axis=1)
+        + mollify_factor
+    )
+    c = (
+        np.linalg.norm(vertices[faces[:, 2]] - vertices[faces[:, 0]], axis=1)
+        + mollify_factor
+    )
+    # s is the semiperimeter of the triangle
+    s = (a + b + c) / 2
+
+    return np.sqrt((s - a) * (s - b) * (s - c) / s)
+
+
 def compute_edge_widths(mesh: Mesh, mollify_factor: float = 0.0) -> csr_array:
     """Compute per-edge width estimates from the incircle radii of adjacent faces.
 
@@ -74,26 +99,8 @@ def compute_edge_widths(mesh: Mesh, mollify_factor: float = 0.0) -> csr_array:
         Sparse CSR matrix of shape ``(V, V)`` containing accumulated
         incircle-radius values on each edge.
     """
-    # ref https://en.wikipedia.org/wiki/Law_of_cotangents
-
     vertices, faces = mesh
-    # let a, b, c be the lengths of the edges of each triangle
-    a = (
-        np.linalg.norm(vertices[faces[:, 0]] - vertices[faces[:, 1]], axis=1)
-        + mollify_factor
-    )
-    b = (
-        np.linalg.norm(vertices[faces[:, 1]] - vertices[faces[:, 2]], axis=1)
-        + mollify_factor
-    )
-    c = (
-        np.linalg.norm(vertices[faces[:, 2]] - vertices[faces[:, 0]], axis=1)
-        + mollify_factor
-    )
-    # s is the semiperimeter of the triangle
-    s = (a + b + c) / 2
-
-    radii_by_face = np.sqrt((s - a) * (s - b) * (s - c) / s)
+    radii_by_face = _incircle_radii(vertices, faces, mollify_factor)
 
     r1 = csr_array(
         (radii_by_face, (faces[:, 0], faces[:, 1])),
@@ -110,6 +117,62 @@ def compute_edge_widths(mesh: Mesh, mollify_factor: float = 0.0) -> csr_array:
     radii_adjacency = r1 + r2 + r3
 
     return radii_adjacency
+
+
+def _face_components(n_vertices: int, faces: np.ndarray) -> np.ndarray:
+    """Connected-component label of each vertex, joined through shared faces."""
+    # Two edges per face already join its three corners.
+    starts = np.concatenate([faces[:, 0], faces[:, 1]]).astype(np.intc)
+    ends = np.concatenate([faces[:, 1], faces[:, 2]]).astype(np.intc)
+    graph = csr_array(
+        (np.ones(len(starts), dtype=np.int8), (starts, ends)),
+        shape=(n_vertices, n_vertices),
+    )
+    _, component_labels = connected_components(graph, directed=False)
+    return component_labels
+
+
+def _crossing_edges(
+    vertices: np.ndarray, faces: np.ndarray, labels: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Each mesh edge between two labeled regions, once, with its width.
+
+    Returns the lower and upper vertex of each edge, sorted by that pair, and
+    the edge's width.
+    """
+    # Only these edges reach the edge table, so they are selected per face
+    # edge before any array over every mesh edge exists. That array was the
+    # memory peak on a large mesh.
+    radii = _incircle_radii(vertices, faces, mollify_factor=1.0)
+    crossing_starts, crossing_ends, crossing_widths = [], [], []
+    for start_corner, end_corner in ((0, 1), (1, 2), (2, 0)):
+        starts = faces[:, start_corner]
+        ends = faces[:, end_corner]
+        start_labels = labels[starts]
+        end_labels = labels[ends]
+        crossing = (
+            (start_labels != -1) & (end_labels != -1) & (start_labels != end_labels)
+        )
+        starts = starts[crossing]
+        ends = ends[crossing]
+        # NOTE: the width of an edge is read from the (smaller, larger) vertex
+        # entry of the directed width matrix, so a face adds its radius only
+        # when its own edge runs from the smaller to the larger index. On a
+        # consistently oriented surface that is one of the edge's two faces.
+        crossing_widths.append(np.where(starts < ends, radii[crossing], 0))
+        crossing_starts.append(starts)
+        crossing_ends.append(ends)
+    # int64 before the key is formed: faces are often uint32, and numpy 1.x
+    # keeps uint32 * scalar in uint32, where V * V overflows.
+    starts = np.concatenate(crossing_starts).astype(np.int64)
+    ends = np.concatenate(crossing_ends).astype(np.int64)
+    n_vertices = len(vertices)
+    edge_keys = np.minimum(starts, ends) * n_vertices + np.maximum(starts, ends)
+    edge_keys, edge_index = np.unique(edge_keys, return_inverse=True)
+    widths = np.bincount(
+        edge_index, weights=np.concatenate(crossing_widths), minlength=len(edge_keys)
+    ).astype(radii.dtype)
+    return edge_keys // n_vertices, edge_keys % n_vertices, widths
 
 
 def condense_mesh_to_graph(
@@ -146,57 +209,40 @@ def condense_mesh_to_graph(
         ``boundary_length`` (sum of edge-width values) and ``edge_length``
         (distance between the two centroids).
     """
-    edges = mesh_to_edges(mesh)
-    edges = np.unique(np.sort(edges, axis=1), axis=0)
+    vertices, faces = interpret_mesh(mesh)
+    labels = np.asarray(labels)
 
-    sources, targets = edges[:, 0], edges[:, 1]
-
-    radii_adjacency = compute_edge_widths(mesh, mollify_factor=1.0)
-
-    edge_table = pd.DataFrame(
-        {
-            "source": sources,
-            "target": targets,
-        }
-    )
-    edge_table["boundary_length"] = radii_adjacency[(sources, targets)]
-    edge_table["count"] = 1
-
-    edge_table["source_group"] = labels[edge_table["source"]]
-    edge_table["target_group"] = labels[edge_table["target"]]
-
-    edge_table.query(
-        "(source_group != -1) and (target_group != -1) and (source_group != target_group)",
-        inplace=True,
-    )
-    sources = edge_table[["source_group", "target_group"]].min(axis=1)
-    targets = edge_table[["source_group", "target_group"]].max(axis=1)
-    edge_table["source_group"] = sources
-    edge_table["target_group"] = targets
+    lower, upper, boundary_lengths = _crossing_edges(vertices, faces, labels)
+    source_labels = labels[lower]
+    target_labels = labels[upper]
 
     group_edge_table = (
-        edge_table.groupby(["source_group", "target_group"])
+        pd.DataFrame(
+            {
+                "source_group": np.minimum(source_labels, target_labels),
+                "target_group": np.maximum(source_labels, target_labels),
+                "boundary_length": boundary_lengths,
+                "count": np.ones(len(lower), dtype=np.int64),
+            }
+        )
+        .groupby(["source_group", "target_group"])
         .agg({"boundary_length": "sum", "count": "sum"})
         .reset_index()
     )
 
     areas = compute_vertex_areas(mesh, robust=False)
 
-    node_table = pd.DataFrame(mesh[0], columns=["x", "y", "z"])
+    labeled = labels != -1
+    node_table = pd.DataFrame(vertices[labeled], columns=["x", "y", "z"])
     node_table["n_vertices"] = np.ones(len(node_table), dtype=np.int32)
-    node_table["group"] = labels
-    node_table["area"] = areas
+    node_table["group"] = labels[labeled]
+    node_table["area"] = areas[labeled]
 
     agg_dict = dict(CONDENSED_NODE_PROPERTIES)
 
     if add_component_features:
-        adj = mesh_to_adjacency(mesh)
-
-        _, cc_labels = connected_components(adj, directed=False)
-        node_table["component"] = cc_labels
+        node_table["component"] = _face_components(len(vertices), faces)[labeled]
         agg_dict["component"] = "first"
-
-    node_table.query("group != -1", inplace=True)
 
     group_node_table = (
         node_table.groupby(["group"])

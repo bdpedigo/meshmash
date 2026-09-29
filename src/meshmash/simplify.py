@@ -1,10 +1,74 @@
 from typing import Optional
 
 import numpy as np
-from fast_simplification import replay_simplification, simplify
+from fast_simplification import _replay, simplify
+from fast_simplification.replay import _map_isolated_points
 
 from .types import Mesh, interpret_mesh
 from .utils import surface_area, vertex_density
+
+
+def _decimate(
+    vertices: np.ndarray, faces: np.ndarray, agg: float, target_reduction: float
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Decimate a mesh, returning its vertices, faces, and each input vertex's new index.
+
+    The same three arrays as ``fast_simplification.replay_simplification`` on
+    the collapses of one ``simplify`` call, including ``-1`` for an input
+    vertex that no face references.
+    """
+    points, _, collapses = simplify(
+        vertices,
+        faces,
+        agg=agg,
+        target_reduction=target_reduction,
+        return_collapses=True,
+    )
+    # NOTE: this is replay_simplification with the replay itself left out.
+    # The replay rebuilds the decimated mesh in the Replay module's global C++
+    # vectors, which fast-simplification clears but never frees, and all it
+    # adds is the vertex positions, which `simplify` already returned in the
+    # same order. The rest is its own array bookkeeping, using its private
+    # helpers, so the fast-simplification pin and tests/test_simplify.py hold
+    # it to replay_simplification's output.
+    n_vertices = len(vertices)
+    faces = np.ascontiguousarray(faces)
+    referenced = np.zeros(n_vertices, dtype=bool)
+    if faces.size:
+        referenced[np.unique(faces)] = True
+    kept_vertices = None
+    if not referenced.all():
+        kept_vertices = np.flatnonzero(referenced)
+        old_to_new = np.full(n_vertices, -1, dtype=np.int64)
+        old_to_new[kept_vertices] = np.arange(len(kept_vertices))
+        faces = np.ascontiguousarray(old_to_new[faces].astype(faces.dtype, copy=False))
+        collapses = np.ascontiguousarray(
+            old_to_new[collapses].astype(np.int32, copy=False)
+        )
+        n_vertices = len(kept_vertices)
+
+    index_mapping = _replay.compute_indice_mapping(collapses, n_vertices)
+    edges, new_faces = _replay.clean_triangles_and_edges(index_mapping[faces])
+    n_decimated = int(index_mapping.max()) + 1 if len(index_mapping) else 0
+    # Only the point count is read, never the positions.
+    merge, merged, outliers = _map_isolated_points(
+        np.empty((n_decimated, 0)), edges, new_faces, return_outliers=True
+    )
+    new_faces = merge[new_faces]
+    index_mapping = merge[index_mapping]
+    # Merged and outlying points leave the vertex array, and every index above
+    # one moves down by one.
+    dropped = np.union1d(merged, outliers)
+    positions = np.arange(n_decimated)
+    shift = positions - np.searchsorted(dropped, positions, side="right")
+    new_faces = shift[new_faces]
+    index_mapping = shift[index_mapping]
+
+    if kept_vertices is not None:
+        full_mapping = np.full(len(vertices), -1, dtype=index_mapping.dtype)
+        full_mapping[kept_vertices] = index_mapping
+        index_mapping = full_mapping
+    return points.astype(np.float32), new_faces, index_mapping
 
 
 def simplify_mesh(
@@ -14,13 +78,8 @@ def simplify_mesh(
 ) -> tuple[Mesh, np.ndarray]:
     """Decimate a mesh, and recover where each original vertex went.
 
-    ``fast_simplification.simplify`` does not return a vertex mapping, and the
-    mesh it returns is not ordered the same way as the one
-    ``replay_simplification`` rebuilds from the same collapses.  Only the
-    replayed ordering agrees with the mapping, so the decimation is run once
-    for its collapses and then replayed for the mesh and the mapping
-    together.  Returning both from one function is what keeps a caller from
-    taking the mesh from one and the indices from the other.
+    The mesh and the mapping come back together and always agree, so a caller
+    never has to pair a mesh from one call with indices from another.
 
     Parameters
     ----------
@@ -40,26 +99,17 @@ def simplify_mesh(
         The decimated ``(vertices, faces)`` tuple.
     mapping :
         Array of length ``V``, where ``mapping[i]`` is the index in the
-        decimated mesh of vertex ``i`` of the input.  Every input vertex has
-        one: a collapse merges vertices, it does not discard them, so there
-        is no null entry.
+        decimated mesh of vertex ``i`` of the input.  Every vertex that a
+        face references has one, because a collapse merges vertices rather
+        than discarding them.  A vertex no face references maps to ``-1``.
     """
     vertices, faces = interpret_mesh(mesh)
 
     if target_reduction is None:
         return (vertices, faces), np.arange(len(vertices))
 
-    _, _, collapses = simplify(
-        vertices,
-        faces,
-        agg=agg,
-        target_reduction=target_reduction,
-        return_collapses=True,
-    )
-    new_vertices, new_faces, mapping = replay_simplification(
-        points=vertices,
-        triangles=faces,
-        collapses=collapses,
+    new_vertices, new_faces, mapping = _decimate(
+        vertices, faces, agg=agg, target_reduction=target_reduction
     )
     return (new_vertices, new_faces), mapping
 
@@ -105,8 +155,8 @@ def simplify_to_density(
         Simplified triangle face indices.
     mapping :
         Array of length ``V_input`` mapping each input vertex to its index in
-        the simplified mesh, composed across all iterations.  Mirrors the
-        ``replay_simplification`` mapping of the single-pass reduction path.
+        the simplified mesh, composed across all iterations, as
+        [simplify_mesh][meshmash.simplify.simplify_mesh] gives it for one pass.
     """
     vertices, faces = interpret_mesh(mesh)
     mapping = np.arange(len(vertices))
@@ -127,17 +177,8 @@ def simplify_to_density(
                 f"[simplify_to_density] iter {i}: density {current_density:.3e} "
                 f"-> target {target_density:.3e}, reduction {target_reduction:.2%}"
             )
-        _, _, collapses = simplify(
-            vertices,
-            faces,
-            agg=simplify_agg,
-            target_reduction=target_reduction,
-            return_collapses=True,
-        )
-        vertices, faces, step_mapping = replay_simplification(
-            points=vertices,
-            triangles=faces,
-            collapses=collapses,
+        vertices, faces, step_mapping = _decimate(
+            vertices, faces, agg=simplify_agg, target_reduction=target_reduction
         )
         mapping = step_mapping[mapping]
     if verbose:

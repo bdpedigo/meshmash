@@ -3,8 +3,10 @@ import sys
 
 import numpy as np
 import pytest
+from fast_simplification import replay_simplification, simplify
 
 from meshmash import simplify_mesh
+from meshmash.simplify import _decimate
 
 
 @pytest.fixture(scope="module")
@@ -29,13 +31,7 @@ def test_simplify_mesh_mapping_indexes_the_simplified_mesh(simplified):
 
 
 def test_simplify_mesh_mapping_agrees_with_the_returned_faces(simplified):
-    """The reason both come from replay: the other ordering does not agree.
-
-    Remapping the input's own faces through the mapping has to land on real
-    vertices of the mesh that came back, which is exactly what fails if the
-    mesh is taken from ``simplify`` and the mapping from
-    ``replay_simplification``.
-    """
+    """Remapping the input's own faces lands on real vertices of the mesh that came back."""
     (vertices, faces), mapping = simplified
     assert faces.max() < vertices.shape[0]
     assert set(np.unique(faces)).issubset(set(np.unique(mapping)))
@@ -52,6 +48,43 @@ def test_simplify_mesh_reduction_controls_how_much_is_removed(mesh):
     (_, light), _ = simplify_mesh(mesh, target_reduction=0.2)
     (_, heavy), _ = simplify_mesh(mesh, target_reduction=0.9)
     assert heavy.shape[0] < light.shape[0] < mesh[1].shape[0]
+
+
+@pytest.mark.parametrize("target_reduction", [0.3, 0.7, 0.9])
+def test_decimation_matches_replay_simplification(mesh, target_reduction):
+    """The replay is left out, and nothing it returned may move.
+
+    The bookkeeping uses fast-simplification's private helpers, so this is
+    what catches an upgrade that changes them.
+    """
+    vertices, faces = mesh
+    _, _, collapses = simplify(
+        vertices, faces, agg=7, target_reduction=target_reduction, return_collapses=True
+    )
+    expected = replay_simplification(vertices, faces, collapses)
+
+    for got, want in zip(_decimate(vertices, faces, 7, target_reduction), expected):
+        assert got.dtype == want.dtype
+        np.testing.assert_array_equal(got, want)
+
+
+def test_decimation_matches_replay_with_a_vertex_no_face_uses(mesh):
+    """An unreferenced vertex maps to -1, and the others keep replay's numbering."""
+    vertices, faces = mesh
+    # A stray vertex in the middle shifts every index after it.
+    middle = len(vertices) // 2
+    vertices = np.insert(vertices, middle, vertices[0] + 1e6, axis=0)
+    faces = np.where(faces >= middle, faces + 1, faces).astype(faces.dtype)
+    _, _, collapses = simplify(
+        vertices, faces, agg=7, target_reduction=0.7, return_collapses=True
+    )
+    expected = replay_simplification(vertices, faces, collapses)
+
+    got = _decimate(vertices, faces, 7, 0.7)
+
+    assert got[2][middle] == -1
+    for got_array, want in zip(got, expected):
+        np.testing.assert_array_equal(got_array, want)
 
 
 # --- determinism (TASK-15) ------------------------------------------------

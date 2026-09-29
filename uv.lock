@@ -11,7 +11,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-09-02T19:06:15.044923Z"
+exclude-newer = "2026-09-15T04:03:37.30569Z"
 exclude-newer-span = "P14D"
 
 [[package]]
@@ -2183,7 +2183,7 @@ requires-dist = [
     { name = "chardet", specifier = ">=3.0.4,<6" },
     { name = "click", specifier = "==8.2.1" },
     { name = "embreex", specifier = ">=4.0" },
-    { name = "fast-simplification", specifier = ">=0.1.9" },
+    { name = "fast-simplification", specifier = ">=0.2.0,<0.3" },
     { name = "fastremap", specifier = ">=1.16.1" },
     { name = "gpytoolbox", specifier = ">=0.3.3" },
     { name = "meshio", specifier = ">=5.0" },
