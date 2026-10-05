@@ -818,6 +818,23 @@ def spectral_geometry_filter(
                 )
             band_eigenvalues = band_eigenvalues[closest_idx + 1 :]
             band_eigenvectors = band_eigenvectors[:, closest_idx + 1 :]
+            if len(band_eigenvalues) == 0:
+                # The whole band overlapped what was already seen: eigenvalues
+                # near sigma are degenerate or tightly clustered (e.g. a
+                # near-symmetric mesh region), so the shift made no forward
+                # progress. Mirror the no-overlap retry above, but push sigma
+                # further out rather than pulling it in.
+                sigma = sigma + 0.2 * eigenvalue_bandwidth
+                if profile is not None:
+                    profile["n_retries"] = profile.get("n_retries", 0) + 1
+                    profile["retry_pairs"] = (
+                        profile.get("retry_pairs", 0) + band_size
+                    )
+                if verbose >= 2:
+                    print(f"Will retry band with sigma={sigma:.3g}")
+                band_eigenvalues = None
+                band_eigenvectors = None
+                continue
 
         if truncate_extra and (band_eigenvalues[-1] > max_eigenvalue):
             # Truncate to the max_eigenvalue

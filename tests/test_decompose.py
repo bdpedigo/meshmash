@@ -171,3 +171,19 @@ def test_signals_of_the_wrong_length_are_refused(sphere):
             max_eigenvalue=MAX_EIGENVALUE,
             signals=np.ones((3, 1)),
         )
+
+
+def test_a_band_that_entirely_overlaps_the_last_one_does_not_crash(sphere):
+    """A degenerate spectrum can leave a shifted band with no new eigenvalues.
+
+    A sphere's eigenvalues have multiplicity 2l+1 (see `jittered_sphere`), so a
+    small `band_size` can land a shift entirely inside an already-seen cluster:
+    the overlap trim then empties the band. This used to raise `IndexError:
+    index -1 is out of bounds for axis 0 with size 0` rather than retrying.
+    """
+    L, M = cotangent_laplacian(sphere, robust=True)
+    eigenvalues, _ = spectral_geometry_filter(
+        (L, M), None, max_eigenvalue=MAX_EIGENVALUE, band_size=12, seed=0
+    )
+    assert eigenvalues.max() <= MAX_EIGENVALUE * 1.1  # truncate_extra may overshoot
+    assert np.all(np.diff(eigenvalues) >= 0)
