@@ -729,6 +729,7 @@ def spectral_geometry_filter(
     eigenvalue_bandwidth = 0
     band_k = band_size
     place_next = False
+    retry_count = 0
 
     if filter is not None:
         n_features = filter_width(filter)
@@ -797,12 +798,17 @@ def spectral_geometry_filter(
         diffs = np.abs(band_eigenvalues - last_eigenvalue)
         if (np.min(diffs)) > tol and (len(eigenvalues) > 0):  # ignore if 1st
             # retry with a smaller sigma
+            retry_count += 1
             sigma = sigma - 0.2 * eigenvalue_bandwidth
             if profile is not None:
                 profile["n_retries"] = profile.get("n_retries", 0) + 1
                 profile["retry_pairs"] = profile.get("retry_pairs", 0) + band_size
             if verbose >= 2:
-                print(f"Will retry band with sigma={sigma:.3g}")
+                print(
+                    f"Will retry (no overlap) band {retry_count}: "
+                    f"sigma={sigma:.3g}, bandwidth={eigenvalue_bandwidth:.3g}, "
+                    f"band_max_eigenvalue={band_max_eigenvalue:.3g}"
+                )
             band_eigenvalues = None
             band_eigenvectors = None
             continue
@@ -824,6 +830,7 @@ def spectral_geometry_filter(
                 # near-symmetric mesh region), so the shift made no forward
                 # progress. Mirror the no-overlap retry above, but push sigma
                 # further out rather than pulling it in.
+                retry_count += 1
                 sigma = sigma + 0.2 * eigenvalue_bandwidth
                 if profile is not None:
                     profile["n_retries"] = profile.get("n_retries", 0) + 1
@@ -831,7 +838,11 @@ def spectral_geometry_filter(
                         profile.get("retry_pairs", 0) + band_size
                     )
                 if verbose >= 2:
-                    print(f"Will retry band with sigma={sigma:.3g}")
+                    print(
+                        f"Will retry (full overlap) band {retry_count}: "
+                        f"sigma={sigma:.3g}, bandwidth={eigenvalue_bandwidth:.3g}, "
+                        f"band_max_eigenvalue={band_max_eigenvalue:.3g}"
+                    )
                 band_eigenvalues = None
                 band_eigenvectors = None
                 continue
@@ -903,6 +914,7 @@ def spectral_geometry_filter(
         # update values for next iteration
         if profile is not None:
             profile["n_bands"] = profile.get("n_bands", 0) + 1
+        retry_count = 0
         eigenvalues.extend(band_eigenvalues)
         band_max_eigenvalue = np.max(band_eigenvalues)
         band_min_eigenvalue = np.min(band_eigenvalues)

@@ -32,6 +32,7 @@ def component_morphometry_pipeline(
     split_threshold=None,
     split_min_size=10,
     bound_volume_threshold=None,  # um^3
+    seed=None,
     verbose=False,
 ):
     """Measure morphometric properties of labeled mesh components.
@@ -72,6 +73,9 @@ def component_morphometry_pipeline(
     bound_volume_threshold :
         If set, skip components whose axis-aligned bounding-box volume
         exceeds this value (in μm³).
+    seed :
+        Seed for the random point sampling behind the volume, medoid, PCA and
+        distance estimates. ``None`` gives a different result on every call.
     verbose :
         If ``True``, display a progress bar.
 
@@ -79,8 +83,9 @@ def component_morphometry_pipeline(
     -------
     results :
         One row per measured component, indexed by ``component_id``.  Columns
-        are ``size_nm3``, ``area_nm2``, ``sphericity``, ``x``, ``y``, ``z``
-        (the medoid), ``pca_val_1``, ``pca_val_2``, ``pca_val_3``,
+        are ``{split_laplacian}_fiedler_eval`` (the Fiedler eigenvalue of the
+        component's graph), ``size_nm3``, ``area_nm2``, ``sphericity``, ``x``,
+        ``y``, ``z`` (the medoid), ``pca_val_1``, ``pca_val_2``, ``pca_val_3``,
         ``max_dt_nm``, ``mean_dt_nm``, ``n_vertices``, ``n_faces``,
         ``n_interior_samples``, ``n_sampled_points``, ``bound_volume_um3``,
         and ``time`` (seconds spent on the component).  ``n_post_synapses`` is
@@ -117,6 +122,7 @@ def component_morphometry_pipeline(
     corrected_components = components.copy()
 
     areas = compute_vertex_areas(mesh, robust=False)
+    rng = np.random.default_rng(seed)
 
     indices = np.arange(len(mesh[0]))
     points_per_um3 = 25_000
@@ -167,7 +173,9 @@ def component_morphometry_pipeline(
                 submesh = subset_mesh_by_indices(submesh, lcc_indices)
 
             L = laplacian(subadj, normed=False, symmetrized=True)
-            evals, evecs = eigsh(L, k=2, sigma=-1e-10, return_eigenvectors=True)
+            # ARPACK draws its own random start vector unless given one.
+            v0 = rng.uniform(-1.0, 1.0, size=L.shape[0])
+            evals, evecs = eigsh(L, k=2, sigma=-1e-10, v0=v0, return_eigenvectors=True)
             indices = np.argsort(evals)
             evals = evals[indices]
             evecs = evecs[:, indices]
@@ -240,7 +248,7 @@ def component_morphometry_pipeline(
 
             n_points = max(int(bound_volume_um3 * points_per_um3), 1000)
             # TODO make this just a grid
-            sample_points = np.random.uniform(bounds[0], bounds[1], (n_points, 3))
+            sample_points = rng.uniform(bounds[0], bounds[1], (n_points, 3))
             winding_numbers = fast_winding_number(sample_points, submesh[0], submesh[1])
 
             inside_mask = winding_numbers > 0.5
@@ -259,7 +267,7 @@ def component_morphometry_pipeline(
 
             inside_points = sample_points[inside_mask]
             if inside_points.shape[0] > 5:
-                subsample_indices = np.random.choice(
+                subsample_indices = rng.choice(
                     inside_points.shape[0],
                     size=min(250, len(inside_points)),
                     replace=False,
@@ -271,7 +279,7 @@ def component_morphometry_pipeline(
                 row_data["y"] = np.float32(medioid[1])
                 row_data["z"] = np.float32(medioid[2])
 
-                subsample_indices = np.random.choice(
+                subsample_indices = rng.choice(
                     inside_points.shape[0],
                     size=min(1000, len(inside_points)),
                     replace=False,
@@ -299,7 +307,7 @@ def component_morphometry_pipeline(
             pbar.update(1)
 
     if len(rows) == 0:
-        return pd.DataFrame(), corrected_components
+        return pd.DataFrame(), np.full(len(corrected_components), -1, dtype=np.int32)
 
     results = (
         pd.DataFrame(rows)
@@ -312,10 +320,14 @@ def component_morphometry_pipeline(
     corrected_components = corrected_components.astype(np.int32)
 
     if post_synapse_mappings is not None:
-        post_synapse_components = corrected_components[post_synapse_mappings]
-        results["n_post_synapses"] = np.zeros(len(results), dtype=np.int32)
-        for component in post_synapse_components:
-            if component != -1 and component in results.index:
-                results.loc[component, "n_post_synapses"] += 1
+        post_synapse_components = corrected_components[
+            np.asarray(post_synapse_mappings)
+        ]
+        counts = pd.Series(
+            post_synapse_components[post_synapse_components != -1]
+        ).value_counts()
+        results["n_post_synapses"] = (
+            counts.reindex(results.index, fill_value=0).to_numpy().astype(np.int32)
+        )
 
     return results, corrected_components
