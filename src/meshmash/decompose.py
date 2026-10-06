@@ -739,16 +739,22 @@ def spectral_geometry_filter(
     band_k = band_size
     place_next = False
     retry_count = 0
-    # A degenerate band (eigenvalue_bandwidth == 0, e.g. a repeated eigenvalue
-    # from mesh symmetry) would otherwise shift sigma by 0.2 * 0 = 0 forever,
-    # never escaping. Floor the shift so every retry makes real progress.
+    # A fully degenerate band (eigenvalue_bandwidth == 0 exactly, e.g. a
+    # repeated eigenvalue from mesh symmetry or a non-biological mesh
+    # artifact) would otherwise shift sigma by 0.2 * 0 = 0 forever, never
+    # escaping -- unlike a small but nonzero bandwidth, which already makes
+    # real proportional progress via 0.2 * eigenvalue_bandwidth below and
+    # needs no special handling. Only this exact-zero case grows the shift
+    # on each consecutive failure (2**0, 2**1, ...), capped at max_eigenvalue
+    # so sigma never wanders far enough outside the problem's own range to
+    # make a retry's solve numerically expensive.
     min_shift = 10 * tol
-    # A real degenerate case (jittered_sphere, band_size=12) measured at 884
-    # retries to legitimately converge; this leaves ~5x headroom so a slow
-    # but resolvable cluster is never mistaken for a stuck one, while a
-    # genuinely stuck cluster (sigma oscillating forever between two fixed
-    # points) still fails in well under a minute instead of hanging.
-    max_retries = 5_000
+    # Growth reaches max_eigenvalue in ~log2(max_eigenvalue / min_shift)
+    # retries; this is generous headroom above that, so reaching it means a
+    # cluster sigma truly cannot get past (confirmed on real production data:
+    # a thin, non-biological mesh fragment with an eigenvalue cluster no
+    # shift could escape).
+    max_retries = 100
 
     if filter is not None:
         n_features = filter_width(filter)
@@ -817,15 +823,24 @@ def spectral_geometry_filter(
         diffs = np.abs(band_eigenvalues - last_eigenvalue)
         if (np.min(diffs)) > tol and (len(eigenvalues) > 0):  # ignore if 1st
             # retry with a smaller sigma
-            retry_count += 1
-            if retry_count > max_retries:
-                raise SpectralStallError(
-                    f"spectral_geometry_filter gave up after {max_retries} "
-                    f"retries with no forward progress: sigma={sigma:.3g}, "
-                    f"band_max_eigenvalue={band_max_eigenvalue:.3g}, "
-                    f"mesh has {L.shape[0]} vertices"
-                )
-            sigma = sigma - max(0.2 * eigenvalue_bandwidth, min_shift)
+            proposed_shift = 0.2 * eigenvalue_bandwidth
+            if sigma - proposed_shift == sigma:
+                # The proposed shift is too small to change sigma at all once
+                # added (bandwidth is 0, or just below sigma's own precision
+                # floor): escalate instead of retrying with a no-op forever.
+                retry_count += 1
+                if retry_count > max_retries:
+                    raise SpectralStallError(
+                        f"spectral_geometry_filter gave up after {max_retries} "
+                        f"retries with no forward progress: sigma={sigma:.3g}, "
+                        f"band_max_eigenvalue={band_max_eigenvalue:.3g}, "
+                        f"mesh has {L.shape[0]} vertices"
+                    )
+                shift = min(min_shift * 2 ** (retry_count - 1), max_eigenvalue)
+            else:
+                retry_count = 0
+                shift = proposed_shift
+            sigma = sigma - shift
             if profile is not None:
                 profile["n_retries"] = profile.get("n_retries", 0) + 1
                 profile["retry_pairs"] = profile.get("retry_pairs", 0) + band_size
@@ -856,15 +871,21 @@ def spectral_geometry_filter(
                 # near-symmetric mesh region), so the shift made no forward
                 # progress. Mirror the no-overlap retry above, but push sigma
                 # further out rather than pulling it in.
-                retry_count += 1
-                if retry_count > max_retries:
-                    raise SpectralStallError(
-                        f"spectral_geometry_filter gave up after {max_retries} "
-                        f"retries with no forward progress: sigma={sigma:.3g}, "
-                        f"band_max_eigenvalue={band_max_eigenvalue:.3g}, "
-                        f"mesh has {L.shape[0]} vertices"
-                    )
-                sigma = sigma + max(0.2 * eigenvalue_bandwidth, min_shift)
+                proposed_shift = 0.2 * eigenvalue_bandwidth
+                if sigma + proposed_shift == sigma:
+                    retry_count += 1
+                    if retry_count > max_retries:
+                        raise SpectralStallError(
+                            f"spectral_geometry_filter gave up after {max_retries} "
+                            f"retries with no forward progress: sigma={sigma:.3g}, "
+                            f"band_max_eigenvalue={band_max_eigenvalue:.3g}, "
+                            f"mesh has {L.shape[0]} vertices"
+                        )
+                    shift = min(min_shift * 2 ** (retry_count - 1), max_eigenvalue)
+                else:
+                    retry_count = 0
+                    shift = proposed_shift
+                sigma = sigma + shift
                 if profile is not None:
                     profile["n_retries"] = profile.get("n_retries", 0) + 1
                     profile["retry_pairs"] = (
