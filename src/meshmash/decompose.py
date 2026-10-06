@@ -741,11 +741,14 @@ def spectral_geometry_filter(
     retry_count = 0
     # A degenerate band (eigenvalue_bandwidth == 0, e.g. a repeated eigenvalue
     # from mesh symmetry) would otherwise shift sigma by 0.2 * 0 = 0 forever,
-    # never escaping. Floor the shift so every retry makes real progress.
+    # never escaping. Floor the shift, growing it on each consecutive failure
+    # (2**0, 2**1, ...) so it clears any finite-width degenerate cluster in a
+    # handful of retries rather than needing one step per eigenvalue in it.
     min_shift = 10 * tol
-    # Retries should resolve in a handful of steps once floored; this many
-    # means something else is wrong, so fail loudly instead of spinning.
-    max_retries = 500
+    # Exponential growth escapes any real (finite) cluster long before this;
+    # reaching it means something else is wrong, so fail loudly instead of
+    # spinning.
+    max_retries = 100
 
     if filter is not None:
         n_features = filter_width(filter)
@@ -822,7 +825,7 @@ def spectral_geometry_filter(
                     f"band_max_eigenvalue={band_max_eigenvalue:.3g}, "
                     f"mesh has {L.shape[0]} vertices"
                 )
-            sigma = sigma - max(0.2 * eigenvalue_bandwidth, min_shift)
+            sigma = sigma - max(0.2 * eigenvalue_bandwidth, min_shift * 2 ** min(retry_count - 1, 30))
             if profile is not None:
                 profile["n_retries"] = profile.get("n_retries", 0) + 1
                 profile["retry_pairs"] = profile.get("retry_pairs", 0) + band_size
@@ -861,7 +864,7 @@ def spectral_geometry_filter(
                         f"band_max_eigenvalue={band_max_eigenvalue:.3g}, "
                         f"mesh has {L.shape[0]} vertices"
                     )
-                sigma = sigma + max(0.2 * eigenvalue_bandwidth, min_shift)
+                sigma = sigma + max(0.2 * eigenvalue_bandwidth, min_shift * 2 ** min(retry_count - 1, 30))
                 if profile is not None:
                     profile["n_retries"] = profile.get("n_retries", 0) + 1
                     profile["retry_pairs"] = (

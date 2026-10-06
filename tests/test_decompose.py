@@ -8,8 +8,10 @@ These check against it rather than against recorded numbers.
 import numpy as np
 import pytest
 import pyvista as pv
+import scipy.sparse as sparse
 
 from meshmash import (
+    SpectralStallError,
     concatenate_filters,
     get_heat_filter,
     get_hks_filter,
@@ -187,3 +189,30 @@ def test_a_band_that_entirely_overlaps_the_last_one_does_not_crash(sphere):
     )
     assert eigenvalues.max() <= MAX_EIGENVALUE * 1.1  # truncate_extra may overshoot
     assert np.all(np.diff(eigenvalues) >= 0)
+
+
+def test_a_cluster_no_shift_can_escape_raises_instead_of_hanging(monkeypatch):
+    """Production hit a mesh fragment (a long, thin, non-biological mesh
+    artifact) whose eigenvalue cluster was wider than `band_size`: every
+    retry's band fell entirely behind the frontier, so neither pulling sigma
+    in nor pushing it out ever surfaced a new eigenvalue, and the loop spun
+    forever instead of crashing. A stub forces that exact "always behind the
+    frontier" shape deterministically, rather than depending on ARPACK or
+    reconstructing the real degenerate mesh.
+    """
+    # Sorted ascending, like a real decompose_laplacian call returns. The last
+    # (largest) entry sits exactly at the frontier every time, so the overlap
+    # trim removes the whole band -- no shift, in either direction, changes
+    # that, because the stub ignores sigma entirely.
+    fixed_band = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 10.0])
+
+    def _always_behind_the_frontier(L, M, n_components, sigma, **kwargs):
+        return fixed_band.copy(), np.zeros((L.shape[0], len(fixed_band)))
+
+    monkeypatch.setattr(
+        "meshmash.decompose.decompose_laplacian", _always_behind_the_frontier
+    )
+
+    L = M = sparse.identity(5, format="csr")
+    with pytest.raises(SpectralStallError, match="gave up after"):
+        spectral_geometry_filter((L, M), None, max_eigenvalue=100.0, band_size=12, seed=0)

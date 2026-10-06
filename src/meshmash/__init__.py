@@ -41,6 +41,7 @@ from .curvature import (
 )
 from .datasets import fetch_sample_mesh
 from .decompose import (
+    SpectralStallError,
     compute_geometry_vectors,
     compute_hks,
     concatenate_filters,
@@ -240,6 +241,7 @@ __all__ = [
     "simplify_mesh",
     "spectral_bisect",
     "spectral_geometry_filter",
+    "SpectralStallError",
     "subset_mesh_by_indices",
     "threshold_mesh_by_component_size",
     "vertex_normals",
