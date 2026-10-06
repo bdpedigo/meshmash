@@ -47,6 +47,7 @@ the source mesh happened to arrive at, and the timescale grid means the same
 thing across meshes.
 """
 
+import logging
 import multiprocessing
 import time
 from concurrent.futures import ProcessPoolExecutor
@@ -58,7 +59,7 @@ from threadpoolctl import threadpool_limits
 
 from ..agglomerate import condense_features, fix_split_labels_and_features
 from ..curvature import compute_diffused_curvature, diffused_curvature_feature_names
-from ..decompose import get_hks_filter
+from ..decompose import SpectralStallError, get_hks_filter
 from ..graph import condense_mesh_to_graph, condensed_node_property_names
 from ..simplify import simplify_mesh, simplify_to_density
 from ..split import MeshStitcher
@@ -201,7 +202,7 @@ def compute_condensed_spectral(
     distance_threshold: float = 3.0,
     seed: Optional[int] = None,
     blas_threads: Optional[int] = 1,
-) -> tuple[pd.DataFrame, np.ndarray]:
+) -> Optional[tuple[pd.DataFrame, np.ndarray]]:
     """Featurize and condense a single (unsplit) mesh, three families at once.
 
     The counterpart of
@@ -276,6 +277,15 @@ def compute_condensed_spectral(
         which logs the ``hks_`` block once every chunk is stitched.
     labels :
         Per-vertex domain label array of length ``V``.
+
+        ``None`` instead of the pair above if this chunk's eigenvalue cluster
+        was too degenerate for
+        [spectral_geometry_filter][meshmash.decompose.spectral_geometry_filter]
+        to resolve (``SpectralStallError``) -- seen in practice on thin,
+        non-biological mesh artifacts.
+        [MeshStitcher.apply][meshmash.split.MeshStitcher.apply] treats
+        ``None`` as "this chunk failed": its vertices come back as the null
+        domain rather than failing the whole run.
     """
     # The linear algebra below sums in an order that depends on how many BLAS
     # threads it gets, which changes the features in their last float32 bit.
@@ -285,21 +295,31 @@ def compute_condensed_spectral(
     # in-process call. Fixing the thread count makes the whole pipeline
     # reproducible whatever `n_jobs` is. See TASK-12.
     with threadpool_limits(limits=blas_threads):
-        features = compute_diffused_curvature(
-            mesh,
-            np.geomspace(t_min, t_max, n_scales),
-            diagonal_filter=get_hks_filter(
-                t_max, t_min, n_components, dtype=decomposition_dtype
-            ),
-            max_eigenvalue=max_eigenvalue,
-            truncate_extra=truncate_extra,
-            drop_first=drop_first,
-            robust=robust,
-            mollify_factor=mollify_factor,
-            decomposition_dtype=decomposition_dtype,
-            seed=seed,
-            **compute_diffused_curvature_kwargs,
-        )
+        try:
+            features = compute_diffused_curvature(
+                mesh,
+                np.geomspace(t_min, t_max, n_scales),
+                diagonal_filter=get_hks_filter(
+                    t_max, t_min, n_components, dtype=decomposition_dtype
+                ),
+                max_eigenvalue=max_eigenvalue,
+                truncate_extra=truncate_extra,
+                drop_first=drop_first,
+                robust=robust,
+                mollify_factor=mollify_factor,
+                decomposition_dtype=decomposition_dtype,
+                seed=seed,
+                **compute_diffused_curvature_kwargs,
+            )
+        except SpectralStallError:
+            n_vertices = interpret_mesh(mesh)[0].shape[0]
+            logging.warning(
+                "compute_condensed_spectral: dropping a chunk of %d vertices, "
+                "its eigenvalue cluster could not be resolved",
+                n_vertices,
+                exc_info=True,
+            )
+            return None
 
         return condense_features(
             mesh,
@@ -485,14 +505,14 @@ def compute_split_condensed_spectral(
         print(f"Featurizing took {time.time() - currtime:.3f} seconds.")
 
     sub_agg_labels = stitcher.stitch_features(
-        [result[1] for result in results_by_submesh],
+        [result[1] if result is not None else None for result in results_by_submesh],
         fill_value=-1,
     ).reshape(-1)
 
     agg_labels, condensed = fix_split_labels_and_features(
         sub_agg_labels,
         stitcher.submesh_mapping,
-        [result[0] for result in results_by_submesh],
+        [result[0] if result is not None else None for result in results_by_submesh],
     )
 
     # The HKS block only.  See the Returns note: the other two families have

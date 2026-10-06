@@ -238,6 +238,11 @@ def fix_split_labels_and_features(
 
     new_data = []
     for submesh_index, data in enumerate(features_by_submesh):
+        if data is None:
+            # This chunk failed (e.g. SpectralStallError); its vertices are
+            # already the null label via stitch_features' fill_value, so
+            # there is nothing to remap here.
+            continue
         data: pd.DataFrame
         data.drop(-1, inplace=True, errors="ignore")
         if submesh_index in label_mapping_series.index.get_level_values(0):
@@ -252,7 +257,8 @@ def fix_split_labels_and_features(
     if new_data:
         new_data = pd.concat(new_data)
     else:
-        new_data = pd.DataFrame(columns=features_by_submesh[0].columns)
+        first_valid = next(d for d in features_by_submesh if d is not None)
+        new_data = pd.DataFrame(columns=first_valid.columns)
     # add the null-label (-1) row via reindex rather than concat, so pandas
     # does not have to resolve dtypes across an all-NA entry (avoids FutureWarning)
     new_data = new_data.reindex(new_data.index.append(pd.Index([-1], dtype=np.int32)))
