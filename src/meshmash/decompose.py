@@ -741,14 +741,14 @@ def spectral_geometry_filter(
     retry_count = 0
     # A degenerate band (eigenvalue_bandwidth == 0, e.g. a repeated eigenvalue
     # from mesh symmetry) would otherwise shift sigma by 0.2 * 0 = 0 forever,
-    # never escaping. Floor the shift, growing it on each consecutive failure
-    # (2**0, 2**1, ...) so it clears any finite-width degenerate cluster in a
-    # handful of retries rather than needing one step per eigenvalue in it.
+    # never escaping. Floor the shift so every retry makes real progress.
     min_shift = 10 * tol
-    # Exponential growth escapes any real (finite) cluster long before this;
-    # reaching it means something else is wrong, so fail loudly instead of
-    # spinning.
-    max_retries = 100
+    # A real degenerate case (jittered_sphere, band_size=12) measured at 884
+    # retries to legitimately converge; this leaves ~5x headroom so a slow
+    # but resolvable cluster is never mistaken for a stuck one, while a
+    # genuinely stuck cluster (sigma oscillating forever between two fixed
+    # points) still fails in well under a minute instead of hanging.
+    max_retries = 5_000
 
     if filter is not None:
         n_features = filter_width(filter)
@@ -825,7 +825,7 @@ def spectral_geometry_filter(
                     f"band_max_eigenvalue={band_max_eigenvalue:.3g}, "
                     f"mesh has {L.shape[0]} vertices"
                 )
-            sigma = sigma - max(0.2 * eigenvalue_bandwidth, min_shift * 2 ** min(retry_count - 1, 30))
+            sigma = sigma - max(0.2 * eigenvalue_bandwidth, min_shift)
             if profile is not None:
                 profile["n_retries"] = profile.get("n_retries", 0) + 1
                 profile["retry_pairs"] = profile.get("retry_pairs", 0) + band_size
@@ -864,7 +864,7 @@ def spectral_geometry_filter(
                         f"band_max_eigenvalue={band_max_eigenvalue:.3g}, "
                         f"mesh has {L.shape[0]} vertices"
                     )
-                sigma = sigma + max(0.2 * eigenvalue_bandwidth, min_shift * 2 ** min(retry_count - 1, 30))
+                sigma = sigma + max(0.2 * eigenvalue_bandwidth, min_shift)
                 if profile is not None:
                     profile["n_retries"] = profile.get("n_retries", 0) + 1
                     profile["retry_pairs"] = (

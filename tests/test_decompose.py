@@ -213,6 +213,6 @@ def test_a_cluster_no_shift_can_escape_raises_instead_of_hanging(monkeypatch):
         "meshmash.decompose.decompose_laplacian", _always_behind_the_frontier
     )
 
-    L = M = sparse.identity(5, format="csr")
+    L = M = sparse.csr_array(sparse.identity(5, format="csr"))
     with pytest.raises(SpectralStallError, match="gave up after"):
         spectral_geometry_filter((L, M), None, max_eigenvalue=100.0, band_size=12, seed=0)
