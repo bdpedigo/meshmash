@@ -194,20 +194,22 @@ def test_a_band_that_entirely_overlaps_the_last_one_does_not_crash(sphere):
 def test_a_cluster_no_shift_can_escape_raises_instead_of_hanging(monkeypatch):
     """Production hit a mesh fragment (a long, thin, non-biological mesh
     artifact) whose eigenvalue cluster was wider than `band_size`: every
-    retry's band fell entirely behind the frontier, so neither pulling sigma
-    in nor pushing it out ever surfaced a new eigenvalue, and the loop spun
-    forever instead of crashing. A stub forces that exact "always behind the
-    frontier" shape deterministically, rather than depending on ARPACK or
-    reconstructing the real degenerate mesh.
+    retry's band fell entirely behind the frontier, and the proposed shift
+    (proportional to the cluster's own width) was too small to move sigma at
+    all once added, so the loop spun forever instead of crashing. A stub
+    forces that shape deterministically: a degenerate (zero-width) first
+    band, then a band that always ties the frontier only at its last entry
+    -- the overlap trim removes it whole, every time, with nothing to shift
+    sigma by, because the stub ignores sigma entirely.
     """
-    # Sorted ascending, like a real decompose_laplacian call returns. The last
-    # (largest) entry sits exactly at the frontier every time, so the overlap
-    # trim removes the whole band -- no shift, in either direction, changes
-    # that, because the stub ignores sigma entirely.
-    fixed_band = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 10.0])
+    first_band = np.array([10.0] * 6)  # zero-width: pins eigenvalue_bandwidth at 0
+    retry_band = np.array([5.0, 6.0, 7.0, 8.0, 9.0, 10.0])  # ties the frontier at [-1] only
+    calls = {"n": 0}
 
     def _always_behind_the_frontier(L, M, n_components, sigma, **kwargs):
-        return fixed_band.copy(), np.zeros((L.shape[0], len(fixed_band)))
+        calls["n"] += 1
+        band = first_band if calls["n"] == 1 else retry_band
+        return band.copy(), np.zeros((L.shape[0], len(band)))
 
     monkeypatch.setattr(
         "meshmash.decompose.decompose_laplacian", _always_behind_the_frontier
