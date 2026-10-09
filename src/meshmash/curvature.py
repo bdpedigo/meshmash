@@ -74,9 +74,7 @@ def vertex_normals(mesh: Mesh) -> np.ndarray:
 
     The sign is whatever the mesh's face winding says, which for a mesh nobody
     has oriented is arbitrary per connected component.  Callers that need a
-    consistent sign have to fix it themselves.  See
-    [mean_curvature_measure][meshmash.curvature.mean_curvature_measure], which
-    fixes it against the mean-curvature direction.
+    consistent sign have to fix it themselves.
 
     Parameters
     ----------
@@ -160,12 +158,8 @@ def mean_curvature_measure(
     clean mesh and not on a real one: on ``microns_dendrite_sample``, about one
     interior vertex in fifty differs by more than a factor of three.
 
-    The normals are flipped as a group when the median of their agreement with
-    the mean-curvature direction comes out negative.  The winding of a mesh
-    nobody has oriented is arbitrary, but the mean-curvature direction is not,
-    so the geometry fixes the sign rather than the file.  This is a single
-    global vote, not a per-vertex one: a per-vertex flip would make every
-    surface read convex.
+    The sign follows the normals, and so the mesh's face winding.  Orient the
+    mesh first if the sign matters.
 
     Parameters
     ----------
@@ -180,7 +174,7 @@ def mean_curvature_measure(
         vertices agree to the last bit or nearly so.
     normals :
         Pre-computed unit vertex normals, shape ``(V, 3)``.  Computed from the
-        mesh when ``None``.  The sign vote is applied either way.
+        mesh when ``None``.
     mask_boundary :
         If ``True``, zero the measure at vertices on an open boundary, where
         the vertex area is a partial area and the curvature it implies is
@@ -213,44 +207,10 @@ def mean_curvature_measure(
     normals = np.asarray(normals, dtype=np.float64)
 
     mean_vector = L.astype(np.float64) @ centered
-    normals = orient_normals_by_curvature(normals, mean_vector)
+    # normals = orient_normals_by_curvature(normals, mean_vector)
 
     measure = 0.5 * (mean_vector * normals).sum(axis=1)
     return _mask(measure, (vertices, faces), mask_boundary)
-
-
-def orient_normals_by_curvature(
-    normals: np.ndarray, mean_curvature_vector: np.ndarray
-) -> np.ndarray:
-    """Flip a whole normal field into agreement with the mean-curvature normal.
-
-    Parameters
-    ----------
-    normals :
-        Vertex normals, shape ``(V, 3)``.  Need not be unit length.
-    mean_curvature_vector :
-        The mean-curvature normal ``L @ V``, shape ``(V, 3)``.
-
-    Returns
-    -------
-    :
-        Either ``normals`` or ``-normals``, whichever agrees with
-        ``mean_curvature_vector`` at more than half of the vertices where both
-        are non-zero.  Returns ``normals`` unchanged when no vertex qualifies.
-    """
-    vector_norm = np.linalg.norm(mean_curvature_vector, axis=1)
-    normal_norm = np.linalg.norm(normals, axis=1)
-    usable = (vector_norm > 0) & (normal_norm > 0)
-    if not usable.any():
-        return normals
-    cosines = (
-        mean_curvature_vector[usable]
-        / vector_norm[usable, None]
-        * (normals[usable] / normal_norm[usable, None])
-    ).sum(axis=1)
-    if np.median(cosines) < 0:
-        return -normals
-    return normals
 
 
 def gaussian_curvature_measure(mesh: Mesh, mask_boundary: bool = True) -> np.ndarray:
@@ -587,7 +547,7 @@ def compute_diffused_curvature(
     max_eigenvalue: float = 1e-8,
     band_size: int = 50,
     truncate_extra: bool = True,
-    drop_first: bool = True,
+    drop_first: bool = False,
     robust: bool = True,
     mollify_factor: float = 1e-5,
     decomposition_dtype: Optional[np.dtype] = np.float64,
@@ -719,7 +679,7 @@ def compute_diffused_curvature(
     normals = vertex_normals((centered, faces))
 
     # TODO not sure I want this step, for some cases this is a signal
-    normals = orient_normals_by_curvature(normals, L.astype(np.float64) @ centered)
+    # normals = orient_normals_by_curvature(normals, L.astype(np.float64) @ centered)
     measures = np.column_stack(
         [
             mean_curvature_measure(

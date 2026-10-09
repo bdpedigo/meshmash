@@ -36,7 +36,6 @@ from .curvature import (
     mean_curvature_measure,
     normal_tensor_invariants,
     normal_tensor_measure,
-    orient_normals_by_curvature,
     vertex_normals,
 )
 from .datasets import fetch_sample_mesh
@@ -219,7 +218,6 @@ __all__ = [
     "orient_faces_by_raycast",
     "orient_faces_by_winding",
     "orient_mesh",
-    "orient_normals_by_curvature",
     "poly_to_mesh",
     "project_points_to_mesh",
     "read_array",

@@ -280,6 +280,40 @@ def orient_faces_by_raycast(
     return vertices, oriented_faces
 
 
+def _orient_normals_by_curvature(
+    normals: np.ndarray, mean_curvature_vector: np.ndarray
+) -> np.ndarray:
+    """Flip a whole normal field into agreement with the mean-curvature normal.
+
+    Parameters
+    ----------
+    normals :
+        Vertex normals, shape ``(V, 3)``.  Need not be unit length.
+    mean_curvature_vector :
+        The mean-curvature normal ``L @ V``, shape ``(V, 3)``.
+
+    Returns
+    -------
+    :
+        Either ``normals`` or ``-normals``, whichever agrees with
+        ``mean_curvature_vector`` at more than half of the vertices where both
+        are non-zero.  Returns ``normals`` unchanged when no vertex qualifies.
+    """
+    vector_norm = np.linalg.norm(mean_curvature_vector, axis=1)
+    normal_norm = np.linalg.norm(normals, axis=1)
+    usable = (vector_norm > 0) & (normal_norm > 0)
+    if not usable.any():
+        return normals
+    cosines = (
+        mean_curvature_vector[usable]
+        / vector_norm[usable, None]
+        * (normals[usable] / normal_norm[usable, None])
+    ).sum(axis=1)
+    if np.median(cosines) < 0:
+        return -normals
+    return normals
+
+
 def orient_mesh(
     mesh: Mesh,
     flip_eps: float = 25.0,
