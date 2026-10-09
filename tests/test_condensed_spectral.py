@@ -212,9 +212,8 @@ def test_only_the_hks_block_is_logged(condensed):
     The shape fractions sum to one per vertex, and an area-weighted mean of
     values summing to one still sums to one. A log anywhere in that block
     would destroy it. The curvature columns are the other direction: a
-    dendrite has saddles, so Gaussian curvature and the smaller principal
-    curvature come out negative on some domains, and a logged column could not
-    hold both signs. Mean curvature is not the column to check — a dendrite is
+    dendrite has saddles, so Gaussian curvature comes out negative on some
+    domains, raw and diffused, and a logged column could not hold both signs. Mean curvature is not the column to check — a dendrite is
     convex on average, so its domain means are all positive either way.
     """
     features = condensed.condensed_features.drop(index=-1)
@@ -225,7 +224,7 @@ def test_only_the_hks_block_is_logged(condensed):
         ]
         np.testing.assert_allclose(fractions.sum(axis=1), 1.0, atol=1e-6)
 
-    for column in ("curvature_gauss_raw", "curvature_k2_0"):
+    for column in ("curvature_gauss_raw", "curvature_gauss_0"):
         values = features[column]
         assert (values > 0).any() and (values < 0).any(), column
 

@@ -44,21 +44,15 @@ from .laplacian import compute_vertex_areas, cotangent_laplacian
 from .types import ArrayLike, Mesh, interpret_mesh
 from .utils import boundary_vertices
 
-#: The invariants [curvature_invariants][meshmash.curvature.curvature_invariants]
-#: emits, in the order it emits them.
-CURVATURE_INVARIANT_NAMES = (
-    "mean",
-    "gauss",
-    "k1",
-    "k2",
-    "shape_index",
-    "curvedness",
-)
+#: The curvature channels, in the order
+#: [compute_diffused_curvature][meshmash.curvature.compute_diffused_curvature]
+#: emits them.
+CURVATURE_INVARIANT_NAMES = ("mean", "gauss")
 
 #: The invariants
 #: [normal_tensor_invariants][meshmash.curvature.normal_tensor_invariants] emits,
 #: in the order it emits them.
-NORMAL_TENSOR_INVARIANT_NAMES = ("sheet", "tube", "blob", "trace")
+NORMAL_TENSOR_INVARIANT_NAMES = ("sheet", "tube", "blob")
 
 #: The upper triangle of a symmetric 3x3, in the order the normal tensor's six
 #: channels are written and read back.
@@ -331,78 +325,12 @@ def normal_tensor_measure(
     return _mask(areas[:, None] * tensor, (vertices, faces), mask_boundary)
 
 
-def curvature_invariants(mean: ArrayLike, gauss: ArrayLike) -> np.ndarray:
-    """Six local shape descriptors from mean and Gaussian curvature.
-
-    Pointwise and unit-agnostic: the inputs are curvatures, not measures, and
-    the outputs carry whatever length unit they came in with.  ``mean``,
-    ``k1``, ``k2`` and ``curvedness`` are in inverse length, ``gauss`` in
-    inverse length squared, and ``shape_index`` is dimensionless in
-    ``[-1, 1]``.
-
-    The principal curvatures come from inverting the symmetric functions,
-    :math:`\\kappa_{1,2} = H \\pm \\sqrt{H^2 - K}`.  The shape index and the
-    curvedness are the polar coordinates of :math:`(\\kappa_1, \\kappa_2)`
-    from [1]: the shape index is the angle, and says *what* shape without
-    regard to scale, while the curvedness is the radius, and says how sharply
-    curved without regard to kind.
-
-    Parameters
-    ----------
-    mean :
-        Mean curvature :math:`H = (\\kappa_1 + \\kappa_2) / 2`, shape ``(V,)``.
-    gauss :
-        Gaussian curvature :math:`K = \\kappa_1 \\kappa_2`, shape ``(V,)``.
-
-    Returns
-    -------
-    :
-        Array of shape ``(V, 6)``, with columns named by
-        [CURVATURE_INVARIANT_NAMES][meshmash.curvature.CURVATURE_INVARIANT_NAMES].
-
-    Notes
-    -----
-    :math:`H^2 - K` is non-negative for any real surface, being
-    :math:`((\\kappa_1 - \\kappa_2) / 2)^2`, but discrete mean and Gaussian
-    curvature come from different estimators and can disagree by enough to
-    make it negative.  It is clipped at zero, which reports an umbilic point
-    where the two estimators fell out of step.
-
-    The shape index is written with a two-argument arctangent so that an
-    umbilic point, where the denominator is zero, gives the limit rather than
-    a division by zero.  For a convex umbilic it returns ``+1``.
-
-    Rows that are not finite come back as ``NaN`` rather than raising, as in
-    [normal_tensor_invariants][meshmash.curvature.normal_tensor_invariants],
-    because a caller stitching chunks together has rows it never computed.
-
-    References
-    ----------
-    [1] J. J. Koenderink and A. J. van Doorn, "Surface shape and curvature
-    scales", Image and Vision Computing, 10(8):557-564, 1992.
-    """
-    mean = np.asarray(mean, dtype=np.float64)
-    gauss = np.asarray(gauss, dtype=np.float64)
-    with np.errstate(invalid="ignore"):
-        deviation = np.sqrt(np.clip(mean**2 - gauss, 0.0, None))
-        return np.column_stack(
-            [
-                mean,
-                gauss,
-                mean + deviation,
-                mean - deviation,
-                (2.0 / np.pi) * np.arctan2(mean, deviation),
-                np.sqrt(np.clip(2.0 * mean**2 - gauss, 0.0, None)),
-            ]
-        )
-
-
 def normal_tensor_invariants(tensor: ArrayLike) -> np.ndarray:
-    """Shape fractions and trace of a diffused normal structure tensor.
+    """Shape fractions of a diffused normal structure tensor.
 
     Takes the six unique entries of a symmetric 3x3 per vertex, in the order
     [normal_tensor_measure][meshmash.curvature.normal_tensor_measure] writes
-    them, and returns the eigenvalue shape fractions of [1] plus the trace.
+    them, and returns the eigenvalue shape fractions of [1].
 
     With eigenvalues :math:`\\lambda_1 \\ge \\lambda_2 \\ge \\lambda_3 \\ge 0`
     summing to :math:`S`, the fractions are
@@ -413,11 +341,6 @@ def normal_tensor_invariants(tensor: ArrayLike) -> np.ndarray:
     ``sheet``; two, a neighbourhood curving one way, reads ``tube``; three,
     curving every way, reads ``blob``.
 
-    The ``trace`` column is a numerics canary rather than a shape descriptor.
-    The undiffused tensor has unit trace at every vertex, diffusion conserves
-    it, so anything other than one means mass went missing.  A masked boundary
-    is the expected place for that.
-
     Parameters
     ----------
     tensor :
@@ -427,7 +350,7 @@ def normal_tensor_invariants(tensor: ArrayLike) -> np.ndarray:
     Returns
     -------
     :
-        Array of shape ``(V, 4)``, with columns named by
+        Array of shape ``(V, 3)``, with columns named by
         [NORMAL_TENSOR_INVARIANT_NAMES][meshmash.curvature.NORMAL_TENSOR_INVARIANT_NAMES].
 
     Notes
@@ -446,10 +369,8 @@ def normal_tensor_invariants(tensor: ArrayLike) -> np.ndarray:
     MRI", Medical Image Analysis, 6(2):93-108, 2002.
     """
     tensor = np.asarray(tensor, dtype=np.float64)
-    trace = tensor[:, 0] + tensor[:, 1] + tensor[:, 2]
 
-    out = np.full((len(tensor), 4), np.nan)
-    out[:, 3] = trace
+    out = np.full((len(tensor), 3), np.nan)
     finite = np.isfinite(tensor).all(axis=1)
     if not finite.any():
         return out
@@ -492,9 +413,9 @@ def diffused_curvature_feature_names(
       signature when no ``diagonal_filter`` was given.  Named to match the
       columns [compute_hks][meshmash.decompose.compute_hks] feeds the
       pipelines, so the two are directly comparable.
-    - ``curvature_{channel}_raw``, the undiffused curvature invariants.
-    - ``curvature_{channel}_{i}``, the diffused curvature invariants, with
-      the channels from
+    - ``curvature_{channel}_raw``, the undiffused mean and Gaussian curvature.
+    - ``curvature_{channel}_{i}``, the diffused mean and Gaussian curvature,
+      with the channels from
       [CURVATURE_INVARIANT_NAMES][meshmash.curvature.CURVATURE_INVARIANT_NAMES].
     - ``normal_{channel}_{i}``, the diffused normal-tensor invariants, with
       the channels from
@@ -516,7 +437,7 @@ def diffused_curvature_feature_names(
     Returns
     -------
     :
-        Column names, of length ``n_diagonal + 6 + n_scales * 10``.
+        Column names, of length ``n_diagonal + 2 + n_scales * 5``.
     """
     if n_scales < 0:
         raise ValueError(f"n_scales must be non-negative, got {n_scales}")
@@ -564,8 +485,8 @@ def compute_diffused_curvature(
     kernel, :math:`\\Phi e^{-t \\Lambda} \\Phi^T`, at each of ``scales``, which
     smooths over roughly ``sqrt(t)`` of surface.
 
-    All of it rides one eigendecomposition.  The kernel diagonal, the six
-    curvature channels and the six tensor channels are accumulated band by band
+    All of it rides one eigendecomposition.  The kernel diagonal, the two
+    curvature measures and the six tensor entries are accumulated band by band
     from the same eigenpairs, so adding a family costs another matrix product
     and not another solve.  Pass ``diagonal_filter`` to read the diagonal at
     different timescales from the ones the signals are diffused at, which is how
@@ -614,7 +535,7 @@ def compute_diffused_curvature(
     -------
     :
         One ``(V, F)`` table of named columns, with ``F`` equal to
-        ``n_diagonal + 6 + len(scales) * 10``, every column in the dtype of the
+        ``n_diagonal + 2 + len(scales) * 5``, every column in the dtype of the
         decomposition.  The columns and their order
         are described by
         [diffused_curvature_feature_names][meshmash.curvature.diffused_curvature_feature_names].
@@ -630,7 +551,7 @@ def compute_diffused_curvature(
     because the pipelines want one table, not because the columns are alike.
     ``hks_`` and ``curvature_`` span orders of magnitude and take a log before
     agglomeration; ``normal_`` fractions are already bounded and would go
-    non-finite under one.  ``curvature_mean_*`` and ``curvature_k*`` are signed
+    non-finite under one.  ``curvature_mean_*`` and ``curvature_gauss_*`` are signed
     and cannot be logged at all.  Select a family by its prefix before handing
     the columns to anything that assumes positivity, such as
     [condense_features][meshmash.agglomerate.condense_features].
@@ -714,17 +635,8 @@ def compute_diffused_curvature(
     if drop_first:
         diffused = diffused + measures.sum(axis=0) / areas.sum()
 
-    raw = curvature_invariants(
-        np.where(areas > 0, measures[:, 0] / safe_areas, 0.0),
-        np.where(areas > 0, measures[:, 1] / safe_areas, 0.0),
-    )
-    curvature = np.stack(
-        [
-            curvature_invariants(diffused[:, index, 0], diffused[:, index, 1])
-            for index in range(len(scales))
-        ],
-        axis=1,
-    )
+    raw = np.where(areas[:, None] > 0, measures[:, :2] / safe_areas[:, None], 0.0)
+    curvature = diffused[:, :, :2]
     normal_tensor = np.stack(
         [
             normal_tensor_invariants(diffused[:, index, 2:])
@@ -732,8 +644,8 @@ def compute_diffused_curvature(
         ],
         axis=1,
     )
-    # The invariants are computed in float64 because they cancel (H^2 - K, the
-    # tensor eigenvalue spread), but the diffused inputs carry no more than the
+    # The tensor invariants are computed in float64 because the eigenvalue
+    # spread cancels, but the diffused inputs carry no more than the
     # decomposition's precision, so every block leaves in the diagonal's dtype.
     # The reshapes are the C-order flattening the column names assume.
     n_vertices = len(vertices)

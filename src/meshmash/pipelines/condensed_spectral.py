@@ -15,7 +15,7 @@ cheaper, deterministic without a seed, and its chunks are connected.
 diagonal is read at the ``n_components`` HKS timescales, while the curvature
 and tensor channels are diffused at ``n_scales`` timescales over the same
 ``[t_min, t_max]`` range.  The HKS wants a fine grid because its columns are
-cheap; the signal channels carry ten columns each, so they want a coarse one.
+cheap; the signal channels carry five columns each, so they want a coarse one.
 [compute_diffused_curvature][meshmash.curvature.compute_diffused_curvature]
 takes both because a single decomposition serves them both.
 
@@ -25,7 +25,7 @@ produces.  So adding a family changes what each domain *says* and not where
 the domains are, which is what makes a run with the extra families comparable
 to a run without them.  The other two families could not cut anyway: Ward runs
 on the log, and ``normal_`` fractions reaching zero and the signed
-``curvature_mean_`` and ``curvature_k`` columns have no log.
+``curvature_mean_`` and ``curvature_gauss_`` columns have no log.
 
 **One key, one table.**  The condensed graph's node properties — the centroid,
 the area, the vertex count — are keyed on the domain, which is the key the
@@ -68,7 +68,7 @@ from ..utils import expand_labels, threshold_mesh_by_component_size
 
 #: How many timescales the curvature and tensor channels are diffused at, when
 #: the caller does not say.  Eight against the HKS's thirty-two: each of these
-#: scales carries ten columns where an HKS scale carries one.
+#: scales carries five columns where an HKS scale carries one.
 DEFAULT_N_SCALES = 8
 
 #: Target vertex density, in vertices per unit surface area, that
@@ -157,7 +157,7 @@ def condensed_spectral_column_names(n_components: int, n_scales: int) -> list[st
     Returns
     -------
     :
-        Column names, of length ``n_components + 6 + n_scales * 10 + 7``.
+        Column names, of length ``n_components + 2 + n_scales * 5 + 7``.
     """
     return (
         diffused_curvature_feature_names(n_scales, n_diagonal=n_components)
@@ -456,8 +456,8 @@ def compute_split_condensed_spectral(
         emits, so a model fit on that output reads these columns unchanged.
         The ``curvature_`` and ``normal_`` columns are the area-weighted mean
         itself.  They are not logged and cannot be: the ``normal_`` fractions
-        reach zero and the ``curvature_mean_`` and ``curvature_k`` columns are
-        signed.  The ``domain_`` columns are the condensed graph's node
+        reach zero and the ``curvature_mean_`` and ``curvature_gauss_`` columns
+        are signed.  The ``domain_`` columns are the condensed graph's node
         properties, which are sums and centroids rather than means.
 
         ``condensed_edges`` is one row per adjacent domain pair.  It stays a

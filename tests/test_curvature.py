@@ -18,15 +18,19 @@ from meshmash import (
     NORMAL_TENSOR_INVARIANT_NAMES,
     boundary_vertices,
     compute_diffused_curvature,
-    curvature_invariants,
     diffused_curvature_feature_names,
     gaussian_curvature_measure,
     mean_curvature_measure,
     normal_tensor_invariants,
     normal_tensor_measure,
+    orient_mesh,
     vertex_normals,
 )
-from meshmash.decompose import get_hks_filter
+from meshmash.decompose import (
+    get_heat_filter,
+    get_hks_filter,
+    spectral_geometry_filter,
+)
 from meshmash.laplacian import cotangent_laplacian
 from meshmash.utils import poly_to_mesh
 
@@ -68,7 +72,7 @@ def tube():
 
     ``clean`` is not cosmetic: the tube filter leaves the seam ring duplicated,
     and a pair of coincident vertices each carrying a full vertex area doubles
-    the mass there, which shows up as a normal-tensor trace of 2.
+    the mass there.
     """
     poly = pv.Line(
         (0, 0, -TUBE_LENGTH / 2), (0, 0, TUBE_LENGTH / 2), resolution=120
@@ -121,35 +125,26 @@ def test_vertex_normals_are_unit_and_radial_on_a_sphere(sphere):
 def test_a_sphere_reads_its_own_radius(sphere):
     """Everything a sphere's curvature says is fixed by its radius."""
     areas = vertex_areas(sphere)
-    invariants = curvature_invariants(
-        mean_curvature_measure(sphere) / areas,
-        gaussian_curvature_measure(sphere) / areas,
-    )
-    columns = dict(zip(CURVATURE_INVARIANT_NAMES, invariants.T))
+    mean = mean_curvature_measure(sphere) / areas
+    gauss = gaussian_curvature_measure(sphere) / areas
 
-    assert np.median(columns["mean"]) * RADIUS == pytest.approx(1.0, abs=0.01)
-    assert np.median(columns["gauss"]) * RADIUS**2 == pytest.approx(1.0, abs=0.01)
-    assert np.median(columns["curvedness"]) * RADIUS == pytest.approx(1.0, abs=0.01)
-
-    # Both principal curvatures are 1/R, so every point is umbilic and the
-    # shape index sits at the end of its range. Not to machine precision: mean
-    # and Gaussian curvature come from two different discrete estimators, the
-    # cotangent Laplacian and the angle defect, and they disagree by a few
-    # percent on the stretched triangles near this sphere's poles. Umbilic is
-    # the shape that disagreement shows up in, since it is the shape where the
-    # two principal curvatures have no real gap to resolve.
-    spread = np.abs(columns["k1"] - columns["k2"]) / (columns["k1"] + columns["k2"])
-    assert np.median(spread) < 0.02
-    assert np.median(columns["shape_index"]) > 0.95
+    assert np.median(mean) * RADIUS == pytest.approx(1.0, abs=0.01)
+    assert np.median(gauss) * RADIUS**2 == pytest.approx(1.0, abs=0.01)
 
 
-def test_the_mean_curvature_sign_follows_the_geometry_not_the_winding(sphere):
-    """A sphere reads convex either way its faces happen to be wound."""
+def test_the_mean_curvature_sign_follows_the_winding(sphere):
+    """Reversing the faces reverses the normals, and so the sign."""
     flipped = (np.asarray(sphere[0]), np.asarray(sphere[1])[:, ::-1])
     np.testing.assert_allclose(
-        mean_curvature_measure(flipped), mean_curvature_measure(sphere), rtol=1e-6
+        mean_curvature_measure(flipped), -mean_curvature_measure(sphere), rtol=1e-6
     )
-    assert np.median(mean_curvature_measure(sphere)) > 0
+
+
+def test_an_oriented_sphere_reads_convex_either_way_it_was_wound(sphere):
+    """Orienting the mesh first is how a caller gets a sign that means something."""
+    flipped = (np.asarray(sphere[0]), np.asarray(sphere[1])[:, ::-1])
+    for mesh in (sphere, flipped):
+        assert np.median(mean_curvature_measure(orient_mesh(mesh))) > 0
 
 
 def test_a_plane_is_flat_inside_and_masked_at_the_rim(plane):
@@ -202,7 +197,6 @@ def test_the_undiffused_normal_tensor_is_rank_one(sphere):
     columns = dict(zip(NORMAL_TENSOR_INVARIANT_NAMES, invariants.T))
     np.testing.assert_allclose(columns["sheet"], 1.0, atol=1e-8)
     np.testing.assert_allclose(columns["tube"], 0.0, atol=1e-8)
-    np.testing.assert_allclose(columns["trace"], 1.0, rtol=1e-10)
 
 
 def test_the_normal_tensor_ignores_the_winding(tube):
@@ -224,27 +218,6 @@ def test_the_normal_tensor_ignores_the_winding(tube):
     )
 
 
-def test_curvature_invariants_on_known_curvatures():
-    #                 sphere    cylinder   plane    saddle
-    k1 = np.array([2.0, 3.0, 0.0, 1.0])
-    k2 = np.array([2.0, 0.0, 0.0, -1.0])
-    invariants = curvature_invariants((k1 + k2) / 2, k1 * k2)
-    columns = dict(zip(CURVATURE_INVARIANT_NAMES, invariants.T))
-
-    np.testing.assert_allclose(columns["k1"], k1)
-    np.testing.assert_allclose(columns["k2"], k2)
-    np.testing.assert_allclose(columns["curvedness"], np.sqrt((k1**2 + k2**2) / 2))
-    # Koenderink's landmark values: a convex umbilic, a ridge, and a symmetric
-    # saddle, which is the self-complementary shape at the centre of the range.
-    np.testing.assert_allclose(columns["shape_index"], [1.0, 0.5, 0.0, 0.0], atol=1e-12)
-
-
-def test_curvature_invariants_clip_an_impossible_pair():
-    """H^2 < K cannot happen on a surface, but two estimators can disagree."""
-    invariants = curvature_invariants([0.0], [1.0])
-    np.testing.assert_allclose(invariants[0, 2], invariants[0, 3])
-
-
 def test_normal_tensor_invariants_on_known_tensors():
     # xx, yy, zz, xy, xz, yz for one, two and three equal normal directions.
     tensors = np.array(
@@ -260,20 +233,12 @@ def test_normal_tensor_invariants_on_known_tensors():
     np.testing.assert_allclose(columns["sheet"], [1.0, 0.0, 0.0], atol=1e-12)
     np.testing.assert_allclose(columns["tube"], [0.0, 1.0, 0.0], atol=1e-12)
     np.testing.assert_allclose(columns["blob"], [0.0, 0.0, 1.0], atol=1e-12)
-    np.testing.assert_allclose(columns["trace"], 1.0)
 
 
 def test_normal_tensor_invariants_pass_non_finite_rows_through():
     """A caller stitching chunks together has rows it never computed."""
     tensors = np.array([[1.0, 0, 0, 0, 0, 0], [np.nan] * 6])
     invariants = normal_tensor_invariants(tensors)
-    assert np.isfinite(invariants[0]).all()
-    assert np.isnan(invariants[1]).all()
-
-
-def test_curvature_invariants_pass_non_finite_rows_through():
-    """The same contract as the normal tensor, for the same caller."""
-    invariants = curvature_invariants([0.5, np.nan], [0.25, np.nan])
     assert np.isfinite(invariants[0]).all()
     assert np.isnan(invariants[1]).all()
 
@@ -339,11 +304,24 @@ def test_dropping_the_constant_mode_leaves_the_fields_alone(small_sphere):
 
 
 def test_the_tensor_trace_is_conserved_on_a_closed_mesh(sphere):
-    """Diffusion moves mass around and does not create or destroy it."""
-    result = compute_diffused_curvature(
-        sphere, np.geomspace(1e4, 2.5e5, 4), max_eigenvalue=MAX_EIGENVALUE
+    """Diffusion moves mass around and does not create or destroy it.
+
+    The undiffused tensor has unit trace at every vertex, so the diffused one
+    must too.  This diffuses the tensor the way `compute_diffused_curvature`
+    does, keeping the constant mode so that no add-back is involved.
+    """
+    L, M = cotangent_laplacian(sphere, robust=True)
+    areas = np.asarray(M.diagonal())
+    fields = normal_tensor_measure(sphere, areas=areas) / areas[:, None]
+    _, diffused = spectral_geometry_filter(
+        (L, M),
+        get_heat_filter(np.geomspace(1e4, 2.5e5, 4)),
+        max_eigenvalue=MAX_EIGENVALUE,
+        drop_first=False,
+        signals=fields,
     )
-    np.testing.assert_allclose(result.filter(like="normal_trace_"), 1.0, atol=1e-3)
+    trace = diffused[:, :, 0] + diffused[:, :, 1] + diffused[:, :, 2]
+    np.testing.assert_allclose(trace, 1.0, atol=1e-3)
 
 
 def test_the_shape_fractions_sum_to_one(sphere):
@@ -436,7 +414,7 @@ def test_without_a_diagonal_filter_the_diagonal_comes_back_at_the_scales(sphere)
     scales = np.geomspace(1e4, 2.5e5, 5)
     result = compute_diffused_curvature(sphere, scales, max_eigenvalue=MAX_EIGENVALUE)
     assert list(result.columns) == diffused_curvature_feature_names(len(scales))
-    assert result.shape == (len(sphere[0]), len(scales) * 10 + len(scales) + 6)
+    assert result.shape == (len(sphere[0]), len(scales) * 5 + len(scales) + 2)
 
 
 # --- the flat feature table -----------------------------------------------
@@ -446,16 +424,14 @@ def test_the_feature_names_come_from_the_exported_constants():
     """Names, not positions.  A reordered channel has to move its own name."""
     names = diffused_curvature_feature_names(2)
 
-    assert len(names) == 2 + 6 + 2 * 6 + 2 * 4
+    assert len(names) == 2 + 2 + 2 * 2 + 2 * 3
     assert names[:2] == ["hks_0", "hks_1"]
-    assert names[2:8] == [f"curvature_{name}_raw" for name in CURVATURE_INVARIANT_NAMES]
+    assert names[2:4] == [f"curvature_{name}_raw" for name in CURVATURE_INVARIANT_NAMES]
     # Scale-major: every channel at scale 0, then every channel at scale 1.
-    assert names[8:14] == [f"curvature_{name}_0" for name in CURVATURE_INVARIANT_NAMES]
-    assert names[14:20] == [f"curvature_{name}_1" for name in CURVATURE_INVARIANT_NAMES]
-    assert names[20:24] == [
-        f"normal_{name}_0" for name in NORMAL_TENSOR_INVARIANT_NAMES
-    ]
-    assert names[24:] == [f"normal_{name}_1" for name in NORMAL_TENSOR_INVARIANT_NAMES]
+    assert names[4:6] == [f"curvature_{name}_0" for name in CURVATURE_INVARIANT_NAMES]
+    assert names[6:8] == [f"curvature_{name}_1" for name in CURVATURE_INVARIANT_NAMES]
+    assert names[8:11] == [f"normal_{name}_0" for name in NORMAL_TENSOR_INVARIANT_NAMES]
+    assert names[11:] == [f"normal_{name}_1" for name in NORMAL_TENSOR_INVARIANT_NAMES]
 
 
 def test_a_longer_diagonal_lengthens_only_the_diagonal_block():
@@ -478,7 +454,9 @@ def test_the_diffused_block_flattens_scale_major(sphere):
     result = compute_diffused_curvature(sphere, scales, max_eigenvalue=MAX_EIGENVALUE)
 
     block = result.filter(regex=r"^normal_\w+_\d+$").to_numpy()
-    reshaped = block.reshape(len(sphere[0]), len(scales), 4)
+    reshaped = block.reshape(
+        len(sphere[0]), len(scales), len(NORMAL_TENSOR_INVARIANT_NAMES)
+    )
     for scale in range(len(scales)):
         for channel, name in enumerate(NORMAL_TENSOR_INVARIANT_NAMES):
             np.testing.assert_array_equal(
