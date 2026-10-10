@@ -215,6 +215,17 @@ def test_a_cluster_no_shift_can_escape_raises_instead_of_hanging(monkeypatch):
         "meshmash.decompose.decompose_laplacian", _always_behind_the_frontier
     )
 
-    L = M = sparse.csr_array(sparse.identity(5, format="csr"))
+    L = M = sparse.csr_array(sparse.identity(50, format="csr"))
     with pytest.raises(SpectralStallError, match="gave up after"):
         spectral_geometry_filter((L, M), None, max_eigenvalue=100.0, band_size=12, seed=0)
+
+
+def test_small_chunk_below_max_eigenvalue_terminates():
+    """A mesh the dense solver covers whole must not loop for a higher cutoff."""
+    vertices = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=float)
+    faces = np.array([[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]])
+    eigenvalues, eigenvectors = spectral_geometry_filter(
+        (vertices, faces), None, max_eigenvalue=1e6, band_size=50, drop_first=False
+    )
+    assert len(eigenvalues) == len(vertices)
+    assert eigenvectors.shape == (len(vertices), len(vertices))
