@@ -4,14 +4,62 @@ import sys
 import numpy as np
 import pytest
 from fast_simplification import replay_simplification, simplify
+from scipy.sparse import coo_array
+from scipy.sparse.csgraph import connected_components
 
-from meshmash import simplify_mesh
+from meshmash import simplify_mesh, simplify_to_density
 from meshmash.simplify import _decimate
+from meshmash.utils import remove_repeated_vertex_faces, vertex_density
 
 
 @pytest.fixture(scope="module")
 def simplified(mesh):
     return simplify_mesh(mesh, target_reduction=0.7)
+
+
+def longest_edge(vertices, faces):
+    corners = vertices[faces]
+    return max(
+        np.linalg.norm(corners[:, a] - corners[:, b], axis=1).max()
+        for a, b in [(0, 1), (1, 2), (2, 0)]
+    )
+
+
+@pytest.fixture(scope="module")
+def mesh_with_repeated_vertex_faces(mesh):
+    """The sample mesh plus faces like ``(a, a, new)``, as real meshes have.
+
+    Each ``new`` vertex sits in the middle of the vertex array and no other
+    face uses it, so every index after it moves if a decimation keeps it in
+    one array and drops it from another.
+    """
+    vertices, faces = mesh
+    rng = np.random.default_rng(0)
+    middle = len(vertices) // 2
+    n_new = 20
+    anchors = rng.choice(len(vertices), size=n_new, replace=False)
+    new_positions = vertices[anchors] + 10.0
+    vertices = np.insert(vertices, middle, new_positions, axis=0)
+    faces = np.where(faces >= middle, faces + n_new, faces)
+    anchors = np.where(anchors >= middle, anchors + n_new, anchors)
+    new_ids = middle + np.arange(n_new)
+    extra = np.stack([anchors, anchors, new_ids], axis=1)
+    faces = np.concatenate([faces, extra]).astype(mesh[1].dtype)
+    return vertices, faces
+
+
+def test_simplify_to_density_keeps_edges_local(mesh_with_repeated_vertex_faces):
+    """No simplified edge spans the mesh.
+
+    A mapping off by even one vertex sends faces across the whole mesh: on a
+    real neuron it gave edges of 756 um against an input maximum of 1 um.
+    """
+    vertices, faces = mesh_with_repeated_vertex_faces
+    target = vertex_density((vertices, faces)) * 0.3
+    new_vertices, new_faces, _ = simplify_to_density(
+        (vertices, faces), target_density=target
+    )
+    assert longest_edge(new_vertices, new_faces) < 20 * longest_edge(vertices, faces)
 
 
 def test_simplify_mesh_reduces_the_face_count(mesh, simplified):
@@ -50,41 +98,163 @@ def test_simplify_mesh_reduction_controls_how_much_is_removed(mesh):
     assert heavy.shape[0] < light.shape[0] < mesh[1].shape[0]
 
 
-@pytest.mark.parametrize("target_reduction", [0.3, 0.7, 0.9])
-def test_decimation_matches_replay_simplification(mesh, target_reduction):
-    """The replay is left out, and nothing it returned may move.
+def unreferenced(vertices, faces):
+    """The one vertex no face uses."""
+    (index,) = np.setdiff1d(np.arange(len(vertices)), faces)
+    return index
 
-    The bookkeeping uses fast-simplification's private helpers, so this is
-    what catches an upgrade that changes them.
-    """
+
+@pytest.fixture(scope="module")
+def mesh_with_unreferenced_vertex(mesh):
+    """The sample mesh plus a vertex no face uses, in the middle of the array."""
     vertices, faces = mesh
-    _, _, collapses = simplify(
-        vertices, faces, agg=7, target_reduction=target_reduction, return_collapses=True
-    )
-    expected = replay_simplification(vertices, faces, collapses)
-
-    for got, want in zip(_decimate(vertices, faces, 7, target_reduction), expected):
-        assert got.dtype == want.dtype
-        np.testing.assert_array_equal(got, want)
-
-
-def test_decimation_matches_replay_with_a_vertex_no_face_uses(mesh):
-    """An unreferenced vertex maps to -1, and the others keep replay's numbering."""
-    vertices, faces = mesh
-    # A stray vertex in the middle shifts every index after it.
     middle = len(vertices) // 2
     vertices = np.insert(vertices, middle, vertices[0] + 1e6, axis=0)
     faces = np.where(faces >= middle, faces + 1, faces).astype(faces.dtype)
-    _, _, collapses = simplify(
-        vertices, faces, agg=7, target_reduction=0.7, return_collapses=True
+    return vertices, faces
+
+
+@pytest.fixture(scope="module")
+def mesh_with_collapsing_strip(mesh):
+    """The sample mesh plus a separate 10 nm wide strip that decimates to a line."""
+    vertices, faces = mesh
+    n = 10
+    xs = np.arange(n) * 200.0
+    rails = [np.stack([xs, np.full(n, y), np.zeros(n)], axis=1) for y in (0.0, 10.0)]
+    strip = np.concatenate(rails) + vertices.max(axis=0) + 5e3
+    i = np.arange(n - 1)
+    strip_faces = len(vertices) + np.concatenate(
+        [
+            np.stack([i, i + 1, i + n], axis=1),
+            np.stack([i + 1, i + n + 1, i + n], axis=1),
+        ]
     )
-    expected = replay_simplification(vertices, faces, collapses)
+    return (
+        np.concatenate([vertices, strip.astype(vertices.dtype)]),
+        np.concatenate([faces, strip_faces]).astype(faces.dtype),
+    )
 
-    got = _decimate(vertices, faces, 7, 0.7)
 
-    assert got[2][middle] == -1
-    for got_array, want in zip(got, expected):
-        np.testing.assert_array_equal(got_array, want)
+DECIMATION_CASES = [
+    ("mesh", 0.3),
+    ("mesh", 0.7),
+    ("mesh", 0.9),
+    ("mesh_with_repeated_vertex_faces", 0.7),
+    ("mesh_with_unreferenced_vertex", 0.7),
+    ("mesh_with_collapsing_strip", 0.7),
+]
+
+
+@pytest.fixture(params=DECIMATION_CASES, ids=lambda case: f"{case[0]}-{case[1]}")
+def decimation(request):
+    """One `_decimate` call with both references, on the same cleaned input."""
+    name, target_reduction = request.param
+    vertices, faces = request.getfixturevalue(name)
+    clean_vertices, clean_faces = remove_repeated_vertex_faces((vertices, faces))
+    reference_points, reference_faces, collapses = simplify(
+        clean_vertices,
+        clean_faces,
+        agg=7,
+        target_reduction=target_reduction,
+        return_collapses=True,
+    )
+    replay = replay_simplification(clean_vertices, clean_faces, collapses)
+    got = _decimate(vertices, faces, 7, target_reduction)
+    return (
+        got,
+        (reference_points, reference_faces),
+        replay,
+        (clean_vertices, clean_faces),
+    )
+
+
+def test_decimation_returns_simplify_mesh(decimation):
+    """`simplify` is the reference for the mesh: the same points and faces."""
+    (points, faces, _), (reference_points, reference_faces), _, _ = decimation
+    np.testing.assert_array_equal(points, reference_points.astype(points.dtype))
+    np.testing.assert_array_equal(faces, reference_faces)
+
+
+@pytest.mark.parametrize(
+    "vertex_dtype, face_dtype",
+    [(np.float32, np.uint32), (np.float32, np.int32), (np.float64, np.int64)],
+)
+def test_decimation_keeps_the_input_dtypes(mesh, vertex_dtype, face_dtype):
+    vertices, faces = mesh
+    points, new_faces, _ = _decimate(
+        vertices.astype(vertex_dtype), faces.astype(face_dtype), 7, 0.7
+    )
+    assert points.dtype == vertex_dtype
+    assert new_faces.dtype == face_dtype
+
+
+def test_decimation_mapping_matches_replay(decimation):
+    """The replay is the reference for the mapping, up to its vertex numbering.
+
+    Every vertex both map lands on the same output vertex, which a one-to-one
+    translation between the two numberings shows, at the same position up to
+    float32 rounding. Every vertex the replay drops is dropped here too.
+
+    The converse does not hold. A piece that decimates to lines reaching no
+    face is dropped here, but the replay sends its vertices to the point
+    numbered just before it: `mapping[ip:] -= 1` shifts the dropped point
+    `ip` itself onto `ip - 1`.
+    """
+    (points, _, mapping), _, (replay_points, _, replay_mapping), _ = decimation
+    assert not np.any((replay_mapping < 0) & (mapping >= 0))
+
+    both = (mapping >= 0) & (replay_mapping >= 0)
+    pairs = np.unique(np.stack([mapping[both], replay_mapping[both]], axis=1), axis=0)
+    assert len(np.unique(pairs[:, 0])) == len(pairs)
+    assert len(np.unique(pairs[:, 1])) == len(pairs)
+
+    gap = np.linalg.norm(
+        points[mapping[both]] - replay_points[replay_mapping[both]], axis=1
+    )
+    assert gap.max() < 1.0
+
+
+def test_decimation_drops_whole_components(decimation):
+    """A dropped vertex takes its whole connected piece of the input with it."""
+    (_, _, mapping), _, _, (vertices, faces) = decimation
+    edges = np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]])
+    n = len(vertices)
+    adjacency = coo_array(
+        (np.ones(len(edges)), (edges[:, 0], edges[:, 1])), shape=(n, n)
+    )
+    _, labels = connected_components(adjacency, directed=False)
+    dropped = mapping < 0
+    n_labels = labels.max() + 1
+    dropped_per_label = np.bincount(labels, weights=dropped, minlength=n_labels)
+    size_per_label = np.bincount(labels, minlength=n_labels)
+    assert np.all((dropped_per_label == 0) | (dropped_per_label == size_per_label))
+
+
+def test_decimation_drops_a_strip_that_collapses_to_a_line(mesh_with_collapsing_strip):
+    vertices, faces = mesh_with_collapsing_strip
+    _, _, mapping = _decimate(vertices, faces, 7, 0.7)
+    assert np.all(mapping[-20:] == -1)
+    assert np.all(mapping[:-20] >= 0)
+
+
+def test_decimation_drops_an_unreferenced_vertex(mesh_with_unreferenced_vertex):
+    vertices, faces = mesh_with_unreferenced_vertex
+    _, _, mapping = _decimate(vertices, faces, 7, 0.7)
+    assert mapping[unreferenced(vertices, faces)] == -1
+
+
+def test_simplify_to_density_keeps_a_dropped_vertex_dropped(
+    mesh_with_unreferenced_vertex, capsys
+):
+    """A -1 from one pass is not read as the last vertex of the next pass."""
+    vertices, faces = mesh_with_unreferenced_vertex
+    target = vertex_density((vertices, faces)) * 0.1
+    new_vertices, _, mapping = simplify_to_density(
+        (vertices, faces), target_density=target, tolerance=0.0, verbose=True
+    )
+    assert capsys.readouterr().out.count("iter") >= 2
+    assert mapping[unreferenced(vertices, faces)] == -1
+    assert mapping.max() < len(new_vertices)
 
 
 # --- determinism (TASK-15) ------------------------------------------------

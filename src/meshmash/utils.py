@@ -387,6 +387,38 @@ def mask_mesh_by_faces(mesh: Mesh, face_mask: np.ndarray) -> Mesh:
     return new_vertices, new_faces
 
 
+def remove_repeated_vertex_faces(mesh: Mesh) -> Mesh:
+    """Drop faces that name the same vertex twice, such as ``(a, a, b)``.
+
+    The vertex array comes back untouched, so vertex indices mean the same
+    thing before and after.  A vertex that only dropped faces used is left
+    unreferenced.  A face with three distinct vertices is kept even if its
+    area is zero; see
+    [remove_degenerate_faces][meshmash.clean.remove_degenerate_faces] for an
+    area test.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
+
+    Returns
+    -------
+    :
+        The ``(vertices, faces)`` tuple with the kept faces in their input
+        order.
+    """
+    vertices, faces = interpret_mesh(mesh)
+    distinct = (
+        (faces[:, 0] != faces[:, 1])
+        & (faces[:, 1] != faces[:, 2])
+        & (faces[:, 0] != faces[:, 2])
+    )
+    if distinct.all():
+        return vertices, faces
+    return vertices, faces[distinct]
+
+
 def subset_mesh_by_indices(mesh: Mesh, indices: np.ndarray) -> Mesh:
     """Extract a submesh containing only the specified vertices.
 
@@ -450,9 +482,11 @@ def rough_subset_mesh_by_indices(
     face_mask = np.any(np.isin(faces, indices), axis=1)
     vertex_indices = np.unique(faces[face_mask])
     new_vertices = vertices[vertex_indices]
-    index_mapping = dict(zip(vertex_indices, np.arange(len(vertex_indices))))
+    # Only the kept vertices are ever looked up, so the rest stay unset.
+    lookup = np.empty(len(vertices), dtype=faces.dtype)
+    lookup[vertex_indices] = np.arange(len(vertex_indices), dtype=faces.dtype)
 
-    new_faces = np.vectorize(index_mapping.get)(faces[face_mask])
+    new_faces = lookup[faces[face_mask]]
     new_mesh = (new_vertices, new_faces)
     return new_mesh, vertex_indices
 

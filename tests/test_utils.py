@@ -11,8 +11,41 @@ from meshmash.utils import (
     mesh_to_adjacency,
     mesh_to_edges,
     mesh_to_poly,
+    remove_repeated_vertex_faces,
+    rough_subset_mesh_by_indices,
     subset_mesh_by_indices,
 )
+
+
+@pytest.mark.parametrize("face_dtype", [np.uint32, np.int32, np.int64])
+def test_rough_subset_mesh_by_indices(mesh, face_dtype):
+    vertices, faces = mesh
+    faces = faces.astype(face_dtype)
+    seeds = np.arange(0, len(vertices), 7)
+
+    (new_vertices, new_faces), vertex_indices = rough_subset_mesh_by_indices(
+        (vertices, faces), seeds
+    )
+
+    assert new_faces.dtype == face_dtype
+    face_mask = np.any(np.isin(faces, seeds), axis=1)
+    np.testing.assert_array_equal(new_vertices[new_faces], vertices[faces[face_mask]])
+    np.testing.assert_array_equal(new_vertices, vertices[vertex_indices])
+
+
+def test_remove_repeated_vertex_faces():
+    vertices = np.arange(15, dtype=float).reshape(5, 3)
+    faces = np.array([[0, 1, 2], [1, 1, 3], [2, 3, 4], [4, 4, 4], [3, 0, 3]])
+
+    kept_vertices, kept_faces = remove_repeated_vertex_faces((vertices, faces))
+
+    assert kept_vertices is vertices
+    np.testing.assert_array_equal(kept_faces, [[0, 1, 2], [2, 3, 4]])
+    again_vertices, again_faces = remove_repeated_vertex_faces(
+        (kept_vertices, kept_faces)
+    )
+    assert again_vertices is vertices
+    np.testing.assert_array_equal(again_faces, kept_faces)
 
 
 def test_mesh_to_poly(mesh):

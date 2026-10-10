@@ -983,6 +983,14 @@ def spectral_geometry_filter(
         pbar.update(float(band_max_eigenvalue - last_eigenvalue))
         last_eigenvalue = band_eigenvalues[-1]
 
+        # NOTE: a chunk with no more vertices than the band takes the dense
+        # solver, which returns the whole spectrum and ignores sigma. No later
+        # band can add a pair, and each would fully overlap this one forever
+        # (sigma keeps moving, so max_retries never trips), so stop here even
+        # if the spectrum tops out below max_eigenvalue.
+        if band_k >= L.shape[0]:
+            break
+
     pbar.close()
 
     if profile is not None:
