@@ -1,5 +1,7 @@
 import numpy as np
 import pyvista as pv
+from gpytoolbox import fast_winding_number
+from point_cloud_utils import closest_points_on_mesh
 
 from meshmash.pipelines.morphometry import component_morphometry_pipeline
 from meshmash.utils import poly_to_mesh
@@ -67,3 +69,23 @@ def test_no_measured_component_marks_every_vertex_unmeasured():
     assert results.empty
     assert components.dtype == np.int32
     assert (components == -1).all()
+
+
+def test_rep_point_is_inside_and_deepest():
+    mesh = _two_spheres()
+    labels = np.zeros(len(mesh[0]), dtype=np.int32)
+
+    results, _ = component_morphometry_pipeline(mesh, labels, select_label=0, seed=0)
+
+    vertices, faces = mesh
+    # point_cloud_utils wants the points and vertices in one dtype and memory order.
+    rep = np.ascontiguousarray(results[["rep_x", "rep_y", "rep_z"]], dtype=vertices.dtype)
+    medoid = np.ascontiguousarray(results[["x", "y", "z"]], dtype=vertices.dtype)
+    vertices = np.ascontiguousarray(vertices)
+    assert results["rep_x"].dtype == np.float32
+    assert (fast_winding_number(rep, vertices, faces) > 0.5).all()
+    rep_depth, _, _ = closest_points_on_mesh(rep, vertices, faces)
+    medoid_depth, _, _ = closest_points_on_mesh(medoid, vertices, faces)
+    # The rep point is where max_dt_nm is measured, so no sample is deeper.
+    np.testing.assert_allclose(rep_depth, results["max_dt_nm"], rtol=1e-4)
+    assert (rep_depth >= medoid_depth - 1e-3).all()

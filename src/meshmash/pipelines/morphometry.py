@@ -86,7 +86,11 @@ def component_morphometry_pipeline(
         are ``{split_laplacian}_fiedler_eval`` (the Fiedler eigenvalue of the
         component's graph), ``size_nm3``, ``area_nm2``, ``sphericity``, ``x``,
         ``y``, ``z`` (the medoid), ``pca_val_1``, ``pca_val_2``, ``pca_val_3``,
-        ``max_dt_nm``, ``mean_dt_nm``, ``n_vertices``, ``n_faces``,
+        ``max_dt_nm``, ``mean_dt_nm``, ``rep_x``, ``rep_y``, ``rep_z`` (the
+        representative point: the interior sample farthest from the
+        component's surface, where ``max_dt_nm`` is measured; deeper than the
+        medoid, so safer for looking up the voxel that holds the component),
+        ``n_vertices``, ``n_faces``,
         ``n_interior_samples``, ``n_sampled_points``, ``bound_volume_um3``,
         and ``time`` (seconds spent on the component).  ``n_post_synapses`` is
         present only when ``post_synapse_mappings`` is given, and counts the
@@ -296,6 +300,12 @@ def component_morphometry_pipeline(
                 )
                 row_data["max_dt_nm"] = np.float32(dists.max())
                 row_data["mean_dt_nm"] = np.float32(dists.mean())
+                # The deepest sample. argmax draws nothing from rng, so the other
+                # estimates are the same at a given seed.
+                rep = subsample_points[np.argmax(dists)]
+                row_data["rep_x"] = np.float32(rep[0])
+                row_data["rep_y"] = np.float32(rep[1])
+                row_data["rep_z"] = np.float32(rep[2])
 
             row_data["n_vertices"] = np.int32(len(submesh[0]))
             row_data["n_faces"] = np.int32(len(submesh[1]))

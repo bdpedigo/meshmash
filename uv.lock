@@ -11,8 +11,11 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-09-15T04:03:37.30569Z"
+exclude-newer = "2026-10-05T20:09:33.532579Z"
 exclude-newer-span = "P14D"
+
+[options.exclude-newer-package]
+gpytoolbox = false
 
 [[package]]
 name = "aiohappyeyeballs"
@@ -1338,7 +1341,7 @@ wheels = [
 
 [[package]]
 name = "gpytoolbox"
-version = "0.3.3"
+version = "0.3.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
@@ -1346,12 +1349,19 @@ dependencies = [
     { name = "scipy" },
     { name = "scs" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3e/a2/24695ab2e305575f6606a5a7057be5f05b9596e774271840cd8c633d3886/gpytoolbox-0.3.3.tar.gz", hash = "sha256:2abf68c3594ae738fe961424192357418e82a690149bf0f96e11623c1d764cb5", size = 2317935, upload-time = "2024-11-23T00:45:22.143Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fc/1d/83421b21efc9edc48a8a3b10ae768f2206149252809f91538237360e84a3/gpytoolbox-0.3.3-cp312-cp312-macosx_12_0_arm64.whl", hash = "sha256:9752597b797496a078e54005a7a44c9fe22cc16ee5f28f83bc92001c938c7ae6", size = 8337113, upload-time = "2024-11-23T00:41:44.333Z" },
-    { url = "https://files.pythonhosted.org/packages/44/d7/5798133cb980a50e6685d8dc97584d3ce83bef0f3a978cbffb33874c0da3/gpytoolbox-0.3.3-cp312-cp312-macosx_12_0_x86_64.whl", hash = "sha256:9251c6da4c4c424f1c2cd6da964ac93470fe968060259655360ea09cfc2b6bd4", size = 7162839, upload-time = "2024-11-23T00:41:57.134Z" },
-    { url = "https://files.pythonhosted.org/packages/29/c2/cc86b8b81f0f77ea651b95c6358ff8e39a368688832ee18e7127ddd0ae4d/gpytoolbox-0.3.3-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:ba1c7d00983e55116452dd2a7ce4f59bf9795523453b8704ad1766cd69aa26d4", size = 12328282, upload-time = "2024-11-23T00:42:16.383Z" },
-    { url = "https://files.pythonhosted.org/packages/71/08/c7529f5dc1b23727e3e53a9168cbdb579128af5ac8c75efb898920823e79/gpytoolbox-0.3.3-cp312-cp312-win_amd64.whl", hash = "sha256:e92313c8edfc4cd6c3a138b477c9062b750e21d3a2facd2bf72f0d91344300f7", size = 7082786, upload-time = "2024-11-23T00:42:28.959Z" },
+    { url = "https://files.pythonhosted.org/packages/6f/36/83d0a58e37fc3deea17457e4600aa002fc52b9202530581e84429131a25e/gpytoolbox-0.3.8-cp312-cp312-macosx_12_0_arm64.whl", hash = "sha256:326252cabe71f88e90e43edae4d650a648a3099ffba05a2651a04d27e72a6baa", size = 8727368, upload-time = "2026-10-06T23:24:00.13Z" },
+    { url = "https://files.pythonhosted.org/packages/49/79/7afc21c99e685809213ecadac4f160fb33d20d8592d51e35f89a24218857/gpytoolbox-0.3.8-cp312-cp312-macosx_12_0_x86_64.whl", hash = "sha256:ee585bf70093ffe90da1dc5801a322a4078e0b0436a1b3ea681b08339b140f52", size = 7702699, upload-time = "2026-10-06T23:24:02.622Z" },
+    { url = "https://files.pythonhosted.org/packages/e6/0a/df748ad41bb2b403ec532605fde099ebcf809a35d8f0a24c42a3fb0928df/gpytoolbox-0.3.8-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:75278bbe4d613836a6130561aa8d2585b77b7f7c32eb55d92707c62a6a12b79e", size = 12980442, upload-time = "2026-10-06T23:24:05.489Z" },
+    { url = "https://files.pythonhosted.org/packages/61/6a/763959bef793d010eb1b2f84f15cb976f822668524aff49da257b2d06bcf/gpytoolbox-0.3.8-cp312-cp312-win_amd64.whl", hash = "sha256:0541a3b7011320540b3deb38319b03dc7a85ff63499cbb96fdee2bd9028777d0", size = 7076882, upload-time = "2026-10-06T23:24:08.166Z" },
+    { url = "https://files.pythonhosted.org/packages/50/f7/e9904e284bb90bc330541b2a14c2693541c863506e74d03e44ed44091194/gpytoolbox-0.3.8-cp313-cp313-macosx_12_0_arm64.whl", hash = "sha256:0c25ccb08e4062062ebec569757f6d6462eb83ce1d937d9c7e43aa1677dcf51e", size = 8727277, upload-time = "2026-10-06T23:24:10.186Z" },
+    { url = "https://files.pythonhosted.org/packages/c7/b8/bf8dd9b51d6898f44102ba781f3c8d69015ad9b584af6afc46de1a64d31e/gpytoolbox-0.3.8-cp313-cp313-macosx_12_0_x86_64.whl", hash = "sha256:60e6616f571f64826c765713b0540719e8e5fdb6a439b363d93dc188b51d2f28", size = 7702623, upload-time = "2026-10-06T23:24:12.474Z" },
+    { url = "https://files.pythonhosted.org/packages/8b/2b/bb7b4bb4e1fd36c8992694792170d751642f81d8486d2971fbc6987fd7c7/gpytoolbox-0.3.8-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:5cd2dac58cf015bb1ab86a91efc063fcff3d5c6fbfc10ea7fcbce463e7dbaeec", size = 12980438, upload-time = "2026-10-06T23:24:14.774Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/3a/5ce4bd80325ad56dfd120ec922bcd0be36db53e691f63b0e0643314de6a7/gpytoolbox-0.3.8-cp313-cp313-win_amd64.whl", hash = "sha256:7b1dd79cc66a11552ef64dba73bc63ce8a00ef594d4ea470a4afef4449f65b8a", size = 7075159, upload-time = "2026-10-06T23:24:17.287Z" },
+    { url = "https://files.pythonhosted.org/packages/ed/8e/ba5bffac25aa0ad05ca30a65dfbba46b610f2a0fb3e47ebec76c13b1481a/gpytoolbox-0.3.8-cp314-cp314-macosx_12_0_arm64.whl", hash = "sha256:8b20e40c5a31f50a7d68d89acf404184d74387a62c4b2545ca1a38f9b3ed639e", size = 8727812, upload-time = "2026-10-06T23:24:19.392Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/2c/89fa6b96b3bb913ecacabc414167f13f7bbd30333451264fc9419840dc75/gpytoolbox-0.3.8-cp314-cp314-macosx_12_0_x86_64.whl", hash = "sha256:2a086f0ae343598a06579aab0fdb17fd0bd84008cdbd482c752d1913353a0b7f", size = 7703033, upload-time = "2026-10-06T23:24:21.787Z" },
+    { url = "https://files.pythonhosted.org/packages/32/12/63527b8465320e9d5245ace7452f706eaa8eb9e527a3f14535a61b55e84d/gpytoolbox-0.3.8-cp314-cp314-manylinux_2_28_x86_64.whl", hash = "sha256:a8d33d01f0a2a9f22e18091c9f8fb654d6657cb21a0be13bd1a2fd25253c0465", size = 12981097, upload-time = "2026-10-06T23:24:24.343Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/11/445abc79fef11eb2aa5e0d0ca7ae974a762e24fcab01b57eb8da3205088c/gpytoolbox-0.3.8-cp314-cp314-win_amd64.whl", hash = "sha256:5aad03552869e2c103833d4deb5ce41b8f5df290eaf8d77cb514144c36b9febf", size = 7268095, upload-time = "2026-10-06T23:24:26.772Z" },
 ]
 
 [[package]]
@@ -2185,7 +2195,7 @@ requires-dist = [
     { name = "embreex", specifier = ">=4.0" },
     { name = "fast-simplification", specifier = ">=0.2.0,<0.3" },
     { name = "fastremap", specifier = ">=1.16.1" },
-    { name = "gpytoolbox", specifier = ">=0.3.3" },
+    { name = "gpytoolbox", specifier = ">=0.3.8" },
     { name = "meshio", specifier = ">=5.0" },
     { name = "numpy", specifier = ">=1.26.0" },
     { name = "pandas", specifier = ">=2.2.3" },
