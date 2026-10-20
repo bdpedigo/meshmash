@@ -10,11 +10,11 @@ import numpy as np
 import pandas as pd
 import pytest
 import pyvista as pv
+from test_agglomerate import disconnected_labels
 
 from meshmash import (
     compute_diffused_curvature,
     compute_hks,
-    compute_split_condensed_hks,
     compute_split_condensed_spectral,
     condense_features,
     cotangent_laplacian,
@@ -412,61 +412,44 @@ def test_domain_zero_holds_the_lowest_numbered_vertex(mesh):
     np.testing.assert_array_equal(first_appearance, np.arange(len(first_appearance)))
 
 
-def test_the_composite_reproduces_the_hks_pipeline_exactly(mesh):
-    """Adding two families must not move the domains the HKS alone would find.
+def test_the_extra_families_do_not_move_the_domains(mesh):
+    """Adding diffusion scales must not move the domains the HKS alone finds.
 
-    Both sides are put on the geodesic cut, which is what the composite
-    pipeline uses and what the HKS pipeline takes as an option. The claim is
-    about the featurizing, so the chunking has to be held fixed: on its default
-    spectral cut the HKS pipeline chunks the mesh somewhere else and the domains
-    move with the chunk boundaries, for a reason that has nothing to do with the
-    extra families.
-
-    On one cut, and with the solves seeded, the two pipelines put every vertex
-    in the same domain at either dtype. The per-vertex HKS underneath is
-    bit-identical: the fused bank's diagonal half is the same arithmetic
-    `compute_hks` does, on the same operator.
-
-    The aggregated values are bit-identical only at float64. At float32 they
-    differ by about 1e-7, which is that dtype's epsilon: the area-weighted mean
-    runs over 40 columns here and 4 there, and a weighted sum rounds by the
-    order it accumulates in. Nothing about the method differs, so at float32
-    only the domains are asserted.
+    Only the ``hks_`` block is cut on, and the HKS is the kernel diagonal at
+    its own timescales, which ``n_scales`` does not touch. So with the solves
+    seeded, two runs that differ only in how many curvature and tensor columns
+    they carry put every vertex in the same domain, and their HKS block agrees.
     """
     kwargs = dict(
         n_components=N_COMPONENTS,
         max_eigenvalue=1e-8,
         max_vertex_threshold=5000,
         target_vertices=2500,
-        # The two pipelines' defaults differ here; hold them equal.
-        overlap_distance=10_000,
-        min_vertex_threshold=10,
-        max_overlap_neighbors=50_000,
-        drop_first=False,
         n_jobs=1,
         seed=0,
     )
+    few = compute_split_condensed_spectral(mesh, n_scales=1, **kwargs)
+    many = compute_split_condensed_spectral(mesh, n_scales=N_SCALES, **kwargs)
 
-    for dtype, values_agree in (("float32", False), ("float64", True)):
-        composite = compute_split_condensed_spectral(
-            mesh, n_scales=N_SCALES, decomposition_dtype=dtype, **kwargs
-        )
-        hks_only, hks_labels, _ = compute_split_condensed_hks(
-            mesh, decomposition_dtype=dtype, method="geodesic", **kwargs
-        )
+    assert len(few.stitcher.submeshes) > 1, "the point is that it ran on chunks"
+    np.testing.assert_array_equal(few.labels, many.labels)
+    hks = hks_column_names(N_COMPONENTS)
+    np.testing.assert_allclose(
+        few.condensed_features[hks].to_numpy(),
+        many.condensed_features[hks].to_numpy(),
+        rtol=1e-6,
+    )
 
-        assert len(composite.stitcher.submeshes) > 1, (
-            "the point is that it ran on chunks"
-        )
-        np.testing.assert_array_equal(composite.labels, hks_labels, err_msg=dtype)
 
-        diagonal = composite.condensed_features[
-            hks_column_names(N_COMPONENTS)
-        ].to_numpy()
-        if values_agree:
-            np.testing.assert_array_equal(diagonal, hks_only.to_numpy())
-        else:
-            np.testing.assert_allclose(diagonal, hks_only.to_numpy(), rtol=1e-6)
+def test_every_domain_is_connected_and_inside_one_core(mesh, condensed):
+    """Domains are cut on each chunk's own vertices, one component at a time."""
+    labels = condensed.labels
+    owner = condensed.stitcher.submesh_mapping
+
+    assert disconnected_labels(labels, mesh[1]) == []
+    assigned = labels >= 0
+    owners = pd.DataFrame({"label": labels[assigned], "owner": owner[assigned]})
+    assert (owners.groupby("label")["owner"].nunique() == 1).all()
 
 
 def test_dropping_the_constant_mode_removes_one_number(sphere):

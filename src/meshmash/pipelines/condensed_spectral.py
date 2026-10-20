@@ -202,6 +202,7 @@ def compute_condensed_spectral(
     distance_threshold: float = 3.0,
     seed: Optional[int] = None,
     blas_threads: Optional[int] = 1,
+    owned: Optional[np.ndarray] = None,
 ) -> Optional[tuple[pd.DataFrame, np.ndarray]]:
     """Featurize and condense a single (unsplit) mesh, three families at once.
 
@@ -265,6 +266,12 @@ def compute_condensed_spectral(
         than an in-process call. Any fixed value is reproducible, so this is
         ``1`` rather than tuned. ``None`` inherits the ambient count and gives
         up reproducibility across worker counts.
+    owned :
+        Boolean mask of the vertices this mesh owns, when it is one chunk of a
+        larger mesh.  The features are computed on every vertex, but only the
+        owned ones are cut into domains and averaged over; see
+        [condense_features][meshmash.agglomerate.condense_features].  ``None``
+        cuts the whole mesh.
 
     Returns
     -------
@@ -326,6 +333,7 @@ def compute_condensed_spectral(
             features,
             distance_threshold=distance_threshold,
             cluster_features=features[hks_column_names(n_components)],
+            owned=owned,
         )
 
 
@@ -367,6 +375,11 @@ def compute_split_condensed_spectral(
     memory proportional to a chunk rather than to the whole mesh, and it is
     also why the chunking has to happen here rather than around this function:
     one eigendecomposition of the whole mesh is the thing being avoided.
+
+    The overlap band feeds the per-vertex features and nothing else.  Each
+    chunk cuts only the vertices it owns into domains, one connected component
+    of them at a time, and averages each domain over its own vertices.  So a
+    domain lies inside one chunk's core and is connected on ``mesh``.
 
     It takes the mesh as given.  Neither component thresholding nor
     simplification happens here, so a caller that has already conditioned its
@@ -499,6 +512,7 @@ def compute_split_condensed_spectral(
         seed=seed,
         blas_threads=blas_threads,
         stitch=False,
+        owned_keyword="owned",
     )
 
     if verbose:

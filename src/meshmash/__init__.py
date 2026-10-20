@@ -1,4 +1,5 @@
 from .agglomerate import (
+    agglomerate_components,
     agglomerate_mesh,
     agglomerate_split_mesh,
     aggregate_features,
@@ -136,6 +137,7 @@ __all__ = [
     "CURVATURE_INVARIANT_NAMES",
     "MeshStitcher",
     "NORMAL_TENSOR_INVARIANT_NAMES",
+    "agglomerate_components",
     "agglomerate_mesh",
     "agglomerate_split_mesh",
     "aggregate_features",

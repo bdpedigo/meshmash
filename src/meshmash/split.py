@@ -863,6 +863,25 @@ class MeshStitcher:
 
         return self.submeshes
 
+    def owned_masks(self) -> list[np.ndarray]:
+        """Each submesh's boolean mask of the vertices it owns.
+
+        A vertex is owned by the submesh whose core holds it
+        (``submesh_mapping[vertex] == submesh_index``); the rest of a submesh
+        is its overlap region.  These are the vertices
+        [stitch_features][meshmash.split.MeshStitcher.stitch_features] keeps
+        from that submesh.
+
+        Returns
+        -------
+        :
+            One mask per submesh, aligned to the submesh's vertex ordering.
+        """
+        return [
+            self.submesh_mapping[indices] == index
+            for index, indices in enumerate(self.submesh_overlap_indices)
+        ]
+
     def stitch_features(
         self,
         features_by_submesh: list[np.ndarray],
@@ -930,6 +949,7 @@ class MeshStitcher:
         *args,
         fill_value: float = np.nan,
         stitch: bool = True,
+        owned_keyword: Optional[str] = None,
         **kwargs,
     ) -> Union[np.ndarray, list]:
         """Apply a function to each submesh and (optionally) stitch results.
@@ -950,6 +970,10 @@ class MeshStitcher:
             If ``True`` (default), stitch results into a full-mesh array
             via [stitch_features][meshmash.split.MeshStitcher.stitch_features].  If ``False``, return the raw
             list of per-submesh results.
+        owned_keyword :
+            If given, ``func`` also receives, under this keyword, a boolean
+            mask over the submesh's vertices of the ones that submesh owns
+            (see [owned_masks][meshmash.split.MeshStitcher.owned_masks]).
         **kwargs :
             Keyword arguments forwarded to ``func``.
 
@@ -962,14 +986,21 @@ class MeshStitcher:
         """
         func_name = func.__name__
         submeshes = self.submeshes
+        if owned_keyword is None:
+            kwargs_by_submesh = [kwargs] * len(submeshes)
+        else:
+            kwargs_by_submesh = [
+                {**kwargs, owned_keyword: owned} for owned in self.owned_masks()
+            ]
         if self.n_jobs == 1:
             results_by_submesh = []
-            for submesh in tqdm(
-                submeshes,
+            for submesh, submesh_kwargs in tqdm(
+                zip(submeshes, kwargs_by_submesh),
+                total=len(submeshes),
                 desc=f"Applying function {func_name}",
                 disable=self.verbose < 1,
             ):
-                results_by_submesh.append(func(submesh, *args, **kwargs))
+                results_by_submesh.append(func(submesh, *args, **submesh_kwargs))
         else:
             with tqdm_joblib(
                 desc=f"Applying function {func_name}",
@@ -977,7 +1008,8 @@ class MeshStitcher:
                 disable=self.verbose < 1,
             ):
                 results_by_submesh = Parallel(n_jobs=self.n_jobs)(
-                    delayed(func)(submesh, *args, **kwargs) for submesh in submeshes
+                    delayed(func)(submesh, *args, **submesh_kwargs)
+                    for submesh, submesh_kwargs in zip(submeshes, kwargs_by_submesh)
                 )
         if stitch:
             out = self.stitch_features(results_by_submesh, fill_value=fill_value)

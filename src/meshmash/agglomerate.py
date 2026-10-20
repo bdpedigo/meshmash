@@ -4,6 +4,7 @@ import warnings
 import numpy as np
 import pandas as pd
 from scipy import sparse
+from scipy.sparse.csgraph import connected_components
 from sklearn.cluster import ward_tree
 
 # TODO dangerous to import private function here
@@ -11,7 +12,7 @@ from sklearn.cluster._agglomerative import _hc_cut
 
 from .laplacian import compute_vertex_areas
 from .split import MeshStitcher
-from .types import ArrayLike
+from .types import ArrayLike, interpret_mesh
 from .utils import mesh_to_adjacency, subset_mesh_by_indices
 
 
@@ -125,6 +126,70 @@ def agglomerate_mesh(mesh, features, distance_thresholds=None) -> np.ndarray:
         )
         labels_by_distance_full[mask] = labels_by_distance
         return labels_by_distance_full
+
+
+def agglomerate_components(mesh, features, distance_threshold: float) -> np.ndarray:
+    """Apply Ward clustering to each connected component of a mesh on its own.
+
+    Vertices with non-finite features are left out first, and the components
+    are found on the mesh that remains.  Each component is clustered alone, so
+    no domain spans two components: unlike
+    [agglomerate_mesh][meshmash.agglomerate.agglomerate_mesh], the connectivity
+    handed to Ward is always connected, and sklearn never has to join
+    components to finish the tree.
+
+    Parameters
+    ----------
+    mesh :
+        Input mesh accepted by [interpret_mesh][meshmash.types.interpret_mesh].
+    features :
+        Per-vertex feature matrix of shape ``(V, F)``.
+    distance_threshold :
+        Ward linkage-distance threshold at which to cut each component's tree.
+
+    Returns
+    -------
+    :
+        ``int32`` label array of length ``V``, unique across components.
+        Vertices with non-finite features receive ``-1``.  A vertex in no face
+        is a domain of its own.
+    """
+    vertices, faces = interpret_mesh(mesh)
+    labels = np.full(len(vertices), -1, dtype=np.int32)
+    valid = np.flatnonzero(np.isfinite(features).all(axis=1))
+    if len(valid) == 0:
+        return labels
+
+    _, valid_faces = subset_mesh_by_indices((vertices, faces), valid)
+    # The connectivity is the face edges themselves, not their lengths, so the
+    # components below are exactly the pieces Ward sees.
+    edges = np.concatenate(
+        [valid_faces[:, [0, 1]], valid_faces[:, [1, 2]], valid_faces[:, [2, 0]]]
+    )
+    connectivity = sparse.csr_array(
+        (np.ones(len(edges), dtype=bool), (edges[:, 0], edges[:, 1])),
+        shape=(len(valid), len(valid)),
+    )
+    connectivity = (connectivity + connectivity.T).tocsr()
+    n_components, component = connected_components(connectivity, directed=False)
+
+    order = np.argsort(component, kind="stable")
+    members_by_component = np.split(
+        order, np.cumsum(np.bincount(component, minlength=n_components))[:-1]
+    )
+    offset = 0
+    for members in members_by_component:
+        if len(members) == 1:
+            local = np.zeros(1, dtype=np.int64)
+        else:
+            local = multicut_ward(
+                features[valid[members]],
+                connectivity=connectivity[members][:, members],
+                distance_thresholds=[distance_threshold],
+            )[:, 0]
+        labels[valid[members]] = local + offset
+        offset += int(local.max()) + 1
+    return labels
 
 
 # def agglomerate_mesh(mesh, features, distance_thresholds=None) -> np.ndarray:
@@ -381,6 +446,7 @@ def condense_features(
     features: np.ndarray | pd.DataFrame,
     distance_threshold: float = 3.0,
     cluster_features: np.ndarray | pd.DataFrame | None = None,
+    owned: np.ndarray | None = None,
 ) -> tuple[pd.DataFrame, np.ndarray]:
     """Agglomerate a mesh on its per-vertex features and aggregate them per domain.
 
@@ -419,6 +485,14 @@ def condense_features(
         same way.  ``None`` cuts on ``features``, which is the single-family
         case.  Only the domains change with this argument; every column of
         ``features`` is aggregated either way.
+    owned :
+        Boolean mask of length ``V``, for a chunk of a larger mesh: the
+        vertices this chunk owns.  When given, only those vertices get a
+        domain, each connected component of them is clustered alone by
+        [agglomerate_components][meshmash.agglomerate.agglomerate_components],
+        and each domain's means are over its own vertices.  The other vertices
+        get ``-1``.  ``None`` clusters the whole mesh with
+        [agglomerate_mesh][meshmash.agglomerate.agglomerate_mesh].
 
     Returns
     -------
@@ -446,14 +520,30 @@ def condense_features(
             f"has {len(features)}; both are per-vertex and must agree"
         )
 
-    with np.errstate(divide="ignore"):
-        log_features = np.log(cluster_values)
-
-    agg_labels = agglomerate_mesh(
-        mesh,
-        log_features,
-        distance_thresholds=distance_threshold,
-    )
+    if owned is None:
+        with np.errstate(divide="ignore"):
+            log_features = np.log(cluster_values)
+        agg_labels = agglomerate_mesh(
+            mesh,
+            log_features,
+            distance_thresholds=distance_threshold,
+        )
+    else:
+        owned = np.asarray(owned, dtype=bool)
+        if len(owned) != len(features):
+            raise ValueError(
+                f"`owned` has {len(owned)} entries and `features` has "
+                f"{len(features)} rows; both are per-vertex and must agree"
+            )
+        core = np.flatnonzero(owned)
+        # NOTE: Ward accumulates in float64 whatever it is handed, so the log is
+        # taken at float64 too rather than rounded to the features' dtype first.
+        with np.errstate(divide="ignore", invalid="ignore"):
+            log_features = np.log(cluster_values[core].astype(np.float64))
+        agg_labels = np.full((len(features), 1), -1, dtype=np.int32)
+        agg_labels[core, 0] = agglomerate_components(
+            subset_mesh_by_indices(mesh, core), log_features, distance_threshold
+        )
 
     weights = compute_vertex_areas(mesh)
     condensed_features = aggregate_features(
