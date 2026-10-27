@@ -157,11 +157,13 @@ def test_project_points_to_mesh_nearest(method):
     assert indices.tolist() == [0, 1, 2]
 
 
+@pytest.mark.parametrize("face_dtype", [np.uint32, np.int32, np.int64])
 @pytest.mark.parametrize("method", ["surface", "vertex"])
-def test_project_points_to_mesh_threshold(method):
+def test_project_points_to_mesh_threshold(method, face_dtype):
     points = np.array([[0.0, 0.0, 0.0], [1000.0, 1000.0, 1000.0]])
+    mesh = (_SQUARE[0], _SQUARE[1].astype(face_dtype))
     indices = project_points_to_mesh(
-        points, _SQUARE, distance_threshold=5.0, method=method
+        points, mesh, distance_threshold=5.0, method=method
     )
     assert indices.tolist() == [0, -1]
 

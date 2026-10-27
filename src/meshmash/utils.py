@@ -236,8 +236,9 @@ def _nearest_by_surface(
         barycentric = barycentric[:1]
 
     nearest_corner = np.argmax(barycentric, axis=1)
-    indices = np.asarray(faces)[face_indices, nearest_corner]
-    return np.asarray(indices), np.asarray(distances)
+    # NOTE: signed, because faces are often uint32 and a dropped point gets -1.
+    indices = np.asarray(faces)[face_indices, nearest_corner].astype(np.int64)
+    return indices, np.asarray(distances)
 
 
 @overload
