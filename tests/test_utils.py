@@ -11,6 +11,7 @@ from meshmash.utils import (
     mesh_to_adjacency,
     mesh_to_edges,
     mesh_to_poly,
+    project_points_to_mesh,
     remove_repeated_vertex_faces,
     rough_subset_mesh_by_indices,
     subset_mesh_by_indices,
@@ -139,3 +140,54 @@ def test_component_size_transform(mesh):
     sizes = component_size_transform(mesh)
     assert len(sizes) == n
     assert np.all(sizes >= 1)
+
+
+# Two triangles tiling the z=0 square [0,10]x[0,10], so that vertex and surface
+# distances differ in the middle of the square.
+_SQUARE = (
+    np.array([[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [10.0, 10.0, 0.0]]),
+    np.array([[0, 1, 2], [1, 3, 2]]),
+)
+
+
+@pytest.mark.parametrize("method", ["surface", "vertex"])
+def test_project_points_to_mesh_nearest(method):
+    points = np.array([[1.0, 1.0, 0.0], [9.0, 1.0, 0.0], [1.0, 9.0, 0.0]])
+    indices = project_points_to_mesh(points, _SQUARE, method=method)
+    assert indices.tolist() == [0, 1, 2]
+
+
+@pytest.mark.parametrize("method", ["surface", "vertex"])
+def test_project_points_to_mesh_threshold(method):
+    points = np.array([[0.0, 0.0, 0.0], [1000.0, 1000.0, 1000.0]])
+    indices = project_points_to_mesh(
+        points, _SQUARE, distance_threshold=5.0, method=method
+    )
+    assert indices.tolist() == [0, -1]
+
+
+def test_project_points_to_mesh_surface_distance():
+    # Just above the middle of the square: near the surface, far from any vertex.
+    points = np.array([[5.0, 5.0, 1.0]])
+    _, surface = project_points_to_mesh(
+        points, _SQUARE, return_distances=True, method="surface"
+    )
+    _, vertex = project_points_to_mesh(
+        points, _SQUARE, return_distances=True, method="vertex"
+    )
+    assert surface == pytest.approx([1.0])
+    assert vertex[0] > 7.0
+
+
+def test_project_points_to_mesh_surface_single_point():
+    # point_cloud_utils mis-handles one query point; the result must still be right.
+    indices, distances = project_points_to_mesh(
+        np.array([[9.0, 9.0, 2.0]]), _SQUARE, return_distances=True, method="surface"
+    )
+    assert indices.tolist() == [3]
+    assert distances == pytest.approx([2.0])
+
+
+def test_project_points_to_mesh_unknown_method():
+    with pytest.raises(ValueError):
+        project_points_to_mesh(np.zeros((1, 3)), _SQUARE, method="nearest")

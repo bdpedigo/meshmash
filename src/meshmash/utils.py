@@ -204,12 +204,49 @@ def fix_mesh(mesh: Mesh, **kwargs) -> Mesh:
     return poly_to_mesh(mesh_fix.mesh)
 
 
+def _nearest_by_surface(
+    points: ArrayLike, mesh: tuple[np.ndarray, np.ndarray]
+) -> tuple[np.ndarray, np.ndarray]:
+    """Nearest mesh vertex via the true point-to-surface distance
+    (point_cloud_utils): the corner of each point's closest face with the largest
+    barycentric weight."""
+    import point_cloud_utils as pcu
+
+    vertices, faces = mesh
+    # float32 like the mesh: point_cloud_utils needs query and vertices to share a
+    # dtype, and a float64 copy of a 2M-vertex mesh costs 48 MB for no gain.
+    query = np.ascontiguousarray(points, dtype=np.float32)
+    # point_cloud_utils mis-handles a single query point (returns NaN barycentric
+    # coords and a wrong distance), so duplicate a lone point and slice it back.
+    single = len(query) == 1
+    if single:
+        query = np.vstack([query, query])
+
+    distances, face_indices, barycentric = pcu.closest_points_on_mesh(
+        query,
+        np.ascontiguousarray(vertices, dtype=np.float32),
+        np.ascontiguousarray(faces),
+    )
+    distances = np.atleast_1d(distances)
+    face_indices = np.atleast_1d(face_indices)
+    barycentric = np.atleast_2d(barycentric)
+    if single:
+        distances = distances[:1]
+        face_indices = face_indices[:1]
+        barycentric = barycentric[:1]
+
+    nearest_corner = np.argmax(barycentric, axis=1)
+    indices = np.asarray(faces)[face_indices, nearest_corner]
+    return np.asarray(indices), np.asarray(distances)
+
+
 @overload
 def project_points_to_mesh(
     points: ArrayLike,
     mesh: Mesh,
     distance_threshold: Optional[float] = None,
     return_distances: Literal[False] = ...,
+    method: Literal["vertex", "surface"] = ...,
 ) -> np.ndarray: ...
 
 
@@ -220,6 +257,7 @@ def project_points_to_mesh(
     distance_threshold: Optional[float] = None,
     *,
     return_distances: Literal[True],
+    method: Literal["vertex", "surface"] = ...,
 ) -> tuple[np.ndarray, np.ndarray]: ...
 
 
@@ -228,6 +266,7 @@ def project_points_to_mesh(
     mesh: Mesh,
     distance_threshold: Optional[float] = None,
     return_distances: bool = False,
+    method: Literal["vertex", "surface"] = "vertex",
 ) -> Union[np.ndarray, tuple[np.ndarray, np.ndarray]]:
     """Find the nearest mesh vertex for each query point.
 
@@ -241,29 +280,40 @@ def project_points_to_mesh(
         If provided, query points whose nearest vertex is farther than this
         distance are assigned an index of ``-1``.
     return_distances :
-        If ``True``, also return the distance to the nearest vertex for each
-        query point.
+        If ``True``, also return the distance for each query point.
+    method :
+        ``"vertex"`` (default) measures the distance to the mesh vertices only
+        (sklearn). ``"surface"`` measures the true distance to the mesh triangles
+        (point_cloud_utils) and assigns each point the corner of its closest face
+        with the largest barycentric weight, so a point near a face but far from
+        any vertex is not spuriously dropped. Both return a mesh vertex index.
 
     Returns
     -------
     indices :
         Indices of the nearest vertex in the mesh for each query point,
-        shape ``(N,)``.  Entries are ``-1`` where the nearest vertex
-        exceeds ``distance_threshold``.
+        shape ``(N,)``.  Entries are ``-1`` where the distance exceeds
+        ``distance_threshold``.
     distances :
         Only returned when ``return_distances=True``.  Euclidean distances
-        to the nearest vertex, shape ``(N,)``.
+        to the nearest vertex (``"vertex"``) or to the surface
+        (``"surface"``), shape ``(N,)``.
     """
-    if isinstance(mesh, tuple):
-        vertices = mesh[0]
-    else:
-        vertices = mesh.vertices
-    nn = NearestNeighbors(n_neighbors=1)
-    nn.fit(vertices)
+    if method == "surface":
+        indices, distances = _nearest_by_surface(points, interpret_mesh(mesh))
+    elif method == "vertex":
+        if isinstance(mesh, tuple):
+            vertices = mesh[0]
+        else:
+            vertices = mesh.vertices
+        nn = NearestNeighbors(n_neighbors=1)
+        nn.fit(vertices)
 
-    distances, indices = nn.kneighbors(points)
-    indices = indices.reshape(-1)
-    distances = distances.reshape(-1)
+        distances, indices = nn.kneighbors(points)
+        indices = indices.reshape(-1)
+        distances = distances.reshape(-1)
+    else:
+        raise ValueError(f"Unknown method {method!r}; expected 'surface' or 'vertex'.")
     if distance_threshold is not None:
         indices[distances > distance_threshold] = -1
 
