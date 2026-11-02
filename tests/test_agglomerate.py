@@ -112,6 +112,18 @@ def test_a_vertex_in_no_face_is_a_domain_of_its_own(grid):
     assert (labels[:-1] != labels[-1]).all()
 
 
+def test_no_threshold_makes_each_valid_vertex_a_domain(grid, stripes):
+    _, band = stripes
+    log_features = np.log(smooth_features(grid[0]))
+    log_features[band] = -np.inf
+
+    labels = agglomerate_components(grid, log_features, None)
+
+    assert labels.dtype == np.int32
+    assert (labels[band] == -1).all()
+    assert len(np.unique(labels[~band])) == (~band).sum()
+
+
 def test_the_means_are_over_the_domains_own_vertices(grid, stripes):
     """A band value no owned vertex holds must not reach any domain's mean."""
     owned, band = stripes

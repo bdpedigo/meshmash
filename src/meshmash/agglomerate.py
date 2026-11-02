@@ -128,7 +128,9 @@ def agglomerate_mesh(mesh, features, distance_thresholds=None) -> np.ndarray:
         return labels_by_distance_full
 
 
-def agglomerate_components(mesh, features, distance_threshold: float) -> np.ndarray:
+def agglomerate_components(
+    mesh, features, distance_threshold: float | None
+) -> np.ndarray:
     """Apply Ward clustering to each connected component of a mesh on its own.
 
     Vertices with non-finite features are left out first, and the components
@@ -146,6 +148,7 @@ def agglomerate_components(mesh, features, distance_threshold: float) -> np.ndar
         Per-vertex feature matrix of shape ``(V, F)``.
     distance_threshold :
         Ward linkage-distance threshold at which to cut each component's tree.
+        ``None`` assigns each valid vertex a unique label (i.e. no clustering).
 
     Returns
     -------
@@ -158,6 +161,9 @@ def agglomerate_components(mesh, features, distance_threshold: float) -> np.ndar
     labels = np.full(len(vertices), -1, dtype=np.int32)
     valid = np.flatnonzero(np.isfinite(features).all(axis=1))
     if len(valid) == 0:
+        return labels
+    if distance_threshold is None:
+        labels[valid] = np.arange(len(valid), dtype=np.int32)
         return labels
 
     _, valid_faces = subset_mesh_by_indices((vertices, faces), valid)
